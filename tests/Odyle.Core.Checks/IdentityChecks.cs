@@ -1,0 +1,32 @@
+using System.Buffers.Binary;
+using System.Text;
+using Odyle.Core;
+
+static class IdentityChecks
+{
+    public static void Run()
+    {
+        byte[] Payload(ushort server, string name = "TestHero")
+        {
+            var text = Encoding.UTF8.GetBytes(name); var bytes = new byte[1 + 6 + text.Length + 6];
+            bytes[0] = 42; bytes[5] = 1; bytes[6] = (byte)text.Length; text.CopyTo(bytes, 7);
+            BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(7 + text.Length), server);
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(9 + text.Length), 25); return bytes;
+        }
+        var lumiel = GameIdentity.Read(Payload(2304)) ?? throw new Exception("Identity missing");
+        Check(lumiel.CharacterName == "TestHero" && lumiel.Server == "Lumiel" && lumiel.Region == "GLOBAL_EU", "EU Lumiel identity");
+        Check(GameIdentity.Read(Payload(1101))?.Region == "GLOBAL_NA" && GameIdentity.Read(Payload(2204))?.Region == "GLOBAL_NA", "NA region codes");
+        Check(GameIdentity.Read(Payload(2404))?.Region == "GLOBAL_SA" && GameIdentity.Read(Payload(2504))?.Region == "GLOBAL_ASIA", "SA/Asia codes");
+        Check(GameIdentity.Read(Payload(2360)) is { Server: null, Region: "GLOBAL_EU" }, "unmapped server never guessed");
+        Check(GameIdentity.Read(Payload(2004)) is { Region: null }, "unmapped region never guessed");
+        Check(GameIdentity.Read(Payload(2304, "$tutorial")) is null, "placeholder character rejected");
+        var bytes = Payload(2304); bytes[7] = 255; Check(GameIdentity.Read(bytes) is null, "invalid UTF8 rejected");
+        bytes = Payload(2304); for (var i = 0; i < bytes.Length; i++) Check(GameIdentity.Read(bytes.AsSpan(0, i)) is null, "truncated identity rejected");
+        var decoder = new ExperimentalOdyleDecoder(); var observed = new List<GameIdentity>(); decoder.IdentityObserved += observed.Add;
+        bytes = Payload(2304); var frame = new byte[3 + bytes.Length]; frame[0] = (byte)(bytes.Length + 6); frame[1] = 0x33; frame[2] = 0x36; bytes.CopyTo(frame, 3);
+        decoder.Feed(frame.AsSpan(0, 4)); decoder.Feed(frame.AsSpan(4));
+        Check(observed.Single().Server == "Lumiel", "fragmented own identity forwarded");
+        Console.WriteLine("Automatic own-character identity, server mapping, region and malformed-input checks passed.");
+    }
+    static void Check(bool condition, string message) { if (!condition) throw new Exception("Identity check failed: " + message); }
+}

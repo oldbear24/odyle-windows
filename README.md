@@ -7,23 +7,27 @@ A .NET 10 WPF tray app for your **Discord-linked Odyle account**, persistent cha
 1. Start/configure the dashboard's backend and sign in on the web with Discord.
 2. On **My rooms & characters**, choose **Pair Windows app**, then **Copy connection link**.
 3. Click **Paste link & connect** in this app. The link includes the server address and a one-use code that expires after five minutes. You can also paste it into the input and press Enter. An older code-only connection works through the collapsed **Server address** option.
-4. Select a saved character or enter its name/server, install Npcap from its official site, and choose **Start packet reader**. Start before reconnecting the game so framing begins at a new stream. The current reference adapter is experimental and cannot publish values until Global validation.
+4. Install Npcap from its official site and click **Detect character from game** (or **Start packet reader** for an existing character). Start before logging your character into the game. The own-character message provides its name, server and Global region; the app saves and selects that character automatically. A missing or unfamiliar identity remains unknown. For manual identity setup, click **+ Add**, enter the name/server/region and press **Save character**. This saves the character without entering any Odyle.
 5. Select a room and explicitly enable sharing there. You can enter additional room invite codes in the app. Values remain saved when you leave a room or sign out.
 
 The app remembers your connection using Windows DPAPI, never Discord passwords or OAuth tokens. It reconnects when reopened and preserves credentials during temporary server outages; use **Reconnect saved account** to retry. Hosted connections require HTTPS; HTTP is allowed only on localhost.
 
 The window is now 380 × 610. Saved characters load automatically; character details, room sharing and account options fold away. Adding another character keeps the current server and region to avoid retyping them.
 
-![Compact app with illustrative values](docs/compact-preview.png)
+Selectors, expanders and scrolling use the same dark palette. Empty accounts have a direct detection button; manual setup includes an explicit Save action and can be cancelled when another character exists. Invalid form input keeps the draft open and does not reconnect the reader.
+
+![Compact app with an illustrative saved character](docs/compact-preview.png)
+
+![Automatic setup for an illustrative empty account](docs/auto-detect-preview.png)
 
 ## Download size
 
 | Package | Approximate ZIP size | Requirements |
 | --- | --- | --- |
-| `odyle-win-x64.zip` | 154 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
+| `odyle-win-x64.zip` | 161 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
 | `odyle-win-x64-self-contained.zip` | 68 MB | Bundles its runtime |
 
-Extract the ZIP and run `Odyle.exe`. The small download uses the installed runtime; Microsoft shows the required runtime download dialog if it is missing. Choose **Desktop Runtime**, which includes WPF support. Use the standalone package if you prefer no runtime installation. Sizes refer to this build and may change slightly.
+When updating, quit the old app using **Quit** in its window or tray menu; closing the window keeps it running. Extract the new ZIP and run `Odyle.exe`. The small download uses the installed runtime; Microsoft shows the required runtime download dialog if it is missing. Choose **Desktop Runtime**, which includes WPF support. Use the standalone package if you prefer no runtime installation. Sizes refer to this build and may change slightly.
 
 **Manual entry is disabled in both clients and the backend.** Legacy totals remain as historical values. A heartbeat every 20 seconds updates presence; readings become stale after 45 seconds. Reconnect/resume and switching characters require a new verified game snapshot for current readiness, while retaining last saved values. Close the window to keep it in the tray; **Quit companion** marks the active reading stale and exits.
 
@@ -37,6 +41,7 @@ Windows 10/11 with .NET SDK 10:
 dotnet build src/Odyle.Reader/Odyle.Reader.csproj -c Release
 dotnet run --project src/Odyle.Reader
 dotnet run --project tests/Odyle.Core.Checks -c Release
+dotnet run --project tests/Odyle.Reader.Checks -c Release
 ./scripts/publish.ps1
 ./scripts/publish.ps1 -SelfContained
 ```

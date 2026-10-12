@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Odyle.Core;
 PacketChecks.Run();
+IdentityChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;
 if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player") throw new Exception("Account pairing contract failed.");
@@ -27,7 +28,10 @@ if (args.Length is 1 or 2)
     using var api = new PartyApi(pairing.Endpoint); var paired = await api.PairAsync(pairing.Code);
     if ((await api.RefreshAsync()).Record.Id != paired.Record.Id) throw new Exception("Pairing changed account identity.");
     var session = await api.StartSessionAsync();
+    var saved = await api.SaveCharacterAsync(" Main ", " EU ", "GLOBAL_EU");
+    if (saved.CharacterName != "Main" || saved.Server != "EU" || saved.User != paired.Record.Id) throw new Exception("Saving character identity failed.");
     var character = await api.ReportAsync(new PacketReading(session.SessionId, 1, "Main", "EU", "GLOBAL_EU", 0, "test-fixture-v1"));
+    if (saved.Id != character.Id) throw new Exception("First game reading duplicated the saved character.");
     await api.HeartbeatAsync(session.SessionId, character.Id); await api.InvalidateAsync(character.Id, session.SessionId);
     if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
     await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");

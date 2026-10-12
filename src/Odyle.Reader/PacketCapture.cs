@@ -20,6 +20,7 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<string>? Status;
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
+    public event Action<GameIdentity>? IdentityObserved;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
@@ -146,6 +147,7 @@ public sealed class PacketCapture : IAsyncDisposable
                     {
                         var decoder = new ExperimentalOdyleDecoder(startsAligned: (bytes[tcp + 13] & 2) != 0); decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
                         decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
+                        decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
                         streams[flow] = state = (new(), decoder, false);
                     }
                     if ((bytes[tcp + 13] & 5) != 0) { streams.Remove(flow); continue; }

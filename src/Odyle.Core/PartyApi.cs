@@ -46,6 +46,13 @@ public sealed class PartyApi : IDisposable
     public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });
+    public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
+    {
+        if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException("Enter a character name (up to 40 characters).");
+        if (string.IsNullOrWhiteSpace(server) || server.Trim().Length > 40) throw new ArgumentException("Enter a server (up to 40 characters).");
+        if (region is not ("GLOBAL_EU" or "GLOBAL_NA" or "GLOBAL_SA" or "GLOBAL_ASIA")) throw new ArgumentException("Select a Global region.");
+        return (await PostAsync<ReportResponse>("api/odyle/character", new { characterName = characterName.Trim(), server = server.Trim(), region })).Character;
+    }
     public async Task<Character> ReportAsync(PacketReading reading)
     {
         if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion) || reading.ParserVersion == ExperimentalOdyleDecoder.Version) throw new ArgumentException("An approved Global packet adapter is required.");

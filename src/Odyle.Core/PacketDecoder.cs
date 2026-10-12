@@ -76,6 +76,7 @@ public sealed class ExperimentalOdyleDecoder
     public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
+    public event Action<GameIdentity>? IdentityObserved;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
@@ -132,6 +133,7 @@ public sealed class ExperimentalOdyleDecoder
         FrameObserved?.Invoke(BinaryPrimitives.ReadUInt16BigEndian(frame), frame.Length - 2);
         if (frame[0] == 0x33 && frame[1] == 0x36)
         {
+            var identity = GameIdentity.Read(frame[2..]);
             var offset = 2;
             // The own-character identity may arrive after its stat snapshot
             // and may repeat. Neither establishes a character switch alone.
@@ -139,10 +141,11 @@ public sealed class ExperimentalOdyleDecoder
             {
                 var changed = ownCharacter is { } previous && previous != character;
                 ownCharacter = character;
-                if (!changed) return;
+                if (!changed) { if (identity is not null) IdentityObserved?.Invoke(identity); return; }
             }
             var hadIdentity = entity is not null; entity = null; baseline = null;
             if (hadIdentity) CharacterChanged?.Invoke();
+            if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
         if (frame[1] != 0x61) return; // Sprint/dash fields never enter this adapter.

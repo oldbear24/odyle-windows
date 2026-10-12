@@ -12,6 +12,7 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet build src/Odyle.Reader/Odyle.Reader.csproj -c Release
       - run: dotnet run --project tests/Odyle.Core.Checks -c Release
+      - run: dotnet run --project tests/Odyle.Reader.Checks -c Release
       - run: ./scripts/publish.ps1
       - run: ./scripts/publish.ps1 -SelfContained
       - uses: actions/upload-artifact@v4
