@@ -21,13 +21,25 @@ static class PacketChecks
         Reject(() => tcp.Feed(103, new byte[] { 4, 9 }), "pending overlap");
 
         var decoder = new ExperimentalOdyleDecoder(); var candidates = new List<PacketCandidate>(); var changed = 0;
+        var observations = new List<OdyleUpdateObservation>(); decoder.UpdateObserved += observations.Add;
         decoder.Candidate += candidates.Add; decoder.CharacterChanged += () => changed++;
         var update = Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 7, 20, 0 });
         decoder.Feed(update); Assert(candidates.Count == 0, "dynamic update without baseline is unknown");
+        Assert(observations.Single().Mode == 8 && observations.Single().First == 20, "diagnostics never imply a total without baseline");
         var snapshot = Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50 });
         decoder.Feed(snapshot.AsSpan(0, 3)); Assert(candidates.Count == 0, "fragment incomplete");
         decoder.Feed(snapshot.AsSpan(3)); Assert(candidates.Last().Total == 150 && !candidates.Last().IsVerified, "sum remains unverified");
         decoder.Feed(update); Assert(candidates.Last().Total == 120, "dynamic update needs remembered base");
+        var beforeOtherStat = candidates.Count;
+        decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 4, 12, 7, 20, 0 }));
+        Assert(candidates.Count == beforeOtherStat, "unrelated stat field never emits Odyle");
+        decoder.Feed(update); Assert(candidates.Count == beforeOtherStat + 1 && candidates.Last().Total == 120, "unrelated stat update preserves Odyle baseline");
+        var ownIdentity = Frame(new byte[] { 0x33, 0x36, 42, 0, 0, 0, 0, 0 });
+        decoder.Feed(ownIdentity); decoder.Feed(ownIdentity); decoder.Feed(update);
+        Assert(changed == 0 && candidates.Last().Total == 120, "first and repeated own identity preserve the stat baseline");
+        decoder.Feed(Frame(new byte[] { 0x33, 0x36, 43, 0, 0, 0, 0, 0 })); decoder.Feed(update);
+        Assert(changed == 1, "different own identity invalidates baseline");
+        decoder.Reset(); changed = 0; decoder.Feed(snapshot);
         var count = candidates.Count;
         decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 9, 20, 0 }));
         decoder.Feed(Frame(new byte[] { 0x8d, 0, 3, 7, 50 })); Assert(candidates.Count == count, "other entity and sprint ignored");
@@ -45,6 +57,19 @@ static class PacketChecks
         Reject(() => new ExperimentalOdyleDecoder().Feed(invalid), "oversized framing");
         var invalidLz4 = new byte[] { 255, 255, 255, 255, 127, 0 };
         Reject(() => new ExperimentalOdyleDecoder().Feed(Frame(invalidLz4)), "bounded decompression");
+        var midstream = new ExperimentalOdyleDecoder(startsAligned: false); var seen = new List<PacketCandidate>();
+        midstream.Candidate += seen.Add;
+        midstream.Feed(snapshot); Assert(seen.Count == 0, "no reading before a frame boundary");
+        midstream.Feed(new byte[] { 0x06, 0x00 }); Assert(seen.Count == 0, "split heartbeat waits");
+        midstream.Feed(new byte[] { 0x36 });
+        midstream.Feed(Frame(new byte[] { 0xf4, 0x0b, 0x61, 0x0c, 1, 7, 0, 0x86, 3 }));
+        Assert(seen.Single().Primary == 0 && seen.Single().Bonus == 390 && seen.Single().Total == 390 && !seen.Single().IsVerified, "flagged 0 plus 390 after heartbeat");
+        decoder.Reset(); candidates.Clear();
+        decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3 }));
+        Assert(candidates.Single().Primary == 0 && candidates.Single().Bonus == 390 && !candidates.Single().IsVerified, "single-component snapshot remains a hypothesis");
+        decoder.Reset(); candidates.Clear();
+        decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
+        Assert(candidates.Count == 0, "ambiguous mixed snapshot is unknown");
         Console.WriteLine("Synthetic TCP, framing, LZ4, identity and unverified-candidate checks passed; Global compatibility is not established.");
     }
     static byte[] Frame(byte[] content)

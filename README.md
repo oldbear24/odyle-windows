@@ -20,14 +20,14 @@ The window is now 380 × 610. Saved characters load automatically; character det
 
 | Package | Approximate ZIP size | Requirements |
 | --- | --- | --- |
-| `odyle-win-x64.zip` | 151 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
+| `odyle-win-x64.zip` | 154 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
 | `odyle-win-x64-self-contained.zip` | 68 MB | Bundles its runtime |
 
 Extract the ZIP and run `Odyle.exe`. The small download uses the installed runtime; Microsoft shows the required runtime download dialog if it is missing. Choose **Desktop Runtime**, which includes WPF support. Use the standalone package if you prefer no runtime installation. Sizes refer to this build and may change slightly.
 
 **Manual entry is disabled in both clients and the backend.** Legacy totals remain as historical values. A heartbeat every 20 seconds updates presence; readings become stale after 45 seconds. Reconnect/resume and switching characters require a new verified game snapshot for current readiness, while retaining last saved values. Close the window to keep it in the tray; **Quit companion** marks the active reading stale and exits.
 
-**This release is a packet-reader prototype, not a working Global Odyle integration.** It passively reads incoming IPv4/TCP connections owned by the local AION2 process using an existing Npcap installation. TCP reassembly, bounded framing and LZ4 decoding produce local, explicitly unverified candidates. No candidate is sent to the backend. Unknown formats remain unknown. No game memory access, packet injection or gameplay automation is implemented. Npcap is installed separately and is not bundled. See [validation and limitations](docs/packet-reader.md).
+**This release is a packet-reader prototype.** A live EU Global / Lumiel check on Steam build 25800038 successfully read the startup value **0 + 390 = 390**, matching the user's game display. Live changes and other character values still need validation, so no candidate is sent to the backend yet. It passively decodes incoming IPv4/TCP game traffic owned by the local AION2 process using an existing Npcap installation. TCP reassembly, heartbeat synchronization, bounded framing and LZ4 decoding produce local, explicitly unverified candidates. Unknown formats remain unknown. No game memory access, packet injection or gameplay automation is implemented. Npcap is installed separately and is not bundled. See [validation and limitations](docs/packet-reader.md).
 
 ## Build and package
 

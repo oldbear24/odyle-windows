@@ -53,23 +53,47 @@ public sealed class TcpReceiveStream
 
 public sealed record PacketCandidate(int Total, ulong EntityId, string ParserVersion)
 {
-    // No current Global captures have validated this reference format.
+    // One Global startup read matched; live updates and identity binding
+    // still require validation before this adapter can publish.
     public bool IsVerified => false;
+    public int Primary { get; init; }
+    public int Bonus { get; init; }
 }
+
+// Diagnostic fields only; an update without a snapshot is not a total.
+public sealed record OdyleUpdateObservation(byte Mode, ulong First, ulong? Second, int TrailerBytes, byte Direction);
+public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
 public sealed class ExperimentalOdyleDecoder
 {
     public const string Version = "reference-odyle-v1-unverified";
     private readonly List<byte> buffered = new();
     private ulong? entity;
+    private ulong? ownCharacter;
     private int? baseline;
+    private readonly bool startsAligned;
+    private bool synchronized;
+    public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
-    public void Reset() { buffered.Clear(); entity = null; baseline = null; }
+    public event Action<ushort, int>? FrameObserved;
+    public event Action<OdyleUpdateObservation>? UpdateObserved;
+    public event Action<OdyleFrameLayout>? LayoutObserved;
+    public void Reset() { buffered.Clear(); entity = null; ownCharacter = null; baseline = null; synchronized = startsAligned; }
     public void Feed(ReadOnlySpan<byte> bytes)
     {
         if (buffered.Count + bytes.Length > 1048576) throw new InvalidDataException("Frame buffer limit exceeded.");
         buffered.AddRange(bytes.ToArray());
+        if (!synchronized)
+        {
+            // A midstream capture has no frame boundary. Wait for a complete
+            // protocol heartbeat instead of interpreting arbitrary payload bytes.
+            var start = -1;
+            for (var i = 0; i + 3 <= buffered.Count; i++)
+                if (buffered[i + 1] == 0 && buffered[i + 2] == 0x36 && (buffered[i] == 6 || (buffered[i] == 0x0e && i + 11 <= buffered.Count))) { start = i; break; }
+            if (start < 0) { if (buffered.Count > 10) buffered.RemoveRange(0, buffered.Count - 10); return; }
+            buffered.RemoveRange(0, start); synchronized = true;
+        }
         while (buffered.Count > 0)
         {
             var data = buffered.ToArray(); var position = 0;
@@ -83,6 +107,8 @@ public sealed class ExperimentalOdyleDecoder
     }
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)
     {
+        // Global frames can carry one transport flag before the opcode.
+        if (!frame.IsEmpty && frame[0] is >= 0xf0 and <= 0xfe) frame = frame[1..];
         if (frame.Length < 2) throw new InvalidDataException("Incomplete opcode.");
         if (frame[0] == 0xff && frame[1] == 0xff)
         {
@@ -103,31 +129,65 @@ public sealed class ExperimentalOdyleDecoder
             }
             return;
         }
-        if (frame[0] == 0x33 && frame[1] == 0x36) { var hadIdentity = entity is not null; entity = null; baseline = null; if (hadIdentity) CharacterChanged?.Invoke(); return; }
+        FrameObserved?.Invoke(BinaryPrimitives.ReadUInt16BigEndian(frame), frame.Length - 2);
+        if (frame[0] == 0x33 && frame[1] == 0x36)
+        {
+            var offset = 2;
+            // The own-character identity may arrive after its stat snapshot
+            // and may repeat. Neither establishes a character switch alone.
+            if (TryVarint(frame, ref offset, out var character) && character > 0 && frame.Length - offset >= 5)
+            {
+                var changed = ownCharacter is { } previous && previous != character;
+                ownCharacter = character;
+                if (!changed) return;
+            }
+            var hadIdentity = entity is not null; entity = null; baseline = null;
+            if (hadIdentity) CharacterChanged?.Invoke();
+            return;
+        }
         if (frame[1] != 0x61) return; // Sprint/dash fields never enter this adapter.
         var payload = frame[2..];
+        if (frame[0] is 0x0b or 0x0c && payload.Length >= 3)
+            LayoutObserved?.Invoke(new(BinaryPrimitives.ReadUInt16BigEndian(frame), payload[0], payload[1], payload[2], payload.Length));
         if (frame[0] == 0x0b)
         {
             var candidates = new List<(ulong Id, int Base, int Total)>();
             for (var i = 0; i + 2 < payload.Length; i++)
             {
-                if (payload[i] != 0x0c || payload[i + 1] != 1) continue;
-                var p = i + 2;
+                var twoValues = payload[i] == 0x0c && payload[i + 1] == 1;
+                var oneValue = payload[i] == 0 && payload[i + 1] == 8 && payload[i + 2] == 1;
+                if (!twoValues && !oneValue) continue;
+                var p = i + (twoValues ? 2 : 3);
+                if (oneValue)
+                {
+                    // Reference servers omit the base when it is zero. This
+                    // shape remains a local hypothesis until Global validation.
+                    if (TryVarint(payload, ref p, out var singleId) && TryVarint(payload, ref p, out var value) && singleId > 0 && value <= 1000000)
+                        candidates.Add((singleId, 0, (int)value));
+                    continue;
+                }
                 if (TryVarint(payload, ref p, out var id) && TryVarint(payload, ref p, out var left) && TryVarint(payload, ref p, out var right) && id > 0 && left <= 1000000 && right <= 1000000 && left + right <= 1000000)
                     candidates.Add((id, (int)left, (int)(left + right)));
             }
             if (candidates.Count != 1) { entity = null; baseline = null; return; }
-            var c = candidates[0]; entity = c.Id; baseline = c.Base; Candidate?.Invoke(new(c.Total, c.Id, Version));
+            var c = candidates[0]; entity = c.Id; baseline = c.Base; Candidate?.Invoke(new(c.Total, c.Id, Version) { Primary = c.Base, Bonus = c.Total - c.Base });
         }
         else if (frame[0] == 0x0c)
         {
-            if (payload.Length < 6 || payload[0] > 1 || payload[2] != 1 || (payload[1] != 8 && payload[1] != 12)) { entity = null; baseline = null; return; }
+            // 0C61 is a general stat update. Other field IDs do not
+            // invalidate the Odyle snapshot or supply an energy reading.
+            if (payload.Length >= 3 && payload[2] != 1) return;
+            if (payload.Length < 6 || payload[0] > 1 || (payload[1] != 8 && payload[1] != 12)) { entity = null; baseline = null; return; }
             var p = 3;
-            if (!TryVarint(payload, ref p, out var id) || !TryVarint(payload, ref p, out var first) || entity != id || baseline is null) return;
-            ulong left = (ulong)baseline.Value, right = first;
-            if (payload[1] == 12) { left = first; if (!TryVarint(payload, ref p, out right)) return; }
+            if (!TryVarint(payload, ref p, out var id) || !TryVarint(payload, ref p, out var first)) return;
+            ulong? second = null;
+            if (payload[1] == 12) { if (!TryVarint(payload, ref p, out var value)) return; second = value; }
+            if (first > 1000000 || second > 1000000) { entity = null; baseline = null; return; }
+            UpdateObserved?.Invoke(new(payload[1], first, second, payload.Length - p, payload[0]));
+            if (entity != id || baseline is null) return;
+            ulong left = second is null ? (ulong)baseline.Value : first, right = second ?? first;
             if (payload.Length - p != (payload[0] == 1 ? 5 : 1) || left > 1000000 || right > 1000000 || left + right > 1000000) { entity = null; baseline = null; return; }
-            baseline = (int)left; Candidate?.Invoke(new((int)(left + right), id, Version));
+            baseline = (int)left; Candidate?.Invoke(new((int)(left + right), id, Version) { Primary = (int)left, Bonus = (int)right });
         }
     }
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)

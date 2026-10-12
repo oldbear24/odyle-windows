@@ -165,7 +165,7 @@ public partial class MainWindow : Window
         next.Candidate += observation => Dispatcher.BeginInvoke(() =>
         {
             if (capture != next) return;
-            PacketStateLabel.Text = $"Unverified packet candidate: {observation.Total:N0}. Not shared · Global validation required.";
+            PacketStateLabel.Text = $"Unverified: {observation.Primary:N0} + {observation.Bonus:N0} = {observation.Total:N0}. Not shared · Global validation required.";
             // Candidate data cannot be reported as a verified reading.
             ValueLabel.Text = "—"; ClearCurrent("Waiting for a verified Global game reading."); IdentityPanel.IsEnabled = false;
         });

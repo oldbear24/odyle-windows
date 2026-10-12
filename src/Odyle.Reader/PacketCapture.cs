@@ -20,8 +20,13 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<string>? Status;
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
-    private sealed record Flow(string Local, ushort LocalPort, string Remote, ushort RemotePort)
-    { public string Filter => $"(src host {Remote} and src port {RemotePort} and dst host {Local} and dst port {LocalPort})"; }
+    public event Action<ushort, int>? FrameObserved;
+    public event Action<OdyleUpdateObservation>? UpdateObserved;
+    public event Action<OdyleFrameLayout>? LayoutObserved;
+    private long receivedPackets, gameBytes;
+    public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
+    public long GameBytes => Interlocked.Read(ref gameBytes);
+    private sealed record Flow(string Local, ushort LocalPort, string Remote, ushort RemotePort);
     [StructLayout(LayoutKind.Sequential)] private struct Device { public IntPtr Next, Name, Description, Addresses; public uint Flags; }
     [StructLayout(LayoutKind.Sequential)] private struct Filter { public uint Length; public IntPtr Instructions; }
     static PacketCapture()
@@ -75,11 +80,12 @@ public sealed class PacketCapture : IAsyncDisposable
             for (var i = 0; i < count; i++)
             {
                 var row = IntPtr.Add(table, 4 + i * 24);
-                if (Marshal.ReadInt32(row) != 5 || !ids.Contains(Marshal.ReadInt32(row, 20))) continue;
+                if (Marshal.ReadInt32(row) is not (3 or 4 or 5) || !ids.Contains(Marshal.ReadInt32(row, 20))) continue;
                 var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
                 var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
                 ushort Port(int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
-                result.Add(new(local, Port(8), remote, Port(16)));
+                // Ignore the game's HTTPS/login connections and other protocols.
+                if (Port(16) == 13328) result.Add(new(local, Port(8), remote, Port(16)));
             }
             return result.Take(32).ToArray();
         }
@@ -90,7 +96,7 @@ public sealed class PacketCapture : IAsyncDisposable
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
         if (handle == IntPtr.Zero) { Status?.Invoke("Capture interface unavailable. Check Npcap permissions."); return; }
         var streams = new Dictionary<Flow, (TcpReceiveStream Tcp, ExperimentalOdyleDecoder Decoder, bool Failed)>();
-        var lastFilter = ""; var flows = Array.Empty<Flow>(); var nextRefresh = DateTimeOffset.MinValue;
+        var lastFilter = ""; var flows = Array.Empty<Flow>(); var nextRefresh = DateTimeOffset.MinValue; bool? previouslyConnected = null;
         try
         {
             if (pcap_setnonblock(handle, 1, error) != 0) throw new InvalidOperationException("Nonblocking capture is unavailable.");
@@ -101,21 +107,26 @@ public sealed class PacketCapture : IAsyncDisposable
                 if (DateTimeOffset.UtcNow >= nextRefresh)
                 {
                     nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = GameFlows();
-                    var filterText = flows.Length == 0 ? "tcp and port 0" : "tcp and (" + string.Join(" or ", flows.Select(f => f.Filter)) + ")";
+                    // Keep discovery open across reconnects. Every packet must
+                    // still match a connection owned by AION2 before decoding.
+                    const string filterText = "tcp and src port 13328";
                     if (filterText != lastFilter)
                     {
                         if (pcap_compile(handle, out var filter, filterText, 1, uint.MaxValue) != 0) throw new InvalidOperationException("Unable to configure game-only capture filter.");
                         try { if (pcap_setfilter(handle, ref filter) != 0) throw new InvalidOperationException("Unable to apply capture filter."); }
                         finally { pcap_freecode(ref filter); }
                         lastFilter = filterText;
-                        foreach (var removed in streams.Keys.Where(key => !flows.Contains(key)).ToArray()) streams.Remove(removed);
-                        Status?.Invoke(flows.Length == 0 ? "Waiting for an AION2 IPv4 connection." : "Listening to AION2 packets · Global format remains unverified.");
                     }
+                    foreach (var removed in streams.Keys.Where(key => !flows.Contains(key)).ToArray()) streams.Remove(removed);
+                    var connected = flows.Length > 0;
+                    if (connected != previouslyConnected) Status?.Invoke(connected ? "Listening to AION2 packets · Global format remains unverified." : "Waiting for an AION2 IPv4 connection.");
+                    previouslyConnected = connected;
                     foreach (var key in streams.Keys.ToArray()) if (streams[key].Tcp.GapSince is { } gap && DateTimeOffset.UtcNow - gap > TimeSpan.FromSeconds(3)) streams[key] = (new(), new(), true);
                 }
                 var received = pcap_next_ex(handle, out var header, out var pointer);
                 if (received == 0) { Thread.Sleep(50); continue; }
                 if (received < 0) throw new InvalidOperationException("Packet capture disconnected.");
+                Interlocked.Increment(ref receivedPackets);
                 var length = Marshal.ReadInt32(header, 8);
                 if (length < 1 || length > 65536 || length != Marshal.ReadInt32(header, 12)) continue;
                 var bytes = new byte[length]; Marshal.Copy(pointer, bytes, 0, length);
@@ -129,13 +140,15 @@ public sealed class PacketCapture : IAsyncDisposable
                     var tcpLength = (bytes[tcp + 12] >> 4) * 4; if (tcpLength < 20 || ipLength + tcpLength > total) continue;
                     var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
                     var flow = new Flow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
-                    if (!flows.Contains(flow)) continue;
+                    if (!flows.Contains(flow)) { flows = GameFlows(); if (!flows.Contains(flow)) continue; }
+                    Interlocked.Add(ref gameBytes, total - ipLength - tcpLength);
                     if (!streams.TryGetValue(flow, out var state))
                     {
-                        var decoder = new ExperimentalOdyleDecoder(); decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke();
+                        var decoder = new ExperimentalOdyleDecoder(startsAligned: (bytes[tcp + 13] & 2) != 0); decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
+                        decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
                         streams[flow] = state = (new(), decoder, false);
                     }
-                    if ((bytes[tcp + 13] & 7) != 0) { streams.Remove(flow); continue; }
+                    if ((bytes[tcp + 13] & 5) != 0) { streams.Remove(flow); continue; }
                     if (state.Failed) continue;
                     foreach (var chunk in state.Tcp.Feed(BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength)))
                         state.Decoder.Feed(chunk);
