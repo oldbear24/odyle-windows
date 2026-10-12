@@ -7,6 +7,7 @@ $output = Join-Path $odyleRoot ('artifacts/staging/' + $packageKind + '-' + $Run
 $bundledRuntime = if ($SelfContained) { 'true' } else { 'false' }
 dotnet publish (Join-Path $odyleRoot 'src/Odyle.Reader/Odyle.Reader.csproj') -c Release -r $Runtime --self-contained $bundledRuntime -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
+Copy-Item -LiteralPath (Join-Path $odyleRoot 'THIRD-PARTY.md') -Destination $output
 $suffix = if ($SelfContained) { '-self-contained' } else { '' }
 $archive = Join-Path $odyleRoot "artifacts/odyle-$Runtime$suffix.zip"
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -Force

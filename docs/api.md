@@ -48,12 +48,13 @@ Own characters can be read with the normal PocketBase `characters` collection AP
   "server": "Your server",
   "region": "GLOBAL_EU",
   "value": 0,
-  "source": "manual",
+  "source": "packet",
+  "parserVersion": "validated-global-build-adapter",
   "confirmed": true
 }
 ```
 
-Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Packet reports are rejected in this MVP.
+Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports from a version in the backend `lib/protocols.cjs` registry are accepted. That registry is currently empty: no Global build has been validated, so production rejects all new reports. Manual reports are always rejected. Client metadata is not cryptographic proof of a game observation. Synthetic adapter approval exists only in disposable integration-test hooks.
 
 `POST /api/odyle/heartbeat` with `{ sessionId, characterId }` updates presence for the character only when that session owns its latest reading. It never changes the last reading timestamp. Empty `{}` can synchronize the browser's server clock without claiming a character is online.
 

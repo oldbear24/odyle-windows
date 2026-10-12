@@ -22,15 +22,16 @@
    <Expander x:Name="CharacterDetails" Header="Character details" Foreground="#9DB6A6" FontSize="11" Margin="0,10,0,4">
     <StackPanel x:Name="IdentityPanel" Margin="0,8,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Character" FontSize="11"/><TextBox x:Name="CharacterInput" MaxLength="40" Margin="0,4,0,8"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Server" FontSize="11"/><TextBox x:Name="ServerInput" MaxLength="40" Margin="0,4,0,8"/></StackPanel></Grid><ComboBox x:Name="RegionInput" SelectedIndex="0" Padding="8" Margin="0,0,0,8"><ComboBoxItem Content="Global EU" Tag="GLOBAL_EU"/><ComboBoxItem Content="Global NA" Tag="GLOBAL_NA"/><ComboBoxItem Content="Global SA" Tag="GLOBAL_SA"/><ComboBoxItem Content="Global Asia" Tag="GLOBAL_ASIA"/></ComboBox></StackPanel>
    </Expander>
-   <TextBlock Text="Current Odyle" FontSize="11" Margin="0,8,0,0"/><TextBox x:Name="OdyleInput" FontSize="20" Padding="10,7" Margin="0,4,0,4"/>
-   <CheckBox x:Name="ConfirmToggle" FontSize="11"><TextBlock Text="I checked this value in the game" TextWrapping="Wrap"/></CheckBox>
-   <Button x:Name="ReportButton" Content="Save Odyle" Click="Report_Click"/>
+   <TextBlock Text="PACKET READER" Foreground="#8FAA99" FontSize="10" Margin="0,12,0,0"/>
+   <TextBlock x:Name="PacketStateLabel" Text="Stopped · no verified Global adapter yet" Foreground="#D2BC86" FontSize="11" TextWrapping="Wrap" Margin="0,7,0,6"/>
+   <Button x:Name="ReportButton" Content="Start packet reader" Click="Reader_Click"/>
+   <Button Content="Npcap setup ↗" Click="Npcap_Click" Background="Transparent" Foreground="#9CB6A5" FontSize="11" Padding="4,3" Margin="0,0,0,4"/>
    <Expander Header="Room sharing" Foreground="#9DB6A6" FontSize="11" Margin="0,10,0,0">
     <StackPanel Margin="0,8,0,0"><ComboBox x:Name="RoomsInput" DisplayMemberPath="Name" SelectionChanged="Room_Changed" Padding="8"/><CheckBox x:Name="ShareToggle" FontSize="11" Click="Share_Click"><TextBlock Text="Share my characters in this room" TextWrapping="Wrap"/></CheckBox><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="80"/></Grid.ColumnDefinitions><PasswordBox x:Name="InviteInput" Margin="0,4,0,4" ToolTip="Room invitation code"/><Button Grid.Column="2" Content="Join room" Click="JoinRoom_Click" FontSize="11" Padding="8,6" Margin="0,4,0,4"/></Grid></StackPanel>
    </Expander>
    <Expander Header="Account" Foreground="#9DB6A6" FontSize="11" Margin="0,10,0,0"><Button Content="Disconnect this app" Click="Logout_Click" Background="#293D30" Foreground="#BCD8C5"/></Expander>
   </StackPanel>
   <TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="#B8CCBF" TextWrapping="Wrap" FontSize="11" Margin="0,14,0,0"/>
-  <DockPanel Margin="0,16,0,0"><Button DockPanel.Dock="Right" Content="Quit" Click="Quit_Click" Background="Transparent" Foreground="#9CB6A5" FontSize="11" Padding="4,0" Margin="0"/><TextBlock Text="Manual mode · close to keep in tray" FontSize="10" Foreground="#829D8B" VerticalAlignment="Center"/></DockPanel>
+  <DockPanel Margin="0,16,0,0"><Button DockPanel.Dock="Right" Content="Quit" Click="Quit_Click" Background="Transparent" Foreground="#9CB6A5" FontSize="11" Padding="4,0" Margin="0"/><TextBlock Text="Packets only · close to keep in tray" FontSize="10" Foreground="#829D8B" VerticalAlignment="Center"/></DockPanel>
  </StackPanel></ScrollViewer>
 </Window>

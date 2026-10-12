@@ -15,14 +15,12 @@ namespace Odyle.Reader;
 public partial class MainWindow : Window
 {
     private PartyApi? api;
+    private PacketCapture? capture;
     private string sessionId = "", activeCharacterId = "", selectedCharacterId = "";
-    private long sequence;
-    private DateTimeOffset? confirmedAt;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow;
     private bool exit, busy, needsReconnect, loading;
     private readonly SemaphoreSlim operations = new(1, 1);
     private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
-    private readonly DispatcherTimer freshness = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Forms.NotifyIcon tray;
     public MainWindow() : this(true) { }
     public MainWindow(bool enableTray)
@@ -32,21 +30,14 @@ public partial class MainWindow : Window
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add("Open Odyle", null, (_, _) => Dispatcher.Invoke(ShowWindow));
         menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(QuitAsync).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
-        heartbeat.Tick += async (_, _) => await PulseAsync(); freshness.Tick += (_, _) => UpdateFreshness(); freshness.Start();
+        heartbeat.Tick += async (_, _) => await PulseAsync();
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void Status(string message) => StatusLabel.Text = message;
     private void ClearCurrent(string message)
     {
-        confirmedAt = null; ReadingLabel.Text = message; ConfirmToggle.IsChecked = false; IdentityPanel.IsEnabled = true;
-        tray.Text = "Odyle · Saved values need confirmation";
-    }
-    private void UpdateFreshness()
-    {
-        if (confirmedAt is not { } stamp) return;
-        var age = (int)(DateTimeOffset.UtcNow - stamp).TotalSeconds;
-        ReadingLabel.Text = age >= 45 ? $"Saved · stale ({age}s). Check and confirm again." : $"Manual confirmed · {age}s ago";
-        if (age >= 45) tray.Text = "Odyle · Stale saved reading";
+        ReadingLabel.Text = message; IdentityPanel.IsEnabled = capture is null;
+        tray.Text = "Odyle · Waiting for verified packets";
     }
     private async Task ExecuteAsync(Func<Task> action)
     {
@@ -77,7 +68,7 @@ public partial class MainWindow : Window
     private async Task ConnectAsync(AuthResponse auth)
     {
         if (api is null) return;
-        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = 0; activeCharacterId = "";
+        var session = await api.StartSessionAsync(); sessionId = session.SessionId; activeCharacterId = "";
         AccountLabel.Text = auth.Record.DisplayName; JoinPanel.Visibility = Visibility.Collapsed; ReaderPanel.Visibility = Visibility.Visible; RetryButton.Visibility = Visibility.Collapsed;
         await ReloadAsync();
         if (CharactersInput.SelectedItem is Character c) LoadCharacter(c);
@@ -126,15 +117,16 @@ public partial class MainWindow : Window
     private void LoadCharacter(Character c)
     {
         activeCharacterId = ""; selectedCharacterId = c.Id;
-        CharacterInput.Text = c.CharacterName; ServerInput.Text = c.Server; OdyleInput.Text = c.Confirmed ? c.Value.ToString() : ""; ValueLabel.Text = c.Confirmed ? c.Value.ToString("N0") : "—";
+        CharacterInput.Text = c.CharacterName; ServerInput.Text = c.Server; ValueLabel.Text = c.Confirmed ? c.Value.ToString("N0") : "—";
         foreach (ComboBoxItem item in RegionInput.Items) if ((string)item.Tag == c.Region) RegionInput.SelectedItem = item;
-        CharacterDetails.IsExpanded = false; ClearCurrent("Last saved value · check in-game to update.");
+        CharacterDetails.IsExpanded = false; ClearCurrent("Historical value · waiting for verified packets.");
     }
     private async void Character_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (loading || api is null || CharactersInput.SelectedItem is not Character c) return;
         await ExecuteAsync(async () =>
         {
+            await StopReaderAsync();
             if (activeCharacterId.Length > 0 && activeCharacterId != c.Id) await api.InvalidateAsync(activeCharacterId, sessionId);
             LoadCharacter(c);
         });
@@ -156,30 +148,48 @@ public partial class MainWindow : Window
         try { await api.SetSharingAsync(room.Id, ShareToggle.IsChecked == true); await ReloadAsync(); Status("Room sharing updated. Saved character values are retained."); }
         catch { ShareToggle.IsChecked = room.Sharing; throw; }
     });
-    private async void Report_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    private void Npcap_Click(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://npcap.com/#download") { UseShellExecute = true });
+    private async Task StopReaderAsync()
     {
+        var old = capture; capture = null; if (old is not null) await old.DisposeAsync();
+        ReportButton.Content = "Start packet reader"; PacketStateLabel.Text = "Stopped · last saved values stay on your account.";
+        IdentityPanel.IsEnabled = true;
+    }
+    private async void Reader_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (capture is not null) { await StopReaderAsync(); return; }
         if (api is null) return;
-        if (needsReconnect) { await ReconnectAsync(); throw new InvalidOperationException("Reconnected. Check your in-game value and confirm again."); }
-        if (ConfirmToggle.IsChecked != true) throw new InvalidOperationException("Confirm that you checked this character’s total in-game.");
-        if (string.IsNullOrWhiteSpace(CharacterInput.Text) || string.IsNullOrWhiteSpace(ServerInput.Text)) { CharacterDetails.IsExpanded = true; throw new InvalidOperationException("Enter a character name and server in Character details."); }
-        if (!int.TryParse(OdyleInput.Text, out var value) || value < 0) throw new InvalidOperationException("Enter a whole Odyle value. Zero is valid.");
-        var c = await api.ReportAsync(new ManualReading(sessionId, ++sequence, CharacterInput.Text.Trim(), ServerInput.Text.Trim(), (string)((ComboBoxItem)RegionInput.SelectedItem).Tag, value, selectedCharacterId.Length > 0 ? selectedCharacterId : null));
-        selectedCharacterId = c.Id; activeCharacterId = c.Id; confirmedAt = DateTimeOffset.UtcNow; ValueLabel.Text = value.ToString("N0"); IdentityPanel.IsEnabled = false; ConfirmToggle.IsChecked = false;
-        tray.Text = $"Odyle · {c.CharacterName}: {value}"; CharacterDetails.IsExpanded = false; await ReloadAsync(); UpdateFreshness(); Status("Saved · shared where you enabled room sharing.");
+        if (string.IsNullOrWhiteSpace(CharacterInput.Text) || string.IsNullOrWhiteSpace(ServerInput.Text)) { CharacterDetails.IsExpanded = true; throw new InvalidOperationException("Select your character or enter its name and server first."); }
+        var next = new PacketCapture();
+        next.Status += message => Dispatcher.BeginInvoke(() => { if (capture == next) PacketStateLabel.Text = message; });
+        next.Candidate += observation => Dispatcher.BeginInvoke(() =>
+        {
+            if (capture != next) return;
+            PacketStateLabel.Text = $"Unverified packet candidate: {observation.Total:N0}. Not shared · Global validation required.";
+            // Candidate data cannot be reported as a verified reading.
+            ValueLabel.Text = "—"; ClearCurrent("Waiting for a verified Global game reading."); IdentityPanel.IsEnabled = false;
+        });
+        next.CharacterChanged += () => Dispatcher.BeginInvoke(async () =>
+        {
+            if (capture != next) return; await ExecuteAsync(StopReaderAsync); ClearCurrent("Character changed. Select the correct character before restarting.");
+        });
+        try { next.Start(); capture = next; ReportButton.Content = "Stop packet reader"; IdentityPanel.IsEnabled = false; Status("Experimental capture · reference packet format is not Global-verified."); }
+        catch { await next.DisposeAsync(); throw; }
     });
     private async void Switch_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
     {
         if (api is null) return;
+        await StopReaderAsync();
         if (activeCharacterId.Length > 0) await api.InvalidateAsync(activeCharacterId, sessionId);
         activeCharacterId = ""; selectedCharacterId = ""; loading = true; CharactersInput.SelectedItem = null; loading = false;
-        CharacterInput.Clear(); OdyleInput.Clear(); ValueLabel.Text = "—"; CharacterDetails.IsExpanded = true; ClearCurrent("Add a character · previous values stay saved."); CharacterInput.Focus();
+        CharacterInput.Clear(); ValueLabel.Text = "—"; CharacterDetails.IsExpanded = true; ClearCurrent("Add a character · previous values stay saved."); CharacterInput.Focus();
     });
     private async Task ReconnectAsync()
     {
         if (api is null) return;
         PublisherSession session;
         try { session = await api.StartSessionAsync(sessionId); } catch (HttpRequestException) { session = await api.StartSessionAsync(); }
-        sessionId = session.SessionId; sequence = 0; needsReconnect = false; ClearCurrent("Reconnected. Last values are retained; reconfirm the active character.");
+        await StopReaderAsync(); sessionId = session.SessionId; needsReconnect = false; ClearCurrent("Reconnected. Restart the reader for a fresh game snapshot.");
     }
     private async Task PulseAsync()
     {
@@ -190,6 +200,7 @@ public partial class MainWindow : Window
     }
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
     {
+        await StopReaderAsync();
         if (api is not null && activeCharacterId.Length > 0) await api.InvalidateAsync(activeCharacterId, sessionId);
         heartbeat.Stop(); api?.Dispose(); api = null; SessionStore.Clear(); activeCharacterId = ""; selectedCharacterId = "";
         JoinPanel.Visibility = Visibility.Visible; ReaderPanel.Visibility = Visibility.Collapsed; AccountLabel.Text = "Connect your Discord account"; ValueLabel.Text = "—"; ClearCurrent("Disconnected · your characters stay saved.");
@@ -198,8 +209,8 @@ public partial class MainWindow : Window
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     private async Task QuitAsync()
     {
-        heartbeat.Stop(); freshness.Stop(); await operations.WaitAsync();
-        try { if (api is not null) { try { if (activeCharacterId.Length > 0) await api.InvalidateAsync(activeCharacterId, sessionId); } catch { } api.Dispose(); } }
+        heartbeat.Stop(); await operations.WaitAsync();
+        try { await StopReaderAsync(); if (api is not null) { try { if (activeCharacterId.Length > 0) await api.InvalidateAsync(activeCharacterId, sessionId); } catch { } api.Dispose(); } }
         finally { operations.Release(); tray.Dispose(); exit = true; System.Windows.Application.Current.Shutdown(); }
     }
 }

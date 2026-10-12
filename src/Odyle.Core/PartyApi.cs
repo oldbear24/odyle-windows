@@ -15,7 +15,7 @@ public sealed record Character(string Id, string User, string CharacterName, str
 }
 public sealed record RecordList<T>(T[] Items);
 public sealed record PublisherSession(string SessionId, long Sequence);
-public sealed record ManualReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string? CharacterId = null, string Source = "manual", bool Confirmed = true);
+public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
 public sealed record ReportResponse(Character Character);
 public sealed class PartyApi : IDisposable
 {
@@ -46,8 +46,9 @@ public sealed class PartyApi : IDisposable
     public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });
-    public async Task<Character> ReportAsync(ManualReading reading)
+    public async Task<Character> ReportAsync(PacketReading reading)
     {
+        if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion) || reading.ParserVersion == ExperimentalOdyleDecoder.Version) throw new ArgumentException("An approved Global packet adapter is required.");
         if (reading.Value is < 0 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(reading), "Odyle must be between 0 and 1,000,000.");
         if (string.IsNullOrWhiteSpace(reading.CharacterName) || string.IsNullOrWhiteSpace(reading.Server)) throw new ArgumentException("Character and server are required.");
         return (await PostAsync<ReportResponse>("api/odyle/report", reading)).Character;
