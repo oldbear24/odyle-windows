@@ -22,7 +22,7 @@ public static class SessionStore
         {
             Marshal.Copy(data, 0, input.Data, data.Length);
             Blob output;
-            var ok = protect ? CryptProtectData(ref input, "Odyle room credential", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output)
+            var ok = protect ? CryptProtectData(ref input, "Odyle account", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output)
                 : CryptUnprotectData(ref input, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output);
             if (!ok) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             try { var result = new byte[output.Size]; Marshal.Copy(output.Data, result, 0, result.Length); return result; }

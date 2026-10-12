@@ -23,8 +23,7 @@ public sealed class PartyApi : IDisposable
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     public PartyApi(string endpoint, string? token = null)
     {
-        var uri = new Uri(endpoint.TrimEnd('/') + "/");
-        if (uri.Scheme != "https" && !(uri.Scheme == "http" && uri.IsLoopback)) throw new ArgumentException("Use HTTPS for hosted servers. HTTP is allowed only on localhost.");
+        var uri = new Uri(ConnectionDetails.NormalizeEndpoint(endpoint) + "/");
         client = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(12) };
         if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
@@ -33,7 +32,12 @@ public sealed class PartyApi : IDisposable
         var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code });
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", result.Token); return result;
     }
-    public Task<AuthResponse> RefreshAsync() => PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { });
+    public async Task<AuthResponse> RefreshAsync()
+    {
+        var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", result.Token);
+        return result;
+    }
     public async Task<Room[]> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Rooms;
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     public Task<JoinResponse> JoinAsync(string code) => PostAsync<JoinResponse>("api/odyle/join", new { code });

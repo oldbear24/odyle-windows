@@ -8,6 +8,8 @@ The browser calls `pb.collection('users').authWithOAuth2({ provider: 'discord', 
 
 `POST /api/odyle/desktop-code` with `{}` returns `{ code, expiresAt }` to an authenticated account. The 16-character code expires after five minutes, is stored as a digest, and replaces that account's previous unused code.
 
+The dashboard presents a connection link such as `https://your-backend.example/#odyle-pair=ABCDEFGH23456789`. The Windows app extracts the endpoint and code when the user clicks **Paste link & connect** or presses Enter in the pairing input. The fragment is never sent as part of an HTTP request. This link contains the short-lived pairing code, not the account token; only the intended Windows companion should receive it. Base-path deployments are preserved, insecure remote HTTP and embedded URL credentials are rejected. Older apps can still use the raw code with a separate endpoint.
+
 `POST /api/odyle/pair` is public and rate limited. Body `{ code }`; response `{ token, record }` for the same account. The code is consumed atomically. Windows stores the application token in DPAPI, never Discord credentials.
 
 `POST /api/collections/users/auth-refresh` refreshes a valid token. Tokens last seven days; accounts/data persist independently of token expiry.
