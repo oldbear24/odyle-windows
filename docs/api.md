@@ -1,60 +1,62 @@
-# Odyle API v1
+# Odyle API v2 · Discord accounts
 
-PocketBase 0.40.5. JSON requests, `Authorization: Bearer <member token>` or PocketBase SDK auth headers. All dates come from the server. Production uses HTTPS.
+PocketBase 0.40.5. JSON requests; authenticated requests use a PocketBase **users** token (`Authorization: Bearer <token>`). HTTPS for hosted connections. No superuser credentials belong in either client.
 
-## Provisioning
+## Authentication
 
-`POST /api/odyle/create` (public, rate limited):
+The browser calls `pb.collection('users').authWithOAuth2({ provider: 'discord', createData: { displayName: 'Adventurer' } })`. PocketBase creates or loads the account linked to that Discord identity. Public password registration and password sign-in are disabled.
 
-```json
-{ "name": "Evening expedition", "displayName": "Leader", "cost": 40 }
-```
+`POST /api/odyle/desktop-code` with `{}` returns `{ code, expiresAt }` to an authenticated account. The 16-character code expires after five minutes, is stored as a digest, and replaces that account's previous unused code.
 
-Response: `{ token, record, room, sessionId, invites: [{ code, role, expiresAt }] }`. The record has role `owner`; invites have role `reporter` or `viewer`. Save leader credentials securely. Never distribute the leader token.
+`POST /api/odyle/pair` is public and rate limited. Body `{ code }`; response `{ token, record }` for the same account. The code is consumed atomically. Windows stores the application token in DPAPI, never Discord credentials.
 
-`POST /api/odyle/join` (public, rate limited):
+`POST /api/collections/users/auth-refresh` refreshes a valid token. Tokens last seven days; accounts/data persist independently of token expiry.
 
-```json
-{ "code": "12-CHARACTER-CODE", "displayName": "Player" }
-```
+## Rooms
 
-Response: `{ token, record, room, sessionId }`. Invite determines role. Code whitespace/hyphens are ignored. Invitations expire in 30 minutes. Tokens are scoped to one member and room, with 24-hour lifetime.
+| Method / route | Body | Result and authorization |
+| --- | --- | --- |
+| POST `/api/odyle/create` | `{ name, cost: 40 }` | Signed-in user creates owned room; returns `{ room, membership, invites }` |
+| POST `/api/odyle/join` | `{ code }` | Join as reporter/viewer; returns `{ room, membership }`; repeat join is idempotent |
+| GET `/api/odyle/rooms` | — | All rooms of the current account |
+| GET `/api/odyle/snapshot/{id}` | — | Member-only `{ room, members, serverNow }`; each member has `displayName` and `characters` |
+| POST `/api/odyle/sharing` | `{ roomId, enabled }` | Reporter/owner opts to share all saved characters in this room |
+| POST `/api/odyle/settings` | `{ roomId, cost }` | Owner changes cube cost, integer 1–1000 |
+| POST `/api/odyle/invites` | `{ roomId }` | Owner revokes old codes and receives reporter/viewer invites |
+| POST `/api/odyle/revoke` | `{ roomId, memberId }` | Owner removes another membership |
+| POST `/api/odyle/leave` | `{ roomId }` | Non-owner removes their membership; character data remains |
+| POST `/api/odyle/close` | `{ roomId }` | Owner deletes room and memberships; character data remains |
 
-## Authenticated actions
+Room codes are valid for 30 minutes; memberships and rooms have no automatic inactivity expiry. Room snapshots include character data only when its owner opted to share it there; the owner can always see their own saved characters. Viewer accounts can maintain private characters, but cannot share them in a viewer-only room. Display-name collisions are resolved by user/member IDs.
 
-| POST route suffix under `/api/odyle/` | Body | Role | Result |
-| --- | --- | --- | --- |
-| `session` | `{}` | owner/reporter | New `{ sessionId, sequence: 0 }`; clears confidence |
-| `sharing` | `{ "enabled": true }` | owner/reporter | Opt in/out; clears prior reading |
-| `report` | See below | owner/reporter | Own normalized reading only |
-| `invalidate` | `{}` | owner/reporter | Clear confidence and reading |
-| `heartbeat` | `{}` | all | Update presence, return `{ serverNow }` |
-| `settings` | `{ "cost": 30 }` | owner | Update cube cost, 1–1000 |
-| `invites` | `{}` | owner | Revoke old invites and return new codes |
-| `revoke` | `{ "memberId": "id" }` | owner | Remove another credential in the room |
-| `leave` | `{}` | all | Delete self; owner closes the entire room |
+## Persistent characters and publisher sessions
 
-Example report:
+Own characters can be read with the normal PocketBase `characters` collection API. Others' records and all direct character writes are locked. Shared readings are read via authorized room snapshots.
+
+`POST /api/odyle/session` with `{}` returns `{ sessionId, sequence: 0 }`. Optional `{ previousSessionId }` rotates that device's session and invalidates its last readings without clearing stored values or other devices' sessions.
+
+`POST /api/odyle/report`:
 
 ```json
 {
-  "sessionId": "returned-publisher-session",
+  "sessionId": "publisher-session-id",
   "sequence": 1,
-  "region": "GLOBAL_EU",
-  "server": "Your server",
+  "characterId": null,
   "characterName": "Your character",
+  "server": "Your server",
+  "region": "GLOBAL_EU",
   "value": 0,
   "source": "manual",
   "confirmed": true
 }
 ```
 
-Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Values are integers 0–1,000,000. Sequence must increase in the active publisher session; packet reports are rejected in this MVP. `confirmed` means the person explicitly checked their in-game total. Never extrapolate regeneration.
+Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Packet reports are rejected in this MVP.
 
-## Read and subscribe
+`POST /api/odyle/heartbeat` with `{ sessionId, characterId }` updates presence for the character only when that session owns its latest reading. It never changes the last reading timestamp. Empty `{}` can synchronize the browser's server clock without claiming a character is online.
 
-Use normal PocketBase collection APIs for `rooms` and `members`. Collection rules permit only the authenticated member's room. All direct collection writes are locked; mutations go through the routes above. The `invites` collection is inaccessible to clients.
+`POST /api/odyle/invalidate` with `{ characterId, sessionId }` marks the latest reading invalid for current readiness if it belongs to that session. It **retains** value, identity and observation timestamp. Confirmed historical values are distinct from current confidence (`valid`). Readings older than 45 seconds are stale; 90 seconds without presence means offline.
 
-Subscribe through the PocketBase SDK to `members/*` and your room record in `rooms`. Load a complete room/member snapshot on initial connection and every SSE reconnect. The hidden `sessionId` field is returned only by provisioning and `session`, not regular record reads. A member record may contain zero internally while unconfirmed; use `confirmed` and `lastReadingAt` before displaying the numeric value. Never convert unknown to zero.
+## Realtime
 
-`POST /api/collections/members/auth-refresh` refreshes a still-valid credential. Rotation, joining and auth refresh do not reconfirm energy. Credential deletion revokes future requests and live delivery.
+Subscribe through the PocketBase SDK to `odyle.room.<roomId>`. The server checks room membership at subscription and before each delivery. Events contain only `{ refresh: true }`; fetch the authorized snapshot afterward and on reconnect. Removed members cannot fetch the snapshot or receive further notifications. User and provider tokens are never broadcast.

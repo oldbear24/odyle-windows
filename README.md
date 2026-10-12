@@ -1,51 +1,36 @@
 # Odyle Windows Companion
 
-A .NET 10 WPF tray app that shares your own confirmed Odyle Energy with a private PocketBase party room. The web UI, schema and server hooks live in [odyle-dashboard](https://github.com/oldbear24/odyle-dashboard).
+A .NET 10 WPF tray app for your **Discord-linked Odyle account**, persistent characters and private PocketBase rooms. The dashboard and backend are in [odyle-dashboard](https://github.com/oldbear24/odyle-dashboard).
 
-## Current features
+## Use it
 
-- Join with a **player invite** from the dashboard; viewer codes are rejected.
-- Explicit consent, manual energy confirmation, character/server and Global region selection.
-- Genuine zero is supported. No reading appears as a dash.
-- Presence heartbeat every 20 seconds. Readings become stale after 45 seconds; heartbeats do not refresh them.
-- Reset confidence after reconnect/resume; never upload an old number automatically.
-- Switch character clears the previous reading before changing identity.
-- Close the window to keep it in the tray; quit stops sharing. Leave revokes your credential.
-- Tokens persisted with Windows DPAPI, scoped to the current OS user. Hosted connections require HTTPS.
+1. Start/configure the dashboard's backend and sign in on the web with Discord.
+2. On **My rooms & characters**, choose **Pair Windows app**.
+3. Enter that server's URL and the one-time pairing code in this app. The code expires after five minutes and can be used once.
+4. Select a saved character or add another one. Confirm its current in-game Odyle total; each character keeps its own saved value.
+5. Select a room and explicitly enable sharing there. You can enter additional room invite codes in the app. Values remain saved when you leave a room or sign out.
 
-**Automatic capture is unavailable.** This MVP does not install Npcap, inspect game traffic/memory, modify AION 2, or automate gameplay. A validated Global reading adapter can be added later behind explicit opt-in.
+The app stores a PocketBase account token using Windows DPAPI, never Discord passwords or OAuth tokens. Hosted connections require HTTPS; HTTP is allowed only on localhost.
 
-## Build and run
+Manual totals, including zero, are supported. A heartbeat every 20 seconds updates presence; readings become stale after 45 seconds. Reconnect/resume and switching characters require a new confirmation for current readiness, while retaining last saved values. Close the window to keep it in the tray; **Quit companion** marks the active reading stale and exits.
 
-Windows 10/11, .NET SDK 10:
+**Automatic game reading is unavailable pending Global validation.** There is no Npcap installation, game memory reading, packet modification or gameplay automation.
+
+## Build and package
+
+Windows 10/11 with .NET SDK 10:
 
 ```powershell
 dotnet build src/Odyle.Reader/Odyle.Reader.csproj -c Release
 dotnet run --project src/Odyle.Reader
-```
-
-Start the dashboard's PocketBase server, create a room in its web UI, then enter `http://127.0.0.1:8090` and the player invite in the app. For a hosted server use its HTTPS URL. Choose your character/server, enable sharing, read **Odyle Energy** in the game, and confirm the number.
-
-Local credentials live in `%LOCALAPPDATA%\Odyle\session.bin` encrypted by DPAPI. They cannot be moved to another OS user as plaintext configuration. Starting the app restores a valid room session with sharing off and requires a new reading.
-
-## Verify and package
-
-```powershell
 dotnet run --project tests/Odyle.Core.Checks -c Release
 ./scripts/publish.ps1
 ```
 
-The script creates `artifacts/odyle-win-x64.zip` with a self-contained executable and SHA-256 checksum. Use `-Runtime win-arm64` for ARM64. Initial releases are unsigned; the build does not claim publisher signing. Tagged GitHub builds create a draft release for review.
+Packaging creates `artifacts/odyle-win-x64.zip` with a self-contained executable and SHA-256 checksum. Use `-Runtime win-arm64` for ARM64. Builds are unsigned. Tag workflows create draft releases; checks build and upload the ZIP on each push.
 
-The contract check can optionally exercise a running PocketBase backend with two arguments: server URL and a disposable test player invite. It joins, resets, consents, reports zero, sends a heartbeat, invalidates and leaves. Never supply a leader or superuser token.
+The optional end-to-end check accepts a test server URL and **disposable desktop pairing code** as two arguments. It pairs, refreshes the account, saves confirmed zero, sends presence, invalidates freshness and confirms the value is retained. It does not delete characters or memberships.
 
-## Structure
+Credentials are in `%LOCALAPPDATA%\Odyle\session.bin`. An older guest credential will fail the new account API and must be replaced by pairing from the Discord dashboard.
 
-```text
-src/Odyle.Core/           PocketBase REST client and wire contracts
-src/Odyle.Reader/         WPF interface, tray lifecycle and DPAPI storage
-tests/Odyle.Core.Checks/  contract/security checks and optional API smoke check
-scripts/publish.ps1       self-contained Windows release packaging
-```
-
-See [API contract](docs/api.md) for backend compatibility. The source was built on Windows with .NET 10.0.400. Actual game packet integration is outside this release.
+See [API contract](docs/api.md) and the dashboard's [Discord setup](https://github.com/oldbear24/odyle-dashboard/blob/main/docs/discord-setup.md). Live Discord sign-in requires the operator's provider configuration; it is never replaced by password registration.
