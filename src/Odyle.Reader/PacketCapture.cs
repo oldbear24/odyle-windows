@@ -13,11 +13,13 @@ using Odyle.Core;
 
 namespace Odyle.Reader;
 
+public enum CaptureStatus { Waiting, Listening, Midstream, Problem }
+
 public sealed class PacketCapture : IAsyncDisposable
 {
     private readonly CancellationTokenSource cancellation = new();
     private Task[] workers = Array.Empty<Task>();
-    public event Action<string>? Status;
+    public event Action<CaptureStatus, string>? Status;
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
@@ -95,7 +97,7 @@ public sealed class PacketCapture : IAsyncDisposable
     private void Receive(string name)
     {
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
-        if (handle == IntPtr.Zero) { Status?.Invoke("Capture interface unavailable. Check Npcap permissions."); return; }
+        if (handle == IntPtr.Zero) { Status?.Invoke(CaptureStatus.Problem, "Capture interface unavailable. Check Npcap permissions."); return; }
         var streams = new Dictionary<Flow, (TcpReceiveStream Tcp, ExperimentalOdyleDecoder Decoder, bool Failed)>();
         var lastFilter = ""; var flows = Array.Empty<Flow>(); var nextRefresh = DateTimeOffset.MinValue; bool? previouslyConnected = null;
         try
@@ -120,7 +122,7 @@ public sealed class PacketCapture : IAsyncDisposable
                     }
                     foreach (var removed in streams.Keys.Where(key => !flows.Contains(key)).ToArray()) streams.Remove(removed);
                     var connected = flows.Length > 0;
-                    if (connected != previouslyConnected) Status?.Invoke(connected ? "Listening to AION2 packets · Global format remains unverified." : "Waiting for an AION2 IPv4 connection.");
+                    if (connected != previouslyConnected) { if (connected) Status?.Invoke(CaptureStatus.Listening, "Listening to AION2 · waiting for the Odyle snapshot."); else Status?.Invoke(CaptureStatus.Waiting, "Waiting for the AION2 game connection…"); }
                     previouslyConnected = connected;
                     foreach (var key in streams.Keys.ToArray()) if (streams[key].Tcp.GapSince is { } gap && DateTimeOffset.UtcNow - gap > TimeSpan.FromSeconds(3)) streams[key] = (new(), new(), true);
                 }
@@ -145,7 +147,11 @@ public sealed class PacketCapture : IAsyncDisposable
                     Interlocked.Add(ref gameBytes, total - ipLength - tcpLength);
                     if (!streams.TryGetValue(flow, out var state))
                     {
-                        var decoder = new ExperimentalOdyleDecoder(startsAligned: (bytes[tcp + 13] & 2) != 0); decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
+                        var aligned = (bytes[tcp + 13] & 2) != 0;
+                        var decoder = new ExperimentalOdyleDecoder(startsAligned: aligned); decoder.Candidate += c => Candidate?.Invoke(c);
+                        // Joining an established connection means the startup snapshot already passed.
+                        if (!aligned) Status?.Invoke(CaptureStatus.Midstream, "Game already connected · relog or change channel so the reader sees the Odyle snapshot.");
+                        decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
                         decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
                         decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
                         streams[flow] = state = (new(), decoder, false);
@@ -159,12 +165,12 @@ public sealed class PacketCapture : IAsyncDisposable
                 {
                     // Never restart framing in the middle of a damaged stream.
                     foreach (var key in streams.Keys.ToArray()) streams[key] = (new(), new(), true);
-                    Status?.Invoke("Unsupported or incomplete packets · reconnect the game before retrying.");
+                    Status?.Invoke(CaptureStatus.Problem, "Unsupported or incomplete packets · reconnect the game before retrying.");
                 }
                 finally { Array.Clear(bytes); }
             }
         }
-        catch (Exception) { Status?.Invoke("Capture unavailable. Check Npcap and reconnect the game."); }
+        catch (Exception) { Status?.Invoke(CaptureStatus.Problem, "Capture unavailable. Check Npcap and reconnect the game."); }
         finally { pcap_close(handle); }
     }
     public async ValueTask DisposeAsync() { cancellation.Cancel(); await Task.WhenAll(workers); cancellation.Dispose(); }

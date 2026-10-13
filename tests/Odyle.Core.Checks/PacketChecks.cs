@@ -28,8 +28,8 @@ static class PacketChecks
         Assert(observations.Single().Mode == 8 && observations.Single().First == 20, "diagnostics never imply a total without baseline");
         var snapshot = Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50 });
         decoder.Feed(snapshot.AsSpan(0, 3)); Assert(candidates.Count == 0, "fragment incomplete");
-        decoder.Feed(snapshot.AsSpan(3)); Assert(candidates.Last().Total == 150 && !candidates.Last().IsVerified, "sum remains unverified");
-        decoder.Feed(update); Assert(candidates.Last().Total == 120, "dynamic update needs remembered base");
+        decoder.Feed(snapshot.AsSpan(3)); Assert(candidates.Last().Total == 150 && candidates.Last().Source == CandidateSource.Snapshot, "snapshot sum");
+        decoder.Feed(update); Assert(candidates.Last().Total == 120 && candidates.Last().Source == CandidateSource.Update, "dynamic update needs remembered base");
         var beforeOtherStat = candidates.Count;
         decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 4, 12, 7, 20, 0 }));
         Assert(candidates.Count == beforeOtherStat, "unrelated stat field never emits Odyle");
@@ -49,7 +49,7 @@ static class PacketChecks
         var encoded = new byte[LZ4Codec.MaximumOutputSize(snapshot.Length)]; var length = LZ4Codec.Encode(snapshot, encoded);
         var compressed = new byte[6 + length]; compressed[0] = compressed[1] = 255;
         BinaryPrimitives.WriteInt32LittleEndian(compressed.AsSpan(2), snapshot.Length); encoded.AsSpan(0, length).CopyTo(compressed.AsSpan(6));
-        decoder.Feed(Frame(compressed)); Assert(candidates.Single().Total == 150 && !candidates.Single().IsVerified, "LZ4 frame");
+        decoder.Feed(Frame(compressed)); Assert(candidates.Single().Total == 150, "LZ4 frame");
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50, 0x0c, 1, 8, 100, 30 })); decoder.Feed(update);
         Assert(candidates.Count == 0, "ambiguous snapshot is unknown");
@@ -59,18 +59,18 @@ static class PacketChecks
         Reject(() => new ExperimentalOdyleDecoder().Feed(Frame(invalidLz4)), "bounded decompression");
         var midstream = new ExperimentalOdyleDecoder(startsAligned: false); var seen = new List<PacketCandidate>();
         midstream.Candidate += seen.Add;
-        midstream.Feed(snapshot); Assert(seen.Count == 0, "no reading before a frame boundary");
+        midstream.Feed(snapshot); Assert(seen.Count == 0 && !midstream.Synchronized, "no reading before a frame boundary");
         midstream.Feed(new byte[] { 0x06, 0x00 }); Assert(seen.Count == 0, "split heartbeat waits");
         midstream.Feed(new byte[] { 0x36 });
         midstream.Feed(Frame(new byte[] { 0xf4, 0x0b, 0x61, 0x0c, 1, 7, 0, 0x86, 3 }));
-        Assert(seen.Single().Primary == 0 && seen.Single().Bonus == 390 && seen.Single().Total == 390 && !seen.Single().IsVerified, "flagged 0 plus 390 after heartbeat");
+        Assert(seen.Single().Primary == 0 && seen.Single().Bonus == 390 && seen.Single().Total == 390 && midstream.Synchronized, "flagged 0 plus 390 after heartbeat");
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3 }));
-        Assert(candidates.Single().Primary == 0 && candidates.Single().Bonus == 390 && !candidates.Single().IsVerified, "single-component snapshot remains a hypothesis");
+        Assert(candidates.Single().Primary == 0 && candidates.Single().Bonus == 390 && candidates.Single().ParserVersion == ExperimentalOdyleDecoder.Version, "single-component snapshot carries the adapter name");
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
         Assert(candidates.Count == 0, "ambiguous mixed snapshot is unknown");
-        Console.WriteLine("Synthetic TCP, framing, LZ4, identity and unverified-candidate checks passed; Global compatibility is not established.");
+        Console.WriteLine("Synthetic TCP, framing, LZ4, identity and candidate checks passed.");
     }
     static byte[] Frame(byte[] content)
     {

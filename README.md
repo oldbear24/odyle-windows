@@ -12,7 +12,7 @@ A .NET 10 WPF tray app for your **Discord-linked Odyle account**, persistent cha
 
 The app remembers your connection using Windows DPAPI, never Discord passwords or OAuth tokens. It reconnects when reopened and preserves credentials during temporary server outages; use **Reconnect saved account** to retry. Hosted connections require HTTPS; HTTP is allowed only on localhost.
 
-The window is now 380 × 610. Saved characters load automatically; character details, room sharing and account options fold away. Adding another character keeps the current server and region to avoid retyping them.
+The window is 400 × 690 with a dark title bar and its own icon. The reading card at the top shows the selected character, its current Odyle, reward cubes at the selected room's cost, and a Live / Stale / Saved state. Saved characters load automatically; character details, room sharing and account options fold away. Adding another character keeps the current server and region to avoid retyping them.
 
 Selectors, expanders and scrolling use the same dark palette. Empty accounts have a direct detection button; manual setup includes an explicit Save action and can be cancelled when another character exists. Invalid form input keeps the draft open and does not reconnect the reader.
 
@@ -24,14 +24,14 @@ Selectors, expanders and scrolling use the same dark palette. Empty accounts hav
 
 | Package | Approximate ZIP size | Requirements |
 | --- | --- | --- |
-| `odyle-win-x64.zip` | 161 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
+| `odyle-win-x64.zip` | 200 KB | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) for Windows x64 |
 | `odyle-win-x64-self-contained.zip` | 68 MB | Bundles its runtime |
 
 When updating, quit the old app using **Quit** in its window or tray menu; closing the window keeps it running. Extract the new ZIP and run `Odyle.exe`. The small download uses the installed runtime; Microsoft shows the required runtime download dialog if it is missing. Choose **Desktop Runtime**, which includes WPF support. Use the standalone package if you prefer no runtime installation. Sizes refer to this build and may change slightly.
 
-**Manual entry is disabled in both clients and the backend.** Legacy totals remain as historical values. A heartbeat every 20 seconds updates presence; readings become stale after 45 seconds. Reconnect/resume and switching characters require a new verified game snapshot for current readiness, while retaining last saved values. Close the window to keep it in the tray; **Quit companion** marks the active reading stale and exits.
+**Readings come from the game only; manual entry is disabled in both clients and the backend.** While the reader runs, every decoded Odyle value is sent to your account under the adapter name `global-reference-v1`, re-confirmed every 20 seconds while game packets keep arriving, and the same pulse updates presence. The dashboard shows a value as live while those confirmations continue and as stale 45 seconds after they stop. Stopping the reader, switching characters, disconnecting or quitting marks the current reading stale while keeping the last value. If the server refuses a reading (for example a backend that does not list the adapter), the card shows **Not saved** with the server's message and the app retries a minute later. Close the window to keep it in the tray; **Quit** exits.
 
-**This release is a packet-reader prototype.** A live EU Global / Lumiel check on Steam build 25800038 successfully read the startup value **0 + 390 = 390**, matching the user's game display. Live changes and other character values still need validation, so no candidate is sent to the backend yet. It passively decodes incoming IPv4/TCP game traffic owned by the local AION2 process using an existing Npcap installation. TCP reassembly, heartbeat synchronization, bounded framing and LZ4 decoding produce local, explicitly unverified candidates. Unknown formats remain unknown. No game memory access, packet injection or gameplay automation is implemented. Npcap is installed separately and is not bundled. See [validation and limitations](docs/packet-reader.md).
+**How the reader works.** It passively decodes incoming IPv4/TCP game traffic owned by the local AION2 process using an existing Npcap installation: TCP reassembly, heartbeat synchronization, bounded framing, LZ4 blocks, the own-character message, the Odyle snapshot and live stat updates. A live EU Global / Lumiel check on Steam build 25800038 read the startup value **0 + 390 = 390**, matching the game display; the live-update path follows the same documented format and should be compared against the in-game number after a spend or recharge. Start the reader **before** logging in: the snapshot is sent once at login, so joining an established connection shows a hint to relog or change channel. No game memory access, packet injection or gameplay automation is implemented. Npcap is installed separately and is not bundled. See [packet reader details](docs/packet-reader.md).
 
 ## Build and package
 

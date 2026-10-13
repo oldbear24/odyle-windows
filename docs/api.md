@@ -51,12 +51,12 @@ Own characters can be read with the normal PocketBase `characters` collection AP
   "region": "GLOBAL_EU",
   "value": 0,
   "source": "packet",
-  "parserVersion": "validated-global-build-adapter",
+  "parserVersion": "global-reference-v1",
   "confirmed": true
 }
 ```
 
-Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports from a version in the backend `lib/protocols.cjs` registry are accepted. That registry is currently empty: no Global build has been validated, so production rejects all new reports. Manual reports are always rejected. Client metadata is not cryptographic proof of a game observation. Synthetic adapter approval exists only in disposable integration-test hooks.
+Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports whose `parserVersion` is listed in the backend `lib/protocols.cjs` registry are accepted; it currently lists `global-reference-v1`, the Windows companion's Global stream decoder. Manual reports are always rejected. The Windows app re-sends the current value every 20 seconds while the game connection is alive so `lastReadingAt` stays fresh. Client metadata is not cryptographic proof of a game observation. The synthetic `test-fixture-v1` adapter is approved only in disposable integration-test hooks.
 
 `POST /api/odyle/heartbeat` with `{ sessionId, characterId }` updates presence for the character only when that session owns its latest reading. It never changes the last reading timestamp. Empty `{}` can synchronize the browser's server clock without claiming a character is online.
 

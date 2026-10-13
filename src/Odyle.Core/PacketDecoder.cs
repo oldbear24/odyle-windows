@@ -51,22 +51,30 @@ public sealed class TcpReceiveStream
     }
 }
 
-public sealed record PacketCandidate(int Total, ulong EntityId, string ParserVersion)
+/// <summary>One Odyle observation decoded from the game stream.</summary>
+/// <param name="Total">Base plus bonus energy as the game displays it.</param>
+/// <param name="EntityId">Stat owner id from the snapshot or update frame.</param>
+/// <param name="ParserVersion">Adapter name the backend must approve before storing the value.</param>
+/// <param name="Source">Whether the value came from a full snapshot or an incremental update.</param>
+public sealed record PacketCandidate(int Total, ulong EntityId, string ParserVersion, CandidateSource Source = CandidateSource.Snapshot)
 {
-    // One Global startup read matched; live updates and identity binding
-    // still require validation before this adapter can publish.
-    public bool IsVerified => false;
     public int Primary { get; init; }
     public int Bonus { get; init; }
 }
+public enum CandidateSource { Snapshot, Update }
 
 // Diagnostic fields only; an update without a snapshot is not a total.
 public sealed record OdyleUpdateObservation(byte Mode, ulong First, ulong? Second, int TrailerBytes, byte Direction);
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
+/// <summary>
+/// Decodes the Global AION2 stream: length-prefixed frames, optional transport
+/// flag, LZ4 blocks, own identity (3336), stat snapshot (0B61) and stat update (0C61).
+/// </summary>
 public sealed class ExperimentalOdyleDecoder
 {
-    public const string Version = "reference-odyle-v1-unverified";
+    /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
+    public const string Version = "global-reference-v1";
     private readonly List<byte> buffered = new();
     private ulong? entity;
     private ulong? ownCharacter;
@@ -74,6 +82,8 @@ public sealed class ExperimentalOdyleDecoder
     private readonly bool startsAligned;
     private bool synchronized;
     public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
+    /// <summary>True once a frame boundary is known. A midstream start waits for a protocol heartbeat.</summary>
+    public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
     public event Action? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
@@ -97,13 +107,14 @@ public sealed class ExperimentalOdyleDecoder
         }
         while (buffered.Count > 0)
         {
-            var data = buffered.ToArray(); var position = 0;
-            if (!TryVarint(data, ref position, out var encoded)) return;
+            var position = 0;
+            if (!TryVarint(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(buffered), ref position, out var encoded)) return;
             if (encoded == 0) { buffered.RemoveAt(0); continue; }
             var length = (long)encoded + position - 4;
             if (length < position + 2 || length > 1048576) throw new InvalidDataException("Unsupported game framing.");
-            if (data.Length < length) return;
-            buffered.RemoveRange(0, (int)length); DecodeFrame(data.AsSpan(position, (int)length - position), 0);
+            if (buffered.Count < length) return;
+            var frame = buffered.GetRange(position, (int)length - position).ToArray();
+            buffered.RemoveRange(0, (int)length); DecodeFrame(frame, 0);
         }
     }
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)
@@ -163,8 +174,7 @@ public sealed class ExperimentalOdyleDecoder
                 var p = i + (twoValues ? 2 : 3);
                 if (oneValue)
                 {
-                    // Reference servers omit the base when it is zero. This
-                    // shape remains a local hypothesis until Global validation.
+                    // Servers omit the base component when it is zero.
                     if (TryVarint(payload, ref p, out var singleId) && TryVarint(payload, ref p, out var value) && singleId > 0 && value <= 1000000)
                         candidates.Add((singleId, 0, (int)value));
                     continue;
@@ -190,7 +200,7 @@ public sealed class ExperimentalOdyleDecoder
             if (entity != id || baseline is null) return;
             ulong left = second is null ? (ulong)baseline.Value : first, right = second ?? first;
             if (payload.Length - p != (payload[0] == 1 ? 5 : 1) || left > 1000000 || right > 1000000 || left + right > 1000000) { entity = null; baseline = null; return; }
-            baseline = (int)left; Candidate?.Invoke(new((int)(left + right), id, Version) { Primary = (int)left, Bonus = (int)right });
+            baseline = (int)left; Candidate?.Invoke(new((int)(left + right), id, Version, CandidateSource.Update) { Primary = (int)left, Bonus = (int)right });
         }
     }
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)

@@ -11,7 +11,9 @@ public sealed record JoinResponse(Room Room, Membership Membership);
 public sealed record RoomsResponse(Room[] Rooms);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt)
 {
-    public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString() : "—")} Odyle)";
+    public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
+    public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => "Asia", var other => other };
+    public string Location => $"{Server} · {RegionLabel}";
 }
 public sealed record RecordList<T>(T[] Items);
 public sealed record PublisherSession(string SessionId, long Sequence);
@@ -55,7 +57,7 @@ public sealed class PartyApi : IDisposable
     }
     public async Task<Character> ReportAsync(PacketReading reading)
     {
-        if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion) || reading.ParserVersion == ExperimentalOdyleDecoder.Version) throw new ArgumentException("An approved Global packet adapter is required.");
+        if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion)) throw new ArgumentException("A packet adapter name is required.");
         if (reading.Value is < 0 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(reading), "Odyle must be between 0 and 1,000,000.");
         if (string.IsNullOrWhiteSpace(reading.CharacterName) || string.IsNullOrWhiteSpace(reading.Server)) throw new ArgumentException("Character and server are required.");
         return (await PostAsync<ReportResponse>("api/odyle/report", reading)).Character;
