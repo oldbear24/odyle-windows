@@ -7,6 +7,13 @@ var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record
 if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player") throw new Exception("Account pairing contract failed.");
 var c = JsonSerializer.Deserialize<Character>("""{"id":"c","user":"discord-user","characterName":"Main","server":"EU","region":"GLOBAL_EU","value":0,"confirmed":true,"valid":false,"lastReadingAt":"2026-10-12 12:00:00.000Z"}""", options)!;
 if (c.Value != 0 || !c.Confirmed || c.Valid || !c.Label.Contains("0 Odyle")) throw new Exception("Stored stale zero contract failed.");
+// Room snapshot as the backend sends it: PocketBase record dates, extra fields, ISO server time.
+var snapshot = JsonSerializer.Deserialize<RoomSnapshot>("""{"room":{"id":"r","name":"Evening","owner":"u","cost":40,"collectionName":"party_rooms"},"serverNow":"2026-10-12T12:00:00.000Z","members":[{"id":"m","user":"l","room":"r","role":"reporter","displayName":"Lumina","sharing":true,"sharedCharacters":["c"],"characters":[{"id":"c","user":"l","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":180,"confirmed":true,"valid":true,"source":"packet","shared":true,"lastReadingAt":"2026-10-12 11:00:00.000Z","lastSeenAt":"2026-10-12 11:59:50.000Z","parserVersion":"global-reference-v1"}]}]}""", options)!;
+var mate = snapshot.Members.Single().Characters.Single(); var serverNow = Readiness.Parse(snapshot.ServerNow)!.Value;
+if (snapshot.Room.Cost != 40 || snapshot.Members[0].DisplayName != "Lumina" || mate.Value != 180) throw new Exception("Room snapshot contract failed.");
+// Presence follows the reader's heartbeat, not the age of the value: same thresholds as the dashboard.
+if (Readiness.Of(mate, serverNow) != Presence.Live || Readiness.Of(mate, serverNow.AddSeconds(40)) != Presence.Stale || Readiness.Of(mate, serverNow.AddSeconds(80)) != Presence.Offline) throw new Exception("Presence thresholds failed.");
+if (Readiness.Of(mate with { Valid = false }, serverNow) != Presence.Stale || Readiness.Of(mate with { Confirmed = false }, serverNow) != Presence.Unknown || Readiness.Of(mate with { LastSeenAt = "" }, serverNow) != Presence.Offline) throw new Exception("Invalidated, unknown or absent readings were shown as live.");
 using var message = JsonDocument.Parse(JsonSerializer.Serialize(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 0, "test-fixture-v1"), options));
 if (message.RootElement.GetProperty("value").GetInt32() != 0 || message.RootElement.GetProperty("source").GetString() != "packet") throw new Exception("Zero reading wire contract failed.");
 try { using var rejected = new PartyApi("http://example.com"); throw new Exception("Insecure remote URL accepted."); } catch (ArgumentException) { }

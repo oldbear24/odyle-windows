@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -10,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -19,15 +17,16 @@ using Odyle.Core;
 using Forms = System.Windows.Forms;
 
 namespace Odyle.Reader;
-public sealed record RoomShare(Room Room, Character Character, string Name, string Detail, bool Shared, bool CanShare, string Hint);
-public sealed record CharacterShares(Character Character, string Title, RoomShare[] Rooms);
+public sealed record CharacterSharing(string Title, string Rooms);
+public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint);
+public sealed record PartyRoom(string Name, PartyMate[] Mates);
 public partial class MainWindow : Window
 {
     private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem }
     private PartyApi? api;
     private PacketCapture? capture;
     private readonly SettingsWindow settings = new();
-    private string sessionId = "", activeCharacterId = "", accountName = "";
+    private string sessionId = "", activeCharacterId = "", accountName = "", accountId = "";
     // The character always comes from the game; the user cannot pick one.
     // currentCharacterId: character shown in the card (last one the game named).
     // gameCharacterKey: identity the game last named (UnknownOwner after a switch it
@@ -38,6 +37,10 @@ public partial class MainWindow : Window
     private ulong? ownerEntity;
     private Character[] characters = [];
     private Room[] rooms = [];
+    // Room snapshots for the party list; serverOffset corrects this PC's clock for presence.
+    private RoomSnapshot[] snapshots = [];
+    private TimeSpan serverOffset;
+    private bool refreshingParty;
     private long sequence, lastGameBytes;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince;
     private PacketCandidate? latest;
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly Forms.NotifyIcon tray;
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
@@ -62,14 +66,15 @@ public partial class MainWindow : Window
         menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(QuitAsync).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
-        settings.DashboardButton.Click += Dashboard_Click; settings.LogoutButton.Click += Logout_Click; settings.JoinRoomButton.Click += JoinRoom_Click;
+        settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += Npcap_Click; settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
-        settings.RoomsList.AddHandler(ToggleButton.ClickEvent, new RoutedEventHandler(RoomShare_Click));
+        // Only while the window is open; showing it refreshes at once.
+        partyTimer.Tick += async (_, _) => { if (IsVisible) await RefreshPartyAsync(); };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); };
         clock.Start();
-        ShowConnected(false); RenderRooms(); RenderHero();
+        ShowConnected(false); RenderRooms(); RenderParty(); RenderHero();
     }
     private static System.Drawing.Icon LoadTrayIcon()
     {
@@ -95,7 +100,7 @@ public partial class MainWindow : Window
         }
         catch { }
     }
-    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
+    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); }
     private void OpenSettings()
     {
         if (settings.Owner is null && IsVisible) settings.Owner = this;
@@ -137,7 +142,6 @@ public partial class MainWindow : Window
         var seconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - moment).TotalSeconds);
         return seconds < 60 ? $"{seconds}s ago" : seconds < 3600 ? $"{seconds / 60}m ago" : seconds < 86400 ? $"{seconds / 3600}h ago" : $"{seconds / 86400}d ago";
     }
-    private static DateTimeOffset? Parse(string stamp) => DateTimeOffset.TryParse(stamp.Replace(' ', 'T'), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var value) ? value : null;
     private void RenderHero()
     {
         var connected = api is not null;
@@ -181,19 +185,45 @@ public partial class MainWindow : Window
         var room = (character is null ? null : Array.Find(rooms, r => r.Shares(character.Id))) ?? (rooms.Length > 0 ? rooms[0] : null);
         return room?.Cost is > 0 and var cost ? cost : 40;
     }
+    // Sharing is configured on the dashboard; settings only summarizes it.
     private void RenderRooms()
     {
-        settings.RoomsList.ItemsSource = rooms.Length == 0 ? Array.Empty<CharacterShares>() : characters.Select(c => new CharacterShares(c, $"{c.CharacterName} · {c.Server}",
-            rooms.Select(r => new RoomShare(r, c, r.Name, r.Role == "viewer" ? "viewer" : $"{r.Cost}/cube", r.Shares(c.Id), r.Role != "viewer",
-                r.Role == "viewer" ? "Viewers cannot share characters in this room." : $"Show {c.CharacterName} in {r.Name}")).ToArray())).ToArray();
-        settings.NoRoomsLabel.Text = characters.Length == 0 ? "No characters yet · start the reader and log into the game." : rooms.Length == 0 ? "No rooms yet · join one with an invite code below." : "";
+        settings.SharingList.ItemsSource = rooms.Length == 0 ? Array.Empty<CharacterSharing>() : characters.Select(c =>
+        {
+            var shared = rooms.Where(r => r.Shares(c.Id)).Select(r => r.Name).ToArray();
+            return new CharacterSharing($"{c.CharacterName} · {c.Server}", shared.Length == 0 ? "Private in every room" : "Shared in " + string.Join(", ", shared));
+        }).ToArray();
+        settings.NoRoomsLabel.Text = characters.Length == 0 ? "No characters yet · start the reader and log into the game." : rooms.Length == 0 ? "No rooms yet · create or join one on the dashboard." : "";
         settings.NoRoomsLabel.Visibility = settings.NoRoomsLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+    // Other members' characters that are live or recently stale, per room. Offline
+    // characters and your own are left out; your own is the card above.
+    private void RenderParty()
+    {
+        var now = DateTimeOffset.UtcNow + serverOffset;
+        var groups = snapshots.Select(s => new PartyRoom(s.Room.Name, s.Members.Where(m => m.User != accountId)
+                .SelectMany(m => m.Characters.Select(c => (Member: m, Character: c, State: Readiness.Of(c, now))))
+                .Where(x => x.State is Presence.Live or Presence.Stale)
+                .OrderBy(x => x.State).ThenByDescending(x => x.Character.Value)
+                .Select(x => Mate(x.Member, x.Character, x.State, s.Room.Cost)).ToArray()))
+            .Where(g => g.Mates.Length > 0).ToArray();
+        PartyList.ItemsSource = groups;
+        PartyPanel.Visibility = api is not null && rooms.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        PartyEmptyLabel.Visibility = groups.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private PartyMate Mate(RoomMember member, Character c, Presence state, int cost)
+    {
+        cost = cost > 0 ? cost : 40;
+        var live = state == Presence.Live; var cubes = c.Value / cost;
+        return new PartyMate(c.CharacterName, c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}",
+            c.Value.ToString("N0"), $"{cubes} {(cubes == 1 ? "cube" : "cubes")}{(live ? "" : " · stale")}", Brush(live ? "Mint" : "Amber"),
+            live ? $"{member.DisplayName} · live from the game" : $"{member.DisplayName} · last value; their reader stopped reporting");
     }
     private void RenderClock()
     {
         var character = CurrentCharacter;
         AgeLabel.Text = capture is not null && latest is not null ? "updated " + Age(latestAt)
-            : character is { Confirmed: true } && Parse(character.LastReadingAt) is { } saved ? "saved " + Age(saved) : "";
+            : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? "saved " + Age(saved) : "";
         if (capture is { } running)
             CaptureStatsLabel.Text = $"{running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game";
     }
@@ -239,13 +269,14 @@ public partial class MainWindow : Window
     private async Task ConnectAsync(AuthResponse auth)
     {
         if (api is null) return;
-        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountName = auth.Record.DisplayName;
+        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountName = auth.Record.DisplayName; accountId = auth.Record.Id;
         string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch { host = "server"; }
         settings.AccountDetail.Text = $"Signed in as {accountName} via Discord · {host}";
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
         Status("Connected · start the reader, then log into your character.");
         lastTick = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
+        await RefreshPartyAsync(); partyTimer.Start();
     }
     private async Task ReloadAsync()
     {
@@ -255,9 +286,10 @@ public partial class MainWindow : Window
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
     }
-    private void Dashboard_Click(object sender, RoutedEventArgs e)
+    // The backend also serves the dashboard; "#/" opens My rooms & characters.
+    private void OpenDashboard(string page)
     {
-        try { Process.Start(new ProcessStartInfo(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)) { UseShellExecute = true }); }
+        try { Process.Start(new ProcessStartInfo(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text) + "/" + page) { UseShellExecute = true }); }
         catch (Exception error) { Status(error.Message); }
     }
     private async void Pair_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(PairAsync);
@@ -285,28 +317,24 @@ public partial class MainWindow : Window
     }
 
     // ----- Rooms -----
-    private async void JoinRoom_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    // Read-only, so it runs beside reader operations without their lock. Rooms are
+    // reloaded too: sharing changed on the dashboard shows up here.
+    private async Task RefreshPartyAsync()
     {
-        if (api is null) return; var joined = await api.JoinAsync(settings.InviteInput.Password); settings.InviteInput.Clear(); await ReloadAsync();
-        Status("Joined " + joined.Room.Name + ". Switch on each character it should see in settings.");
-    });
-    // Each toggle links one character to one room.
-    private async void RoomShare_Click(object sender, RoutedEventArgs e)
-    {
-        if ((e.OriginalSource ?? sender) is not CheckBox { DataContext: RoomShare share } box) return;
-        if (busy) { RenderRooms(); return; }
-        await ExecuteAsync(async () =>
+        if (api is not { } current || refreshingParty) return;
+        refreshingParty = true;
+        try
         {
-            try
-            {
-                if (api is null) return;
-                var enabled = box.IsChecked == true;
-                var shared = await api.SetSharingAsync(share.Room.Id, share.Character.Id, enabled);
-                rooms = rooms.Select(r => r.Id == share.Room.Id ? r with { SharedCharacters = shared, Sharing = shared.Length > 0 } : r).ToArray();
-                Status(enabled ? $"{share.Character.CharacterName} is now shared in {share.Room.Name}." : $"{share.Character.CharacterName} is no longer shared in {share.Room.Name}. Values stay saved.");
-            }
-            finally { RenderRooms(); }
-        });
+            var list = await current.GetRoomsAsync();
+            var fetched = await Task.WhenAll(list.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
+            if (api != current) return;
+            rooms = list; snapshots = fetched.OfType<RoomSnapshot>().ToArray();
+            if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
+            RenderRooms(); RenderParty(); RenderHero();
+        }
+        // Connection problems are reported by the heartbeat; keep the last list.
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
+        finally { refreshingParty = false; }
     }
     private void Npcap_Click(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://npcap.com/#download") { UseShellExecute = true });
 
@@ -507,9 +535,9 @@ public partial class MainWindow : Window
     private async Task DisconnectAsync(string message, bool clearSaved)
     {
         await StopReaderAsync();
-        heartbeat.Stop(); api?.Dispose(); api = null; if (clearSaved) SessionStore.Clear();
-        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; characters = []; rooms = [];
-        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms();
+        heartbeat.Stop(); partyTimer.Stop(); api?.Dispose(); api = null; if (clearSaved) SessionStore.Clear();
+        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = [];
+        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty();
         Status(message); RenderHero();
     }
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(() => DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true));
@@ -517,7 +545,7 @@ public partial class MainWindow : Window
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     private async Task QuitAsync()
     {
-        heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); await operations.WaitAsync();
+        heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); await operations.WaitAsync();
         try { await Task.WhenAny(StopReaderAsync(), Task.Delay(4000)); api?.Dispose(); }
         finally { operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); System.Windows.Application.Current.Shutdown(); }
     }

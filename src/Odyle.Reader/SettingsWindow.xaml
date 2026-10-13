@@ -21,27 +21,20 @@
     <DockPanel><Button x:Name="DashboardButton" Style="{StaticResource Ghost}" Content="Dashboard ↗" Margin="-6,0,0,0" ToolTip="Open the party dashboard in your browser"/><Button x:Name="LogoutButton" HorizontalAlignment="Right" Style="{StaticResource GhostDanger}" Content="Disconnect" ToolTip="Disconnect this app from your account"/></DockPanel>
    </StackPanel>
 
-   <!-- Rooms: one toggle per character and room -->
+   <!-- Rooms: configured on the dashboard, summarized here -->
    <StackPanel x:Name="RoomsPanel" Visibility="Collapsed">
-    <TextBlock Style="{StaticResource Section}" Text="SHARE IN ROOMS"/>
-    <TextBlock Style="{StaticResource Hint}" Text="Characters are added when the reader sees them in game. Each room sees only the characters you switch on." Margin="2,0,0,4"/>
-    <ItemsControl x:Name="RoomsList" Focusable="False">
+    <TextBlock Style="{StaticResource Section}" Text="ROOMS &amp; SHARING"/>
+    <TextBlock Style="{StaticResource Hint}" Text="Rooms, invitations and which characters each room sees are set on the dashboard. Changes show up here on their own." Margin="2,0,0,4"/>
+    <ItemsControl x:Name="SharingList" Focusable="False">
      <ItemsControl.ItemTemplate><DataTemplate>
-      <StackPanel Margin="0,6,0,0">
-       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="2,0,0,2" TextTrimming="CharacterEllipsis"/>
-       <ItemsControl ItemsSource="{Binding Rooms}" Focusable="False">
-        <ItemsControl.ItemTemplate><DataTemplate>
-         <CheckBox IsChecked="{Binding Shared, Mode=OneWay}" IsEnabled="{Binding CanShare}" ToolTip="{Binding Hint}" Margin="2,3,2,3">
-          <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10.5" Foreground="{StaticResource Faint}" Margin="8,0,0,0" VerticalAlignment="Center"/><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/></DockPanel>
-         </CheckBox>
-        </DataTemplate></ItemsControl.ItemTemplate>
-       </ItemsControl>
+      <StackPanel Margin="2,6,0,0">
+       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+       <TextBlock Text="{Binding Rooms}" Style="{StaticResource Hint}" Margin="0,1,0,0"/>
       </StackPanel>
      </DataTemplate></ItemsControl.ItemTemplate>
     </ItemsControl>
     <TextBlock x:Name="NoRoomsLabel" Style="{StaticResource Hint}" Margin="2,4,0,0"/>
-    <TextBlock Text="Join a room" Style="{StaticResource FieldLabel}" Margin="2,12,0,4"/>
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="InviteInput" ToolTip="Room invitation code"/><Button x:Name="JoinRoomButton" Grid.Column="2" Style="{StaticResource Secondary}" Content="Join"/></Grid>
+    <Button x:Name="ManageButton" Style="{StaticResource Secondary}" Content="Manage rooms &amp; sharing ↗" Margin="0,10,0,0" ToolTip="Open My rooms &amp; characters on the dashboard"/>
    </StackPanel>
 
    <!-- Reader -->

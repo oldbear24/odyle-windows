@@ -8,15 +8,15 @@ A .NET 10 WPF tray app for your **Discord-linked Odyle account**, persistent cha
 2. On **My rooms & characters**, choose **Pair Windows app**, then **Copy connection link**.
 3. Open **Settings** (⚙) and click **Paste link & connect**. Settings opens by itself until the app is paired. The link includes the server address and a one-use code that expires after five minutes. You can also paste it into the input and press Enter. An older code-only connection works through the collapsed **Server address** option.
 4. Install Npcap from its official site and click **Start reader** before logging your character into the game. The character always comes from the game: its own-character message provides the name, server and Global region, and the app saves and shows that character automatically, following any in-game switch. There is no character picker or manual character entry; a character on a server the app cannot map yet is shown but not saved.
-5. In **Settings → Share in rooms**, switch on each room that should see each character. Sharing is per character: a new character starts private. Join more rooms there with an invite code. Values remain saved when you leave a room or sign out.
+5. Rooms and sharing are set on the dashboard: under **My rooms & characters → Room sharing**, switch on each room that should see each character (**Manage rooms & sharing ↗** in Settings opens it). Sharing is per character: a new character starts private. Create and join rooms there too. The app picks up changes by itself. Values remain saved when you leave a room or sign out.
 
 The app remembers your connection using Windows DPAPI, never Discord passwords or OAuth tokens. It reconnects when reopened and preserves credentials during temporary server outages; use **Reconnect saved account** to retry. Hosted connections require HTTPS; HTTP is allowed only on localhost.
 
-The main window is a compact 280 px card with a dark title bar and its own icon: the character the game reports, its current Odyle, reward cubes at the cost of the first room it is shared in, a Live / Stale / Saved state, the reader status and **Start/Stop reader**. Everything else is in the separate **Settings** window (⚙ or the tray menu): pairing and server address, account and disconnect, per-character room sharing, joining rooms and Npcap setup. Closing either window keeps the app in the tray.
+The main window is a compact 280 px card with a dark title bar and its own icon: the character the game reports, its current Odyle, reward cubes at the cost of the first room it is shared in, a Live / Stale / Saved state, the reader status and **Start/Stop reader**. Below it, **Online in your rooms** lists the other members' characters each of your rooms can see while their readers report them: Odyle, cubes at that room's cost, and an amber dot once a reading has gone stale. Offline characters and your own are left out. The list refreshes every 15 seconds while the window is open. The separate **Settings** window (⚙ or the tray menu) holds only what belongs to this PC: pairing and server address, account and disconnect, a read-only summary of where each character is shared, and Npcap setup. Everything else is configured on the dashboard. Closing either window keeps the app in the tray.
 
 ![Compact app with an illustrative character](docs/compact-preview.png)
 
-![Settings with per-character room sharing](docs/settings-preview.png)
+![Settings with the room sharing summary](docs/settings-preview.png)
 
 ## Download size
 

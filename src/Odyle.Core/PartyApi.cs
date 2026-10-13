@@ -9,17 +9,17 @@ public sealed record Room(string Id, string Name, int Cost, string Role, bool Sh
 {
     public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
 }
-public sealed record Membership(string Id, string Room, string User, string Role, string[]? SharedCharacters = null);
-public sealed record SharingResponse(string[] SharedCharacters);
-public sealed record JoinResponse(Room Room, Membership Membership);
 public sealed record RoomsResponse(Room[] Rooms);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt)
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => "Asia", var other => other };
     public string Location => $"{Server} · {RegionLabel}";
 }
 public sealed record RecordList<T>(T[] Items);
+// A room as its members see it: others' characters only when linked to this room.
+public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters);
+public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow);
 public sealed record PublisherSession(string SessionId, long Sequence);
 public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
 public sealed record ReportResponse(Character Character);
@@ -46,10 +46,8 @@ public sealed class PartyApi : IDisposable
     }
     public async Task<Room[]> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Rooms;
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
-    public Task<JoinResponse> JoinAsync(string code) => PostAsync<JoinResponse>("api/odyle/join", new { code });
     public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null) => PostAsync<PublisherSession>("api/odyle/session", new { previousSessionId });
-    // Sharing is per character: each room lists which of the account's characters it may see.
-    public async Task<string[]> SetSharingAsync(string roomId, string characterId, bool enabled) => (await PostAsync<SharingResponse>("api/odyle/sharing", new { roomId, characterId, enabled })).SharedCharacters;
+    public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));
     public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });

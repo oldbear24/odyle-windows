@@ -36,6 +36,32 @@
    <!-- Packet reader -->
    <DockPanel Margin="0,8,0,0"><Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><StackPanel><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/><TextBlock x:Name="CaptureStatsLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,1,0,0" Visibility="Collapsed"/></StackPanel></DockPanel>
    <Button x:Name="ReportButton" Content="Connect in settings" Click="Reader_Click" Margin="0,6,0,0" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
+
+   <!-- Party: other members' characters that are online in your rooms -->
+   <StackPanel x:Name="PartyPanel" Visibility="Collapsed">
+    <TextBlock Style="{StaticResource Section}" Text="ONLINE IN YOUR ROOMS"/>
+    <ScrollViewer MaxHeight="230" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+     <ItemsControl x:Name="PartyList" Focusable="False">
+      <ItemsControl.ItemTemplate><DataTemplate>
+       <StackPanel Margin="0,0,0,6">
+        <TextBlock Text="{Binding Name}" FontSize="10" Foreground="{StaticResource Faint}" Margin="2,0,0,1" TextTrimming="CharacterEllipsis"/>
+        <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
+         <ItemsControl.ItemTemplate><DataTemplate>
+          <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="9,5" Margin="0,3,0,0" ToolTip="{Binding Hint}">
+           <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"><TextBlock Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right"/><TextBlock Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/></StackPanel>
+            <Ellipse DockPanel.Dock="Left" Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"/></StackPanel>
+           </DockPanel>
+          </Border>
+         </DataTemplate></ItemsControl.ItemTemplate>
+        </ItemsControl>
+       </StackPanel>
+      </DataTemplate></ItemsControl.ItemTemplate>
+     </ItemsControl>
+    </ScrollViewer>
+    <TextBlock x:Name="PartyEmptyLabel" Style="{StaticResource Hint}" Text="No one else is online in your rooms." Margin="2,0,0,0"/>
+   </StackPanel>
   </StackPanel>
 
   <!-- Footer -->

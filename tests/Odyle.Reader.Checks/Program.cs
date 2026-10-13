@@ -24,7 +24,8 @@ static class ReaderChecks
                 if (args.Length == 2 && args[0] == "--screenshots") { Screenshots(window, args[1]); return; }
                 var settings = Settings(window);
                 Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
-                Check(settings.FindName("CodeInput") is PasswordBox && settings.FindName("RoomsList") is ItemsControl && window.FindName("CodeInput") is null, "pairing and room sharing live in the settings window");
+                Check(settings.FindName("CodeInput") is PasswordBox && window.FindName("CodeInput") is null, "pairing lives in the settings window");
+                Check(settings.FindName("SharingList") is ItemsControl && settings.FindName("InviteInput") is null && settings.FindName("RoomsList") is null, "rooms and sharing are managed on the dashboard; settings only summarizes them");
                 Check(Control<Button>(window, "ReportButton").Content as string == "Connect in settings", "an unpaired reader points to settings");
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "—", "no value is shown before a reading");
                 var root = (FrameworkElement)settings.Content;
@@ -40,8 +41,17 @@ static class ReaderChecks
                 Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
                 Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
                 Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
+                // The party list shows other members' live and stale characters, never your own or offline ones.
+                Field("accountId").SetValue(window, "u"); Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true) });
+                Field("snapshots").SetValue(window, new[] { PartySnapshot() }); Call(window, "RenderParty");
+                var party = (PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource;
+                Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible && party.Length == 1 && party[0].Name == "Evening", "a connected account sees the party of its rooms");
+                Check(party[0].Mates.Select(m => m.Name).SequenceEqual(new[] { "Lumina", "KaelenAlt" }), "only others' online characters are listed, live first");
+                Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && party[0].Mates[1].Cubes.EndsWith("stale"), "each mate shows Odyle, cubes and staleness");
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
+                Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
+                Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
                 if (args.Length == 2)
                 {
                     var api = new PartyApi(args[0]); var auth = await api.PairAsync(args[1]);
@@ -81,30 +91,28 @@ static class ReaderChecks
                     var switched = afterSwitch.Single(c => c.CharacterName == "SwitchedHero");
                     Check(switched is { Value: 120, Valid: true, Confirmed: true }, "the new character receives its own snapshot");
                     Check((string)Field("currentCharacterId").GetValue(window)! == switched.Id, "the card switches with the game");
-                    // Settings link each character to each room separately.
+                    // Sharing is chosen on the dashboard; the app picks it up and lists the room's party.
                     using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
                     {
                         http.DefaultRequestHeaders.Authorization = new("Bearer", auth.Token);
-                        (await http.PostAsJsonAsync("api/odyle/create", new { name = "UI room" })).EnsureSuccessStatusCode();
+                        var created = await http.PostAsJsonAsync("api/odyle/create", new { name = "UI room" }); created.EnsureSuccessStatusCode();
+                        var roomId = (await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("room").GetProperty("id").GetString();
+                        (await http.PostAsJsonAsync("api/odyle/sharing", new { roomId, characterId = switched.Id, enabled = true })).EnsureSuccessStatusCode();
                     }
-                    await (Task)Call(window, "ReloadAsync")!;
-                    var groups = (CharacterShares[])((ItemsControl)settings.FindName("RoomsList")).ItemsSource;
-                    Check(groups.Length == 2 && groups.All(g => g.Rooms.Single() is { Shared: false, CanShare: true }), "a new room starts private for every character");
-                    var share = groups.Single(g => g.Character.Id == switched.Id).Rooms.Single();
-                    Call(window, "RoomShare_Click", new CheckBox { DataContext = share, IsChecked = true }, new RoutedEventArgs());
-                    await Until(() => !(bool)Field("busy").GetValue(window)!, 400);
-                    Check((await api.GetRoomsAsync()).Single().SharedCharacters!.SequenceEqual(new[] { switched.Id }), "a room toggle shares only its character");
-                    groups = (CharacterShares[])((ItemsControl)settings.FindName("RoomsList")).ItemsSource;
-                    Check(groups.Single(g => g.Character.Id == switched.Id).Rooms.Single().Shared && !groups.Single(g => g.Character.Id == automatic.Id).Rooms.Single().Shared, "the toggles show the saved state");
+                    await (Task)Call(window, "RefreshPartyAsync")!;
+                    var summary = (CharacterSharing[])((ItemsControl)settings.FindName("SharingList")).ItemsSource;
+                    Check(summary.Single(g => g.Title.StartsWith("SwitchedHero")).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero")).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
+                    Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 2, "the room snapshot is read from the server");
+                    Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource).Length == 0 && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters are not listed as party members");
                     // A character on an unmapped server is never saved under an assumed identity.
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(43, "UnmappedHero", 2360, null, "GLOBAL_EU"))!;
                     Check((await api.GetCharactersAsync()).Length == 2, "unmapped server creates no character");
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Value: 120, Valid: false }, "leaving for an unsupported character ends the previous reading's freshness");
                     await (Task)Call(window, "StopReaderAsync")!;
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
-                    Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, per-character room sharing and persistence passed.");
+                    Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
-                Console.WriteLine("Windows UI compact window, separate settings, reading card and narrow layout passed.");
+                Console.WriteLine("Windows UI compact window, separate settings, reading card, party list and narrow layout passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -123,7 +131,7 @@ static class ReaderChecks
         var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
         Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
-        Field("currentCharacterId").SetValue(window, "c1");
+        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot() });
         ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
@@ -134,7 +142,7 @@ static class ReaderChecks
         Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
-        Call(window, "RenderHero");
+        Call(window, "RenderHero"); Call(window, "RenderParty");
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "Detected TestHero · Lumiel. Saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
@@ -159,6 +167,17 @@ static class ReaderChecks
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32); bitmap.Render(visual);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(path); encoder.Save(file);
+    }
+    // Synthetic room: your own live character, two live/stale mates and one offline mate.
+    static RoomSnapshot PartySnapshot()
+    {
+        string Ago(int seconds) => DateTime.UtcNow.AddSeconds(-seconds).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+        Character Hero(string id, string user, string name, int value, bool valid, int seen) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet");
+        return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), [
+            new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2)]),
+            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5)]),
+            new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
+            new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
     }
     static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
     static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
