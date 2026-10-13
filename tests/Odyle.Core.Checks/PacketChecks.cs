@@ -23,36 +23,61 @@ static class PacketChecks
         var decoder = new ExperimentalOdyleDecoder(); var candidates = new List<PacketCandidate>(); var changed = 0;
         var observations = new List<OdyleUpdateObservation>(); decoder.UpdateObserved += observations.Add;
         decoder.Candidate += candidates.Add; decoder.CharacterChanged += () => changed++;
+        // Decrease form: direction 0, one value, one trailing byte. The value is the new total
+        // (reference measurement: base 40 + bonus 600, spend 80, packet value 560).
         var update = Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 7, 20, 0 });
-        decoder.Feed(update); Assert(candidates.Count == 0, "dynamic update without baseline is unknown");
-        Assert(observations.Single().Mode == 8 && observations.Single().First == 20, "diagnostics never imply a total without baseline");
+        var otherOwner = Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 9, 30, 0 });
+        decoder.Feed(update);
+        Assert(candidates.Single() is { Total: 20, Source: CandidateSource.Update, OwnerConfirmed: false, Primary: null, Bonus: null }, "a single-value update is a complete total without a snapshot");
+        Assert(observations.Single().Mode == 8 && observations.Single().First == 20, "update diagnostics");
+        decoder.Feed(otherOwner); Assert(candidates.Count == 1, "a second stat id is ignored while the first is adopted");
+        decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 0, 30, 0 })); Assert(candidates.Count == 1, "owner id zero is never adopted");
         var snapshot = Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50 });
-        decoder.Feed(snapshot.AsSpan(0, 3)); Assert(candidates.Count == 0, "fragment incomplete");
-        decoder.Feed(snapshot.AsSpan(3)); Assert(candidates.Last().Total == 150 && candidates.Last().Source == CandidateSource.Snapshot, "snapshot sum");
-        decoder.Feed(update); Assert(candidates.Last().Total == 120 && candidates.Last().Source == CandidateSource.Update, "dynamic update needs remembered base");
+        decoder.Feed(snapshot.AsSpan(0, 3)); Assert(candidates.Count == 1, "fragment incomplete");
+        decoder.Feed(snapshot.AsSpan(3)); Assert(candidates.Last() is { Total: 150, Source: CandidateSource.Snapshot, OwnerConfirmed: true, Primary: 100, Bonus: 50 }, "snapshot sum");
+        decoder.Feed(update); Assert(candidates.Last() is { Total: 20, Source: CandidateSource.Update, OwnerConfirmed: true, Primary: null }, "a single-value update replaces the total; its split is unknown");
+        // Increase form: direction 1, flag byte and a 32-bit delta; two values repeat base and bonus.
+        decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 1, 0x0c, 1, 7, 100, 70, 1, 20, 0, 0, 0 }));
+        Assert(candidates.Last() is { Total: 170, Primary: 100, Bonus: 70, Source: CandidateSource.Update, OwnerConfirmed: true }, "a two-value increase carries base and bonus");
         var beforeOtherStat = candidates.Count;
         decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 4, 12, 7, 20, 0 }));
         Assert(candidates.Count == beforeOtherStat, "unrelated stat field never emits Odyle");
-        decoder.Feed(update); Assert(candidates.Count == beforeOtherStat + 1 && candidates.Last().Total == 120, "unrelated stat update preserves Odyle baseline");
+        decoder.Feed(update); Assert(candidates.Count == beforeOtherStat + 1 && candidates.Last().Total == 20, "unrelated stat update preserves the Odyle owner");
+        decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 1, 8, 1, 7, 20, 0 }));
+        Assert(candidates.Count == beforeOtherStat + 1, "an increase without its delta trailer is not a reading");
         var ownIdentity = Frame(new byte[] { 0x33, 0x36, 42, 0, 0, 0, 0, 0 });
         decoder.Feed(ownIdentity); decoder.Feed(ownIdentity); decoder.Feed(update);
-        Assert(changed == 0 && candidates.Last().Total == 120, "first and repeated own identity preserve the stat baseline");
-        decoder.Feed(Frame(new byte[] { 0x33, 0x36, 43, 0, 0, 0, 0, 0 })); decoder.Feed(update);
-        Assert(changed == 1, "different own identity invalidates baseline");
+        Assert(changed == 0 && candidates.Last() is { Total: 20, OwnerConfirmed: true }, "first and repeated own identity keep the snapshot-confirmed owner");
+        decoder.Feed(Frame(new byte[] { 0x33, 0x36, 43, 0, 0, 0, 0, 0 }));
+        var beforeSwitch = candidates.Count; decoder.Feed(otherOwner);
+        Assert(changed == 1 && candidates.Count == beforeSwitch, "after a character switch only a confirmed owner is read");
+        decoder.Feed(update); Assert(candidates.Last() is { Total: 20, OwnerConfirmed: true }, "the confirmed owner keeps reading after a switch");
         decoder.Reset(); changed = 0; decoder.Feed(snapshot);
         var count = candidates.Count;
-        decoder.Feed(Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 9, 20, 0 }));
+        decoder.Feed(otherOwner);
         decoder.Feed(Frame(new byte[] { 0x8d, 0, 3, 7, 50 })); Assert(candidates.Count == count, "other entity and sprint ignored");
         decoder.Feed(Frame(new byte[] { 0x33, 0x36 })); decoder.Feed(update);
-        Assert(changed == 1 && candidates.Count == count, "character change invalidates baseline");
+        Assert(changed == 1 && candidates.Last() is { Total: 20, OwnerConfirmed: true }, "a character change keeps the confirmed Odyle owner");
+        // Owners confirmed by another stream or an earlier run are trusted before any snapshot.
+        var owners = new KnownOwners(); owners.Add(7);
+        var trusted = new ExperimentalOdyleDecoder(owners: owners); var trustedSeen = new List<PacketCandidate>(); trusted.Candidate += trustedSeen.Add;
+        trusted.Feed(otherOwner); Assert(trustedSeen.Count == 0, "with a known owner other stat ids are not adopted");
+        trusted.Feed(update); Assert(trustedSeen.Single() is { Total: 20, OwnerConfirmed: true }, "a known owner is read before any snapshot");
+        var shared = new KnownOwners();
+        var provisional = new ExperimentalOdyleDecoder(owners: shared); var provisionalSeen = new List<PacketCandidate>(); provisional.Candidate += provisionalSeen.Add;
+        provisional.Feed(otherOwner); Assert(provisionalSeen.Single() is { EntityId: 9, OwnerConfirmed: false }, "the first stat id is adopted provisionally");
+        shared.Add(7);
+        provisional.Feed(update); Assert(provisionalSeen.Last() is { EntityId: 7, OwnerConfirmed: true }, "a confirmed owner replaces an adopted one");
+        provisional.Feed(otherOwner); Assert(provisionalSeen.Count == 2, "the adopted id is dropped once an owner is confirmed");
         decoder.Reset(); candidates.Clear();
         var encoded = new byte[LZ4Codec.MaximumOutputSize(snapshot.Length)]; var length = LZ4Codec.Encode(snapshot, encoded);
         var compressed = new byte[6 + length]; compressed[0] = compressed[1] = 255;
         BinaryPrimitives.WriteInt32LittleEndian(compressed.AsSpan(2), snapshot.Length); encoded.AsSpan(0, length).CopyTo(compressed.AsSpan(6));
         decoder.Feed(Frame(compressed)); Assert(candidates.Single().Total == 150, "LZ4 frame");
-        decoder.Reset(); candidates.Clear();
-        decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50, 0x0c, 1, 8, 100, 30 })); decoder.Feed(update);
-        Assert(candidates.Count == 0, "ambiguous snapshot is unknown");
+        var fresh = new ExperimentalOdyleDecoder(); var freshSeen = new List<PacketCandidate>(); fresh.Candidate += freshSeen.Add;
+        fresh.Feed(Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50, 0x0c, 1, 8, 100, 30 }));
+        Assert(freshSeen.Count == 0, "ambiguous snapshot is unknown");
+        fresh.Feed(update); Assert(freshSeen.Single() is { Total: 20, OwnerConfirmed: false }, "live updates are still read after an ambiguous snapshot");
         var invalid = new byte[] { 255, 255, 255, 255, 255, 1 };
         Reject(() => new ExperimentalOdyleDecoder().Feed(invalid), "oversized framing");
         var invalidLz4 = new byte[] { 255, 255, 255, 255, 127, 0 };
@@ -64,13 +89,16 @@ static class PacketChecks
         midstream.Feed(new byte[] { 0x36 });
         midstream.Feed(Frame(new byte[] { 0xf4, 0x0b, 0x61, 0x0c, 1, 7, 0, 0x86, 3 }));
         Assert(seen.Single().Primary == 0 && seen.Single().Bonus == 390 && seen.Single().Total == 390 && midstream.Synchronized, "flagged 0 plus 390 after heartbeat");
+        var afterLogin = new ExperimentalOdyleDecoder(startsAligned: false); var lateSeen = new List<PacketCandidate>(); afterLogin.Candidate += lateSeen.Add;
+        afterLogin.Feed(new byte[] { 0x06, 0x00, 0x36 }); afterLogin.Feed(Frame(new byte[] { 0xf4, 0x0c, 0x61, 1, 8, 1, 7, 0x86, 3, 1, 40, 0, 0, 0 }));
+        Assert(lateSeen.Single() is { Total: 390, Source: CandidateSource.Update, OwnerConfirmed: false, Primary: null }, "a reader started after login reads the next flagged update");
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3 }));
         Assert(candidates.Single().Primary == 0 && candidates.Single().Bonus == 390 && candidates.Single().ParserVersion == ExperimentalOdyleDecoder.Version, "single-component snapshot carries the adapter name");
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
         Assert(candidates.Count == 0, "ambiguous mixed snapshot is unknown");
-        Console.WriteLine("Synthetic TCP, framing, LZ4, identity and candidate checks passed.");
+        Console.WriteLine("Synthetic TCP, framing, LZ4, identity, owner and candidate checks passed.");
     }
     static byte[] Frame(byte[] content)
     {

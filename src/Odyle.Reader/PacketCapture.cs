@@ -27,6 +27,10 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     private long receivedPackets, gameBytes;
+    // Stat owner ids snapshots confirmed, shared by every stream so updates can be trusted before a snapshot.
+    private readonly KnownOwners owners = new();
+    /// <summary>Trust a stat owner id a snapshot confirmed on this or an earlier run.</summary>
+    public void TrustOwner(ulong id) => owners.Add(id);
     public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
     public long GameBytes => Interlocked.Read(ref gameBytes);
     private sealed record Flow(string Local, ushort LocalPort, string Remote, ushort RemotePort);
@@ -153,11 +157,11 @@ public sealed class PacketCapture : IAsyncDisposable
                     {
                         var aligned = (flags & 2) != 0;
                         if (!aligned && payloadLength == 0) continue;
-                        var decoder = new ExperimentalOdyleDecoder(startsAligned: aligned); decoder.Candidate += c => Candidate?.Invoke(c);
-                        // Joining an established connection means the startup snapshot already passed.
-                        // A new connection replaces that warning: its snapshot is still to come.
+                        var decoder = new ExperimentalOdyleDecoder(startsAligned: aligned, owners); decoder.Candidate += c => Candidate?.Invoke(c);
+                        // Joining an established connection means the startup snapshot and identity already
+                        // passed; live updates still carry the total. A new connection replaces that warning.
                         if (aligned) Status?.Invoke(CaptureStatus.Listening, "Listening to AION2 · waiting for the Odyle snapshot.");
-                        else Status?.Invoke(CaptureStatus.Midstream, "Started after login · change channel or relog once so the game resends Odyle.");
+                        else Status?.Invoke(CaptureStatus.Midstream, "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
                         decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
                         decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
                         decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);

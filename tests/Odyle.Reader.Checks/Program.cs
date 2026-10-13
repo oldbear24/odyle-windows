@@ -41,6 +41,9 @@ static class ReaderChecks
                 Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
                 Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
                 Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
+                // A reader started after login shows the next live update and asks for one relog so the game names the character.
+                Call(window, "OnCandidate", inert, new PacketCandidate(380, 7, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { OwnerConfirmed = false });
+                Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Relog"), "a live update read without a snapshot is shown and asks for one relog");
                 // The party list shows other members' live and stale characters, never your own or offline ones.
                 Field("accountId").SetValue(window, "u"); Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true) });
                 Field("snapshots").SetValue(window, new[] { PartySnapshot() }); Call(window, "RenderParty");
@@ -147,7 +150,7 @@ static class ReaderChecks
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
         Field("latest").SetValue(window, null); Call(window, "RenderHero");
-        Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · change channel or relog once so the game resends Odyle.");
+        Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
         Field("capture").SetValue(window, null);
         Console.WriteLine("Rendered previews to " + directory);

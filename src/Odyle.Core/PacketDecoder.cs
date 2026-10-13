@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using K4os.Compression.LZ4;
 
 namespace Odyle.Core;
@@ -58,12 +59,26 @@ public sealed class TcpReceiveStream
 /// <param name="Source">Whether the value came from a full snapshot or an incremental update.</param>
 public sealed record PacketCandidate(int Total, ulong EntityId, string ParserVersion, CandidateSource Source = CandidateSource.Snapshot)
 {
-    public int Primary { get; init; }
-    public int Bonus { get; init; }
+    /// <summary>Base component; null when the frame carried only the total.</summary>
+    public int? Primary { get; init; }
+    /// <summary>Bonus component; null when the frame carried only the total.</summary>
+    public int? Bonus { get; init; }
+    /// <summary>False while the owner is the first stat id seen on a connection that had no snapshot.</summary>
+    public bool OwnerConfirmed { get; init; } = true;
 }
 public enum CandidateSource { Snapshot, Update }
 
-// Diagnostic fields only; an update without a snapshot is not a total.
+/// <summary>Stat owner ids a snapshot named as the Odyle counter. Shared by every stream of a capture.</summary>
+public sealed class KnownOwners
+{
+    private readonly ConcurrentDictionary<ulong, byte> ids = new();
+    public bool Any => !ids.IsEmpty;
+    public bool Contains(ulong id) => ids.ContainsKey(id);
+    public void Add(ulong id) { if (id > 0) ids[id] = 0; }
+    public ulong[] ToArray() => ids.Keys.ToArray();
+}
+
+// Diagnostic fields only; the reading itself is the candidate.
 public sealed record OdyleUpdateObservation(byte Mode, ulong First, ulong? Second, int TrailerBytes, byte Direction);
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
@@ -76,12 +91,15 @@ public sealed class ExperimentalOdyleDecoder
     /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
     public const string Version = "global-reference-v1";
     private readonly List<byte> buffered = new();
+    private readonly KnownOwners owners;
     private ulong? entity;
+    private bool ownerConfirmed;
     private ulong? ownCharacter;
-    private int? baseline;
     private readonly bool startsAligned;
     private bool synchronized;
-    public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
+    /// <param name="startsAligned">False for a connection joined midstream; framing then waits for a heartbeat.</param>
+    /// <param name="owners">Owner ids confirmed by snapshots of other streams or earlier runs.</param>
+    public ExperimentalOdyleDecoder(bool startsAligned = true, KnownOwners? owners = null) { this.startsAligned = startsAligned; synchronized = startsAligned; this.owners = owners ?? new(); }
     /// <summary>True once a frame boundary is known. A midstream start waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
@@ -90,7 +108,8 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
-    public void Reset() { buffered.Clear(); entity = null; ownCharacter = null; baseline = null; synchronized = startsAligned; }
+    public void Reset() { buffered.Clear(); ForgetOwner(); ownCharacter = null; synchronized = startsAligned; }
+    private void ForgetOwner() { entity = null; ownerConfirmed = false; }
     public void Feed(ReadOnlySpan<byte> bytes)
     {
         if (buffered.Count + bytes.Length > 1048576) throw new InvalidDataException("Frame buffer limit exceeded.");
@@ -154,8 +173,8 @@ public sealed class ExperimentalOdyleDecoder
                 ownCharacter = character;
                 if (!changed) { if (identity is not null) IdentityObserved?.Invoke(identity); return; }
             }
-            var hadIdentity = entity is not null; entity = null; baseline = null;
-            if (hadIdentity) CharacterChanged?.Invoke();
+            var hadOwner = entity is not null; ForgetOwner();
+            if (hadOwner) CharacterChanged?.Invoke();
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
@@ -182,26 +201,42 @@ public sealed class ExperimentalOdyleDecoder
                 if (TryVarint(payload, ref p, out var id) && TryVarint(payload, ref p, out var left) && TryVarint(payload, ref p, out var right) && id > 0 && left <= 1000000 && right <= 1000000 && left + right <= 1000000)
                     candidates.Add((id, (int)left, (int)(left + right)));
             }
-            if (candidates.Count != 1) { entity = null; baseline = null; return; }
-            var c = candidates[0]; entity = c.Id; baseline = c.Base; Candidate?.Invoke(new(c.Total, c.Id, Version) { Primary = c.Base, Bonus = c.Total - c.Base });
+            if (candidates.Count != 1) { ForgetOwner(); return; }
+            var c = candidates[0]; entity = c.Id; ownerConfirmed = true; owners.Add(c.Id);
+            Candidate?.Invoke(new(c.Total, c.Id, Version) { Primary = c.Base, Bonus = c.Total - c.Base });
         }
         else if (frame[0] == 0x0c)
         {
             // 0C61 is a general stat update. Other field IDs do not
-            // invalidate the Odyle snapshot or supply an energy reading.
+            // disturb the Odyle owner or supply an energy reading.
             if (payload.Length >= 3 && payload[2] != 1) return;
-            if (payload.Length < 6 || payload[0] > 1 || (payload[1] != 8 && payload[1] != 12)) { entity = null; baseline = null; return; }
+            if (payload.Length < 6 || payload[0] > 1 || (payload[1] != 8 && payload[1] != 12)) { ForgetOwner(); return; }
             var p = 3;
             if (!TryVarint(payload, ref p, out var id) || !TryVarint(payload, ref p, out var first)) return;
             ulong? second = null;
             if (payload[1] == 12) { if (!TryVarint(payload, ref p, out var value)) return; second = value; }
-            if (first > 1000000 || second > 1000000) { entity = null; baseline = null; return; }
+            if (first > 1000000 || second > 1000000) { ForgetOwner(); return; }
             UpdateObserved?.Invoke(new(payload[1], first, second, payload.Length - p, payload[0]));
-            if (entity != id || baseline is null) return;
-            ulong left = second is null ? (ulong)baseline.Value : first, right = second ?? first;
-            if (payload.Length - p != (payload[0] == 1 ? 5 : 1) || left > 1000000 || right > 1000000 || left + right > 1000000) { entity = null; baseline = null; return; }
-            baseline = (int)left; Candidate?.Invoke(new((int)(left + right), id, Version, CandidateSource.Update) { Primary = (int)left, Bonus = (int)right });
+            // The single-value form carries the new total and the two-value form repeats
+            // base and bonus, so neither needs a snapshot first. An increase ends with a
+            // flag byte and a 32-bit delta, a decrease with one byte; other layouts are unknown.
+            var total = first + (second ?? 0);
+            if (payload.Length - p != (payload[0] == 1 ? 5 : 1) || total > 1000000) { if (entity == id) ForgetOwner(); return; }
+            if (!ClaimOwner(id)) return;
+            Candidate?.Invoke(new((int)total, id, Version, CandidateSource.Update) { Primary = second is null ? null : (int)first, Bonus = second is { } bonus ? (int)bonus : null, OwnerConfirmed = ownerConfirmed });
         }
+    }
+    // The update opcode is shared with other counters that differ only in their owner id.
+    // A snapshot-confirmed id, from this stream, another connection or an earlier run, is
+    // trusted and replaces an adopted one. Without any confirmed id the first id seen on
+    // this connection is adopted until a snapshot names the owner.
+    private bool ClaimOwner(ulong id)
+    {
+        if (id == 0) return false;
+        if (owners.Contains(id)) { entity = id; ownerConfirmed = true; return true; }
+        if (entity == id) return true;
+        if (entity is not null || owners.Any) return false;
+        entity = id; ownerConfirmed = false; return true;
     }
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
     {

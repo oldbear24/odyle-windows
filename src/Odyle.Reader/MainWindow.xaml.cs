@@ -178,8 +178,8 @@ public partial class MainWindow : Window
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", "Saved");
         else SetPill("Muted", "Muted", "PillNeutral", "No reading");
         ReadingLabel.Text = !connected ? "Open settings to pair with the dashboard."
-            : reading is not null && !owned ? "Waiting for the game to name the character."
-            : reading is not null ? $"{reading.Primary:N0} base + {reading.Bonus:N0} bonus · {(reading.Source == CandidateSource.Update ? "live update" : "game snapshot")}{(publishFailure is null ? "" : " · " + publishFailure)}"
+            : reading is not null && !owned ? (gameCharacterKey.Length == 0 ? "Relog or change channel once so the game names the character." : "Waiting for the game to name the character.")
+            : reading is not null ? Components(reading) + (publishFailure is null ? "" : " · " + publishFailure)
             : capture is not null ? (character is null ? "Log into a character · it is detected automatically." : "Listening for the game's Odyle snapshot…")
             : character is null ? "Start the reader, then log into your character."
             : character.Confirmed ? "Last saved value · start the reader for live values."
@@ -189,6 +189,10 @@ public partial class MainWindow : Window
         var tip = !connected ? "Odyle · Not connected" : value is { } shown ? $"Odyle · {name} · {shown:N0}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
     }
+    // A single-value live update carries the total only; the login snapshot shows both components.
+    private static string Components(PacketCandidate reading) => reading is { Primary: { } b, Bonus: { } x }
+        ? $"{b:N0} base + {x:N0} bonus · {(reading.Source == CandidateSource.Update ? "live update" : "game snapshot")}"
+        : "live update · base + bonus split after the next login";
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character)
     {
@@ -275,7 +279,7 @@ public partial class MainWindow : Window
             api.Dispose(); api = null; settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
             Status("Server unavailable. Your connection is saved; reconnect in settings when it is back online.");
         }
-        // The game sends Odyle only at login, so read from the moment the account is connected.
+        // The login snapshot names the character, so read from the moment the account is connected.
         if (api is not null && capture is null) await StartReaderAsync();
     }
     private async Task ConnectAsync(AuthResponse auth)
@@ -381,9 +385,13 @@ public partial class MainWindow : Window
     private async Task StartReaderAsync()
     {
         var next = new PacketCapture();
+        // Owners confirmed by earlier snapshots let a reader started after login trust live updates.
+        foreach (var owner in OwnerStore.Load(accountId)) next.TrustOwner(owner);
         next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
         {
             if (capture != next) return;
+            // A reading the game never attributed belongs to its connection; a new connection starts over.
+            if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
             // A new game connection while a reading is live keeps the live line.
             if (kind == CaptureStatus.Listening && readerState == ReaderState.Live) return;
             SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
@@ -424,8 +432,10 @@ public partial class MainWindow : Window
         // A snapshot is sent at login, and after a character switch the new
         // character's identity can follow it, often on a fresh connection. Hold
         // every snapshot until the game names its owner so it can never be saved
-        // to the previous character. Updates keep the owner of their snapshot.
-        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
+        // to the previous character. Updates keep the owner of their snapshot; one
+        // read without any snapshot waits for an owner the same way.
+        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); OwnerStore.Remember(accountId, observation.EntityId); }
+        else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
         if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, $"Read {observation.Total:N0} Odyle from the game · saving…");
         RenderHero();
         if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
@@ -438,7 +448,7 @@ public partial class MainWindow : Window
         // A stat owner other than the named character's: give the game longer to name it.
         if (ownerEntity is { } known && known != reading.EntityId && DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30)) { publishDelay.Start(); return; }
         readingOwnerKey = gameCharacterKey;
-        if (reading.Source == CandidateSource.Snapshot) ownerEntity = reading.EntityId;
+        if (reading.OwnerConfirmed) ownerEntity = reading.EntityId;
     }
     private async Task PublishLatestAsync()
     {
@@ -453,7 +463,8 @@ public partial class MainWindow : Window
         if (api is null || capture is null || latest is not { } reading) return;
         if (readingOwnerKey.Length == 0)
         {
-            SetReaderState(ReaderState.Listening, $"Read {reading.Total:N0} Odyle · waiting for the game to name the character."); RenderHero(); return;
+            // Without any identity this run (a start after login) only a relog or channel change names the character.
+            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 ? $"Read {reading.Total:N0} Odyle · relog or change channel once so the game names your character." : $"Read {reading.Total:N0} Odyle · waiting for the game to name the character."); RenderHero(); return;
         }
         if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
         {
@@ -513,7 +524,7 @@ public partial class MainWindow : Window
             if (latest is not null && readingOwnerKey.Length == 0)
             {
                 readingOwnerKey = key; publishDelay.Stop();
-                if (latest.Source == CandidateSource.Snapshot) ownerEntity = latest.EntityId;
+                if (latest.OwnerConfirmed) ownerEntity = latest.EntityId;
             }
             if (latest is not null) await PublishCoreAsync();
             RenderHero();
