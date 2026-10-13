@@ -71,28 +71,48 @@ public sealed class PacketCapture : IAsyncDisposable
         if (names.Count == 0) throw new InvalidOperationException("No Npcap capture interfaces available.");
         workers = names.Select(name => Task.Run(() => Receive(name))).ToArray();
     }
+    // The game's connections, shared by every capture worker: refreshed every two
+    // seconds, or at once when a packet arrives on an unknown flow (at most ten
+    // times a second), instead of each worker enumerating processes on its own.
+    private readonly object flowsLock = new();
+    private Flow[] knownFlows = Array.Empty<Flow>();
+    private DateTimeOffset knownFlowsAt = DateTimeOffset.MinValue;
+    private Flow[] CurrentFlows(bool immediate)
+    {
+        lock (flowsLock)
+        {
+            if (DateTimeOffset.UtcNow - knownFlowsAt < (immediate ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(2))) return knownFlows;
+            knownFlows = GameFlows(); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
+        }
+    }
+    private static bool IsGameProcess(int pid, Dictionary<int, bool> cache)
+    {
+        if (cache.TryGetValue(pid, out var known)) return known;
+        var game = false;
+        try { using var process = Process.GetProcessById(pid); game = process.ProcessName.Contains("AION2", StringComparison.OrdinalIgnoreCase) || process.ProcessName.Contains("AION-2", StringComparison.OrdinalIgnoreCase); } catch { }
+        return cache[pid] = game;
+    }
     private static Flow[] GameFlows()
     {
-        var ids = new HashSet<int>();
-        foreach (var process in Process.GetProcesses()) using (process) { try { if (process.ProcessName.Contains("AION2", StringComparison.OrdinalIgnoreCase) || process.ProcessName.Contains("AION-2", StringComparison.OrdinalIgnoreCase)) ids.Add(process.Id); } catch { } }
-        if (ids.Count == 0) return Array.Empty<Flow>();
         var size = 0; GetExtendedTcpTable(IntPtr.Zero, ref size, false, 2, 4, 0);
         if (size < 4 || size > 4194304) return Array.Empty<Flow>();
         var table = Marshal.AllocHGlobal(size);
         try
         {
             if (GetExtendedTcpTable(table, ref size, false, 2, 4, 0) != 0) return Array.Empty<Flow>();
-            var count = Marshal.ReadInt32(table); var result = new List<Flow>();
+            var count = Marshal.ReadInt32(table); var result = new List<Flow>(); var processes = new Dictionary<int, bool>();
             if (count < 0 || count > (size - 4) / 24) return Array.Empty<Flow>();
             for (var i = 0; i < count; i++)
             {
                 var row = IntPtr.Add(table, 4 + i * 24);
-                if (Marshal.ReadInt32(row) is not (3 or 4 or 5) || !ids.Contains(Marshal.ReadInt32(row, 20))) continue;
+                ushort Port(int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
+                // Only live connections to the game port are checked against their owning
+                // process; the game's HTTPS/login connections and every other program need
+                // no process lookup at all.
+                if (Port(16) != 13328 || Marshal.ReadInt32(row) is not (3 or 4 or 5) || !IsGameProcess(Marshal.ReadInt32(row, 20), processes)) continue;
                 var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
                 var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
-                ushort Port(int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
-                // Ignore the game's HTTPS/login connections and other protocols.
-                if (Port(16) == 13328) result.Add(new(local, Port(8), remote, Port(16)));
+                result.Add(new(local, Port(8), remote, Port(16)));
             }
             return result.Take(32).ToArray();
         }
@@ -113,7 +133,7 @@ public sealed class PacketCapture : IAsyncDisposable
             {
                 if (DateTimeOffset.UtcNow >= nextRefresh)
                 {
-                    nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = GameFlows();
+                    nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = CurrentFlows(immediate: false);
                     // Keep discovery open across reconnects. Every packet must
                     // still match a connection owned by AION2 before decoding.
                     const string filterText = "tcp and src port 13328";
@@ -137,6 +157,7 @@ public sealed class PacketCapture : IAsyncDisposable
                 var length = Marshal.ReadInt32(header, 8);
                 if (length < 1 || length > 65536 || length != Marshal.ReadInt32(header, 12)) continue;
                 var bytes = new byte[length]; Marshal.Copy(pointer, bytes, 0, length);
+                Flow? flow = null;
                 try
                 {
                     var ip = linkType == 1 ? 14 : linkType is 0 or 108 ? 4 : 0;
@@ -146,8 +167,8 @@ public sealed class PacketCapture : IAsyncDisposable
                     if (ipLength < 20 || total < ipLength + 20 || ip + total > length) continue;
                     var tcpLength = (bytes[tcp + 12] >> 4) * 4; if (tcpLength < 20 || ipLength + tcpLength > total) continue;
                     var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
-                    var flow = new Flow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
-                    if (!flows.Contains(flow)) { flows = GameFlows(); if (!flows.Contains(flow)) continue; }
+                    flow = new Flow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
+                    if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true); if (!flows.Contains(flow)) continue; }
                     var flags = bytes[tcp + 13]; var payloadLength = total - ipLength - tcpLength;
                     Interlocked.Add(ref gameBytes, payloadLength);
                     // FIN/RST ends the stream. A closing connection's last packets must not
@@ -173,8 +194,9 @@ public sealed class PacketCapture : IAsyncDisposable
                 }
                 catch (InvalidDataException)
                 {
-                    // Never restart framing in the middle of a damaged stream.
-                    foreach (var key in streams.Keys.ToArray()) streams[key] = (new(), new(), true);
+                    // Only the damaged connection is blocked, until it closes; framing is never
+                    // restarted midstream. The game's other connections keep being read.
+                    if (flow is not null && streams.ContainsKey(flow)) streams[flow] = (new(), new(), true);
                     Status?.Invoke(CaptureStatus.Problem, "Unsupported or incomplete packets · reconnect the game before retrying.");
                 }
                 finally { Array.Clear(bytes); }

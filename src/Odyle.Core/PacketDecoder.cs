@@ -7,41 +7,56 @@ namespace Odyle.Core;
 // Bounded, receive-only TCP reassembly. Gaps never become guessed bytes.
 public sealed class TcpReceiveStream
 {
+    private const int HistoryBytes = 65536, PendingLimit = 524288;
     private uint? next;
     private readonly Dictionary<uint, byte[]> pending = new();
-    private byte[] history = Array.Empty<byte>();
+    private int pendingBytes;
+    // The last 64 KB delivered, for overlap checks. It lives in the front of a
+    // double-sized buffer: appending never allocates and compaction is one in-place
+    // copy per 64 KB received instead of a fresh 64 KB array per segment.
+    private readonly byte[] history = new byte[HistoryBytes * 2];
+    private int historyLength;
     public DateTimeOffset? GapSince { get; private set; }
-    public void Reset() { next = null; pending.Clear(); history = Array.Empty<byte>(); GapSince = null; }
+    public void Reset() { next = null; pending.Clear(); pendingBytes = 0; historyLength = 0; GapSince = null; }
     public IEnumerable<byte[]> Feed(uint sequence, ReadOnlySpan<byte> payload)
     {
         if (payload.Length == 0) return Array.Empty<byte[]>();
         next ??= sequence;
         var distance = unchecked((int)(sequence - next.Value));
-        CheckOverlap(sequence, payload, next.Value - (uint)history.Length, history);
+        CheckOverlap(sequence, payload, next.Value - (uint)historyLength, history.AsSpan(0, historyLength));
         foreach (var piece in pending) CheckOverlap(sequence, payload, piece.Key, piece.Value);
         if (distance > 0)
         {
-            if (distance > 524288 || pending.Count >= 64 || pending.Values.Sum(x => x.Length) + payload.Length > 524288) throw new InvalidDataException("TCP gap exceeds buffer limit.");
-            if (pending.TryGetValue(sequence, out var old) && old.Length >= payload.Length) return Array.Empty<byte[]>();
-            pending[sequence] = payload.ToArray(); GapSince ??= DateTimeOffset.UtcNow; return Array.Empty<byte[]>();
+            if (distance > PendingLimit || pending.Count >= 64 || pendingBytes + payload.Length > PendingLimit) throw new InvalidDataException("TCP gap exceeds buffer limit.");
+            if (pending.TryGetValue(sequence, out var old)) { if (old.Length >= payload.Length) return Array.Empty<byte[]>(); pendingBytes -= old.Length; }
+            pending[sequence] = payload.ToArray(); pendingBytes += payload.Length; GapSince ??= DateTimeOffset.UtcNow; return Array.Empty<byte[]>();
         }
         var chunks = new List<byte[]>();
-        void Append(uint seq, byte[] data)
-        {
-            var skip = unchecked((int)(next!.Value - seq));
-            if (skip >= data.Length) return;
-            var bytes = data.AsSpan(Math.Max(0, skip)).ToArray(); chunks.Add(bytes); next += (uint)bytes.Length;
-            var retained = history.Concat(bytes).ToArray(); history = retained.AsSpan(Math.Max(0, retained.Length - 65536)).ToArray();
-        }
-        Append(sequence, payload.ToArray());
+        Append(sequence, payload, chunks);
         while (true)
         {
             var available = pending.Keys.Where(k => unchecked((int)(k - next!.Value)) <= 0).ToArray();
             if (available.Length == 0) break;
-            foreach (var key in available) { var bytes = pending[key]; pending.Remove(key); Append(key, bytes); }
+            foreach (var key in available) { var bytes = pending[key]; pending.Remove(key); pendingBytes -= bytes.Length; Append(key, bytes, chunks); }
         }
         if (pending.Count == 0) GapSince = null;
         return chunks;
+    }
+    private void Append(uint seq, ReadOnlySpan<byte> data, List<byte[]> chunks)
+    {
+        var skip = unchecked((int)(next!.Value - seq));
+        if (skip >= data.Length) return;
+        var bytes = data[Math.Max(0, skip)..].ToArray(); chunks.Add(bytes); next += (uint)bytes.Length; Retain(bytes);
+    }
+    private void Retain(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length >= HistoryBytes) { bytes[^HistoryBytes..].CopyTo(history); historyLength = HistoryBytes; return; }
+        if (historyLength + bytes.Length > history.Length)
+        {
+            var keep = HistoryBytes - bytes.Length;
+            history.AsSpan(historyLength - keep, keep).CopyTo(history); historyLength = keep;
+        }
+        bytes.CopyTo(history.AsSpan(historyLength)); historyLength += bytes.Length;
     }
     private static void CheckOverlap(uint sequence, ReadOnlySpan<byte> data, uint otherSequence, ReadOnlySpan<byte> other)
     {
@@ -90,7 +105,11 @@ public sealed class ExperimentalOdyleDecoder
 {
     /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
     public const string Version = "global-reference-v1";
-    private readonly List<byte> buffered = new();
+    // Undecoded stream bytes live in buffer[start..end). Consuming a frame only moves
+    // start; the data is compacted or grown when the tail runs out of room, instead
+    // of shifting the whole remainder on every frame.
+    private byte[] buffer = new byte[16384];
+    private int start, end;
     private readonly KnownOwners owners;
     private ulong? entity;
     private bool ownerConfirmed;
@@ -108,32 +127,42 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
-    public void Reset() { buffered.Clear(); ForgetOwner(); ownCharacter = null; synchronized = startsAligned; }
+    public void Reset() { start = end = 0; ForgetOwner(); ownCharacter = null; synchronized = startsAligned; }
     private void ForgetOwner() { entity = null; ownerConfirmed = false; }
+    private void Push(ReadOnlySpan<byte> bytes)
+    {
+        if (end - start + bytes.Length > 1048576) throw new InvalidDataException("Frame buffer limit exceeded.");
+        if (end + bytes.Length > buffer.Length)
+        {
+            if (start > 0) { buffer.AsSpan(start, end - start).CopyTo(buffer); end -= start; start = 0; }
+            if (end + bytes.Length > buffer.Length) Array.Resize(ref buffer, Math.Max(buffer.Length * 2, end + bytes.Length));
+        }
+        bytes.CopyTo(buffer.AsSpan(end)); end += bytes.Length;
+    }
+    private void Drop(int count) { start += count; if (start >= end) start = end = 0; }
     public void Feed(ReadOnlySpan<byte> bytes)
     {
-        if (buffered.Count + bytes.Length > 1048576) throw new InvalidDataException("Frame buffer limit exceeded.");
-        buffered.AddRange(bytes.ToArray());
+        Push(bytes);
         if (!synchronized)
         {
             // A midstream capture has no frame boundary. Wait for a complete
             // protocol heartbeat instead of interpreting arbitrary payload bytes.
-            var start = -1;
-            for (var i = 0; i + 3 <= buffered.Count; i++)
-                if (buffered[i + 1] == 0 && buffered[i + 2] == 0x36 && (buffered[i] == 6 || (buffered[i] == 0x0e && i + 11 <= buffered.Count))) { start = i; break; }
-            if (start < 0) { if (buffered.Count > 10) buffered.RemoveRange(0, buffered.Count - 10); return; }
-            buffered.RemoveRange(0, start); synchronized = true;
+            var data = buffer.AsSpan(start, end - start); var at = -1;
+            for (var i = 0; i + 3 <= data.Length; i++)
+                if (data[i + 1] == 0 && data[i + 2] == 0x36 && (data[i] == 6 || (data[i] == 0x0e && i + 11 <= data.Length))) { at = i; break; }
+            if (at < 0) { if (data.Length > 10) Drop(data.Length - 10); return; }
+            Drop(at); synchronized = true;
         }
-        while (buffered.Count > 0)
+        while (end > start)
         {
-            var position = 0;
-            if (!TryVarint(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(buffered), ref position, out var encoded)) return;
-            if (encoded == 0) { buffered.RemoveAt(0); continue; }
+            var data = buffer.AsSpan(start, end - start); var position = 0;
+            if (!TryVarint(data, ref position, out var encoded)) return;
+            if (encoded == 0) { Drop(1); continue; }
             var length = (long)encoded + position - 4;
             if (length < position + 2 || length > 1048576) throw new InvalidDataException("Unsupported game framing.");
-            if (buffered.Count < length) return;
-            var frame = buffered.GetRange(position, (int)length - position).ToArray();
-            buffered.RemoveRange(0, (int)length); DecodeFrame(frame, 0);
+            if (data.Length < length) return;
+            var frame = data.Slice(position, (int)length - position).ToArray();
+            Drop((int)length); DecodeFrame(frame, 0);
         }
     }
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)

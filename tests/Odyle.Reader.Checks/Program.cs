@@ -14,7 +14,7 @@ static class ReaderChecks
 {
     [STAThread] static void Main(string[] args)
     {
-        var app = new App(); app.InitializeComponent();
+        App.Headless = true; var app = new App(); app.InitializeComponent();
         var window = new MainWindow(false);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         Dispatcher.CurrentDispatcher.BeginInvoke(async () =>

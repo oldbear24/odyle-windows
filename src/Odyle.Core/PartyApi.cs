@@ -9,7 +9,7 @@ public sealed record Room(string Id, string Name, int Cost, string Role, bool Sh
 {
     public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
 }
-public sealed record RoomsResponse(Room[] Rooms);
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
@@ -44,7 +44,7 @@ public sealed class PartyApi : IDisposable
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", result.Token);
         return result;
     }
-    public async Task<Room[]> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Rooms;
+    public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null) => PostAsync<PublisherSession>("api/odyle/session", new { previousSessionId });
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));

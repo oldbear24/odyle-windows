@@ -41,6 +41,8 @@ public partial class MainWindow : Window
     private ulong? ownerEntity;
     private Character[] characters = [];
     private Room[] rooms = [];
+    // Server-wide Odyle per cube: the cost shown while the account has no room yet.
+    private int odylePerCube = 40;
     // Room snapshots for the party list; serverOffset corrects this PC's clock for presence.
     private RoomSnapshot[] snapshots = [];
     private TimeSpan serverOffset;
@@ -197,7 +199,7 @@ public partial class MainWindow : Window
     private int HeroCost(Character? character)
     {
         var room = (character is null ? null : Array.Find(rooms, r => r.Shares(character.Id))) ?? (rooms.Length > 0 ? rooms[0] : null);
-        return room?.Cost is > 0 and var cost ? cost : 40;
+        return room?.Cost is > 0 and var cost ? cost : odylePerCube;
     }
     // Sharing is configured on the dashboard; settings only summarizes it.
     private void RenderRooms()
@@ -227,7 +229,7 @@ public partial class MainWindow : Window
     }
     private PartyMate Mate(RoomMember member, Character c, Presence state, int cost)
     {
-        cost = cost > 0 ? cost : 40;
+        cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
         return new PartyMate(c.CharacterName, c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}",
             c.Value.ToString("N0"), $"{cubes} {(cubes == 1 ? "cube" : "cubes")}{(live ? "" : " · stale")}", Brush(live ? "Mint" : "Amber"),
@@ -297,7 +299,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); rooms = await api.GetRoomsAsync();
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube;
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -342,10 +344,10 @@ public partial class MainWindow : Window
         refreshingParty = true;
         try
         {
-            var list = await current.GetRoomsAsync();
-            var fetched = await Task.WhenAll(list.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
+            var listed = await current.GetRoomsAsync();
+            var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
             if (api != current) return;
-            rooms = list; snapshots = fetched.OfType<RoomSnapshot>().ToArray();
+            rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray();
             if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
             RenderRooms(); RenderParty(); RenderHero();
         }
