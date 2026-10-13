@@ -1,4 +1,6 @@
 using System.IO;
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -20,87 +22,89 @@ static class ReaderChecks
             try
             {
                 if (args.Length == 2 && args[0] == "--screenshots") { Screenshots(window, args[1]); return; }
-                var reader = Control<StackPanel>(window, "ReaderPanel"); reader.Visibility = Visibility.Visible; reader.IsEnabled = true;
-                Control<StackPanel>(window, "JoinPanel").Visibility = Visibility.Collapsed;
-                Call(window, "BeginCharacterDraft", false);
-                Check(Control<Button>(window, "ReportButton").IsEnabled, "empty account can start automatic detection");
-                Check(!Control<Expander>(window, "CharacterDetails").IsExpanded, "automatic detection does not require typing");
-                Call(window, "BeginCharacterDraft", true);
-                Check(Control<Button>(window, "SaveCharacterButton").Visibility == Visibility.Visible, "manual fallback exposes Save character");
-                var root = (FrameworkElement)window.Content;
-                root.Width = 344; root.Height = 480; root.Measure(new Size(344, 480)); root.Arrange(new Rect(0, 0, 344, 480)); root.UpdateLayout();
-                var scroll = Control<ScrollViewer>(window, "Scroller");
-                Check(scroll.ExtentWidth <= scroll.ViewportWidth + 1, "small window has no horizontal overflow");
-                var region = Control<ComboBox>(window, "RegionInput"); region.ApplyTemplate();
-                Check(region.Template.FindName("SelectorButton", region) is not null, "dark selector template applied");
-                var fieldColor = ((SolidColorBrush)region.Background).Color;
-                Check(fieldColor.R < 40 && fieldColor.G < 40 && fieldColor.B < 40, "selector has a dark field background");
+                var settings = Settings(window);
+                Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
+                Check(settings.FindName("CodeInput") is PasswordBox && settings.FindName("RoomsList") is ItemsControl && window.FindName("CodeInput") is null, "pairing and room sharing live in the settings window");
+                Check(Control<Button>(window, "ReportButton").Content as string == "Connect in settings", "an unpaired reader points to settings");
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "—", "no value is shown before a reading");
-                // A decoded reading is displayed immediately, even before the backend confirms it.
+                var root = (FrameworkElement)settings.Content;
+                root.Width = 300; root.Height = 480; root.Measure(new Size(300, 480)); root.Arrange(new Rect(0, 0, 300, 480)); root.UpdateLayout();
+                var scroll = (ScrollViewer)settings.FindName("Scroller");
+                Check(scroll.ExtentWidth <= scroll.ViewportWidth + 1, "narrow settings window has no horizontal overflow");
+                // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
-                Control<ComboBox>(window, "CharactersInput").ItemsSource = new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") };
-                Field("loading").SetValue(window, true); Control<ComboBox>(window, "CharactersInput").SelectedIndex = 0; Field("loading").SetValue(window, false);
-                Field("addingCharacter").SetValue(window, false);
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
                 Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
                 Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
                 Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
+                Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 if (args.Length == 2)
                 {
                     var api = new PartyApi(args[0]); var auth = await api.PairAsync(args[1]);
                     Field("api").SetValue(window, api);
                     await (Task)Call(window, "ConnectAsync", auth)!;
                     Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
-                    await Click(window, "Switch_Click");
-                    Control<TextBox>(window, "CharacterInput").Text = "Main";
-                    Control<TextBox>(window, "ServerInput").Text = "Lumiel";
-                    await Click(window, "SaveCharacter_Click");
-                    var first = (await api.GetCharactersAsync()).Single();
-                    Check(!first.Confirmed && !first.Valid && first.LastReadingAt == "", "save does not fabricate an Odyle reading");
-                    Check(((Character)Control<ComboBox>(window, "CharactersInput").SelectedItem).Id == first.Id, "saved character is selected");
-                    await Click(window, "Switch_Click");
-                    Check(Control<TextBox>(window, "ServerInput").Text == "Lumiel", "adding an alt retains server");
-                    Control<TextBox>(window, "CharacterInput").Text = "Alt";
-                    await Click(window, "SaveCharacter_Click");
-                    Check((await api.GetCharactersAsync()).Length == 2, "second character saved");
-                    await Click(window, "Switch_Click");
-                    await Click(window, "SaveCharacter_Click");
-                    Check((bool)Field("addingCharacter").GetValue(window)! && !(bool)Field("needsReconnect").GetValue(window)!, "validation preserves the editable draft and connection");
-                    Check(Control<Button>(window, "SaveCharacterButton").IsEnabled, "validation re-enables Save");
-                    await Click(window, "CancelCharacter_Click");
-                    Check(Control<ComboBox>(window, "CharactersInput").SelectedItem is Character, "cancel restores selected character");
-                    await Click(window, "Switch_Click");
-                    Control<TextBox>(window, "CharacterInput").Text = "Main";
-                    await Click(window, "SaveCharacter_Click");
-                    Check((await api.GetCharactersAsync()).Length == 2, "saving an existing identity never duplicates it");
-                    var inertCapture = new PacketCapture(); Field("capture").SetValue(window, inertCapture);
+                    Check(Control<Button>(window, "ReportButton").Content as string == "Start reader", "a paired account can start the reader");
+                    var capture = new PacketCapture(); Field("capture").SetValue(window, capture);
                     var detected = new GameIdentity(42, "DetectedHero", 2304, "Lumiel", "GLOBAL_EU");
-                    await (Task)Call(window, "SaveDetectedCharacterAsync", inertCapture, detected)!;
-                    var automatic = (await api.GetCharactersAsync()).Single(c => c.CharacterName == "DetectedHero");
-                    Check(automatic.Server == "Lumiel" && automatic.Region == "GLOBAL_EU" && !automatic.Confirmed, "detected character saved with unknown energy");
-                    Check(((Character)Control<ComboBox>(window, "CharactersInput").SelectedItem).Id == automatic.Id, "detected character automatically selected");
-                    await (Task)Call(window, "SaveDetectedCharacterAsync", inertCapture, detected)!;
-                    Check((await api.GetCharactersAsync()).Length == 3, "repeated identity is deduplicated");
-                    // A reading from the game is published to the selected character and kept fresh.
-                    Call(window, "OnCandidate", inertCapture, new PacketCandidate(390, 7, "test-fixture-v1") { Primary = 0, Bonus = 390 });
-                    for (var i = 0; i < 200 && (string)Field("activeCharacterId").GetValue(window)! == ""; i++) await Task.Delay(25);
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, detected)!;
+                    var automatic = (await api.GetCharactersAsync()).Single();
+                    Check(automatic.CharacterName == "DetectedHero" && automatic.Server == "Lumiel" && automatic.Region == "GLOBAL_EU" && !automatic.Confirmed, "the game's character is saved with unknown energy");
+                    Check((string)Field("currentCharacterId").GetValue(window)! == automatic.Id, "the card follows the character the game reports");
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, detected)!;
+                    Check((await api.GetCharactersAsync()).Length == 1, "repeated identity is deduplicated");
+                    // A snapshot is held until the game confirms its owner, then saved to that character.
+                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1") { Primary = 0, Bonus = 390 });
+                    await Until(() => (int)Field("publishedTotal").GetValue(window)! == 390, 400);
                     var published = (await api.GetCharactersAsync()).Single(c => c.Id == automatic.Id);
                     Check(published.Confirmed && published.Valid && published.Value == 390, "decoded reading is saved to the detected character");
-                    Check(((Character)Control<ComboBox>(window, "CharactersInput").SelectedItem).Value == 390, "selector reflects the saved value");
+                    // Odyle is sent only on first read and on change; the heartbeat keeps it live.
+                    var sent = (long)Field("sequence").GetValue(window)!;
+                    await (Task)Call(window, "PublishLatestAsync")!;
+                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1", CandidateSource.Update) { Primary = 0, Bonus = 390 });
+                    await Task.Delay(300);
+                    Check((long)Field("sequence").GetValue(window)! == sent, "an unchanged value is not sent again");
+                    Call(window, "OnCandidate", capture, new PacketCandidate(395, 7, "test-fixture-v1", CandidateSource.Update) { Primary = 5, Bonus = 390 });
+                    await Until(() => (int)Field("publishedTotal").GetValue(window)! == 395, 200);
+                    Check((long)Field("sequence").GetValue(window)! == sent + 1, "a changed value is sent once");
+                    // In-game switch on a fresh connection: the new character's snapshot arrives before its identity.
+                    Call(window, "OnCandidate", capture, new PacketCandidate(120, 8, "test-fixture-v1") { Primary = 0, Bonus = 120 });
+                    await Task.Delay(300);
+                    Check((long)Field("sequence").GetValue(window)! == sent + 1, "a snapshot is not sent before the game names its character");
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(44, "SwitchedHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                    var afterSwitch = await api.GetCharactersAsync();
+                    Check(afterSwitch.Single(c => c.Id == automatic.Id) is { Value: 395, Valid: false }, "a switch never moves the new character's Odyle onto the previous one");
+                    var switched = afterSwitch.Single(c => c.CharacterName == "SwitchedHero");
+                    Check(switched is { Value: 120, Valid: true, Confirmed: true }, "the new character receives its own snapshot");
+                    Check((string)Field("currentCharacterId").GetValue(window)! == switched.Id, "the card switches with the game");
+                    // Settings link each character to each room separately.
+                    using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
+                    {
+                        http.DefaultRequestHeaders.Authorization = new("Bearer", auth.Token);
+                        (await http.PostAsJsonAsync("api/odyle/create", new { name = "UI room" })).EnsureSuccessStatusCode();
+                    }
+                    await (Task)Call(window, "ReloadAsync")!;
+                    var groups = (CharacterShares[])((ItemsControl)settings.FindName("RoomsList")).ItemsSource;
+                    Check(groups.Length == 2 && groups.All(g => g.Rooms.Single() is { Shared: false, CanShare: true }), "a new room starts private for every character");
+                    var share = groups.Single(g => g.Character.Id == switched.Id).Rooms.Single();
+                    Call(window, "RoomShare_Click", new CheckBox { DataContext = share, IsChecked = true }, new RoutedEventArgs());
+                    await Until(() => !(bool)Field("busy").GetValue(window)!, 400);
+                    Check((await api.GetRoomsAsync()).Single().SharedCharacters!.SequenceEqual(new[] { switched.Id }), "a room toggle shares only its character");
+                    groups = (CharacterShares[])((ItemsControl)settings.FindName("RoomsList")).ItemsSource;
+                    Check(groups.Single(g => g.Character.Id == switched.Id).Rooms.Single().Shared && !groups.Single(g => g.Character.Id == automatic.Id).Rooms.Single().Shared, "the toggles show the saved state");
+                    // A character on an unmapped server is never saved under an assumed identity.
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(43, "UnmappedHero", 2360, null, "GLOBAL_EU"))!;
+                    Check((await api.GetCharactersAsync()).Length == 2, "unmapped server creates no character");
+                    Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Value: 120, Valid: false }, "leaving for an unsupported character ends the previous reading's freshness");
                     await (Task)Call(window, "StopReaderAsync")!;
-                    var stopped = (await api.GetCharactersAsync()).Single(c => c.Id == automatic.Id);
-                    Check(stopped.Confirmed && !stopped.Valid && stopped.Value == 390, "stopping the reader keeps the value but ends its freshness");
-                    Field("capture").SetValue(window, inertCapture);
-                    await (Task)Call(window, "SaveDetectedCharacterAsync", inertCapture, new GameIdentity(43, "UnmappedHero", 2360, null, "GLOBAL_EU"))!;
-                    Check(Control<TextBox>(window, "ServerInput").Text == "", "unmapped server does not reuse the previous server");
-                    await (Task)Call(window, "SaveDetectedCharacterAsync", inertCapture, new GameIdentity(43, "UnmappedHero", 2004, "Lumiel", null))!;
-                    Check(Control<ComboBox>(window, "RegionInput").SelectedItem is null && (await api.GetCharactersAsync()).Length == 3, "unmapped region never creates an assumed account identity");
-                    Field("capture").SetValue(window, null);
-                    Console.WriteLine("Windows UI character creation, alt, cancel, validation, publishing and persistence passed.");
+                    Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
+                    Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, per-character room sharing and persistence passed.");
                 }
-                Console.WriteLine("Windows UI automatic setup, dark selectors, Save action, reading card and small-window layout passed.");
+                Console.WriteLine("Windows UI compact window, separate settings, reading card and narrow layout passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -110,28 +114,24 @@ static class ReaderChecks
     static void Screenshots(MainWindow window, string directory)
     {
         Directory.CreateDirectory(directory);
-        Control<TextBlock>(window, "StatusLabel").Text = "Your connection is remembered on this PC.";
+        var settings = Settings(window);
+        Control<TextBlock>(window, "StatusLabel").Text = "Pair the app in settings to start.";
         Snapshot(window, Path.Combine(directory, "connect-preview.png"));
-        var reader = Control<StackPanel>(window, "ReaderPanel"); reader.Visibility = Visibility.Visible; reader.IsEnabled = true;
-        Control<StackPanel>(window, "JoinPanel").Visibility = Visibility.Collapsed;
+        Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), 320);
         Field("accountName").SetValue(window, "Sample account");
         Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
-        Control<ComboBox>(window, "RoomsInput").ItemsSource = new[] { new Room("r1", "The evening expedition", 40, "owner", true) };
-        Control<ComboBox>(window, "RoomsInput").SelectedIndex = 0;
-        Call(window, "BeginCharacterDraft", false);
-        Control<TextBlock>(window, "StatusLabel").Text = "Connected · readings are saved to your account.";
-        Snapshot(window, Path.Combine(directory, "auto-detect-preview.png"));
-        Call(window, "BeginCharacterDraft", true);
-        Control<TextBox>(window, "CharacterInput").Text = "TestHero"; Control<TextBox>(window, "ServerInput").Text = "Lumiel";
-        Snapshot(window, Path.Combine(directory, "add-character-preview.png"));
-        var hero = new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ"));
-        Control<ComboBox>(window, "CharactersInput").ItemsSource = new[] { hero };
-        Field("loading").SetValue(window, true); Control<ComboBox>(window, "CharactersInput").SelectedIndex = 0; Field("loading").SetValue(window, false);
-        Call(window, "LoadCharacter", hero);
+        var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
+        Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
+        Field("currentCharacterId").SetValue(window, "c1");
+        ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
+        Call(window, "ShowConnected", true); Call(window, "RenderRooms");
+        Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-        Control<Button>(window, "ReportButton").Content = "Stop packet reader"; Control<TextBlock>(window, "CaptureStatsLabel").Visibility = Visibility.Visible;
+        Control<Button>(window, "ReportButton").Content = "Stop reader"; Control<TextBlock>(window, "CaptureStatsLabel").Visibility = Visibility.Visible;
+        Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
-        Field("activeCharacterId").SetValue(window, "c1");
+        Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
         Call(window, "RenderHero");
@@ -141,29 +141,33 @@ static class ReaderChecks
         Field("capture").SetValue(window, null);
         Console.WriteLine("Rendered previews to " + directory);
     }
-    static void Snapshot(MainWindow window, string path, int width = 400, int height = 690)
+    static void Snapshot(Window window, string path, int width = 280)
     {
         var root = (FrameworkElement)window.Content;
-        // An unshown window measures its content without a height; pin the size so the footer stays in view.
-        root.Width = width; root.Height = height; root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height)); root.UpdateLayout();
+        // The window sizes its height to the content; measure it the same way.
+        root.Width = width; root.Height = double.NaN;
+        // Templates and expanders settle over a few passes; measure until the height is stable.
+        for (double last = -1; Math.Abs(root.DesiredSize.Height - last) > 0.5; ) { last = root.DesiredSize.Height; root.Measure(new Size(width, double.PositiveInfinity)); root.Arrange(new Rect(0, 0, width, root.DesiredSize.Height)); root.UpdateLayout(); }
+        var height = (int)Math.Ceiling(Math.Min(root.DesiredSize.Height, window.MaxHeight));
+        root.Height = height; root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height)); root.UpdateLayout();
         var visual = new DrawingVisual();
         using (var context = visual.RenderOpen())
         {
             context.DrawRectangle(window.Background, null, new Rect(0, 0, width, height));
-            context.DrawRectangle(new VisualBrush(root) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, new Rect(0, 0, width, height));
+            context.DrawRectangle(new VisualBrush(root) { Stretch = Stretch.None, Viewbox = new Rect(0, 0, width, height), ViewboxUnits = BrushMappingMode.Absolute }, null, new Rect(0, 0, width, height));
         }
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32); bitmap.Render(visual);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(path); encoder.Save(file);
     }
+    static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
     static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
     static object? Call(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
     static T Control<T>(MainWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
     static void Check(bool condition, string message) { if (!condition) throw new Exception("UI check failed: " + message); }
-    static async Task Click(MainWindow window, string handler)
+    static async Task Until(Func<bool> condition, int attempts)
     {
-        Call(window, handler, window, new RoutedEventArgs());
-        for (var i = 0; i < 400 && (bool)Field("busy").GetValue(window)!; i++) await Task.Delay(25);
-        Check(!(bool)Field("busy").GetValue(window)!, "UI action finishes");
+        for (var i = 0; i < attempts && !condition(); i++) await Task.Delay(25);
+        Check(condition(), "waited condition holds");
     }
 }

@@ -22,14 +22,14 @@ The dashboard presents a connection link such as `https://your-backend.example/#
 | POST `/api/odyle/join` | `{ code }` | Join as reporter/viewer; returns `{ room, membership }`; repeat join is idempotent |
 | GET `/api/odyle/rooms` | — | All rooms of the current account |
 | GET `/api/odyle/snapshot/{id}` | — | Member-only `{ room, members, serverNow }`; each member has `displayName` and `characters` |
-| POST `/api/odyle/sharing` | `{ roomId, enabled }` | Reporter/owner opts to share all saved characters in this room |
+| POST `/api/odyle/sharing` | `{ roomId, characterId, enabled }` | Reporter/owner shares or hides one of their own characters in this room; returns `{ sharedCharacters }`. Without `characterId` (older clients) the choice applies to every character saved at that moment |
 | POST `/api/odyle/settings` | `{ roomId, cost }` | Owner changes cube cost, integer 1–1000 |
 | POST `/api/odyle/invites` | `{ roomId }` | Owner revokes old codes and receives reporter/viewer invites |
 | POST `/api/odyle/revoke` | `{ roomId, memberId }` | Owner removes another membership |
 | POST `/api/odyle/leave` | `{ roomId }` | Non-owner removes their membership; character data remains |
 | POST `/api/odyle/close` | `{ roomId }` | Owner deletes room and memberships; character data remains |
 
-Room codes are valid for 30 minutes; memberships and rooms have no automatic inactivity expiry. Room snapshots include character data only when its owner opted to share it there; the owner can always see their own saved characters. Viewer accounts can maintain private characters, but cannot share them in a viewer-only room. Display-name collisions are resolved by user/member IDs.
+Room codes are valid for 30 minutes; memberships and rooms have no automatic inactivity expiry. Sharing is per character: each membership lists the characters its owner linked to that room (`sharedCharacters` in `GET /api/odyle/rooms`). New characters start private everywhere. Room snapshots include only linked characters of other members; members always see all of their own characters, each with `shared: true|false`. Upgrading a backend keeps every character of a membership that shared everything shared. Viewer accounts can maintain private characters, but cannot share them in a viewer-only room. Display-name collisions are resolved by user/member IDs.
 
 ## Persistent characters and publisher sessions
 
@@ -56,11 +56,11 @@ Own characters can be read with the normal PocketBase `characters` collection AP
 }
 ```
 
-Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports whose `parserVersion` is listed in the backend `lib/protocols.cjs` registry are accepted; it currently lists `global-reference-v1`, the Windows companion's Global stream decoder. Manual reports are always rejected. The Windows app re-sends the current value every 20 seconds while the game connection is alive so `lastReadingAt` stays fresh. Client metadata is not cryptographic proof of a game observation. The synthetic `test-fixture-v1` adapter is approved only in disposable integration-test hooks.
+Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports whose `parserVersion` is listed in the backend `lib/protocols.cjs` registry are accepted; it currently lists `global-reference-v1`, the Windows companion's Global stream decoder. Manual reports are always rejected. The Windows app sends a value the first time it reads a character and afterwards only when the value changes, so `lastReadingAt` is the time of the last change; its 20-second heartbeat keeps an unchanged value live. Client metadata is not cryptographic proof of a game observation. The synthetic `test-fixture-v1` adapter is approved only in disposable integration-test hooks.
 
 `POST /api/odyle/heartbeat` with `{ sessionId, characterId }` updates presence for the character only when that session owns its latest reading. It never changes the last reading timestamp. Empty `{}` can synchronize the browser's server clock without claiming a character is online.
 
-`POST /api/odyle/invalidate` with `{ characterId, sessionId }` marks the latest reading invalid for current readiness if it belongs to that session. It **retains** value, identity and observation timestamp. Confirmed historical values are distinct from current confidence (`valid`). Readings older than 45 seconds are stale; 90 seconds without presence means offline.
+`POST /api/odyle/invalidate` with `{ characterId, sessionId }` marks the latest reading invalid for current readiness if it belongs to that session. It **retains** value, identity and observation timestamp. Confirmed historical values are distinct from current confidence (`valid`). A valid reading is live while presence is newer than 45 seconds, however old the value is; 45 seconds without presence or an invalidated reading is stale, and 90 seconds without presence means offline.
 
 ## Realtime
 

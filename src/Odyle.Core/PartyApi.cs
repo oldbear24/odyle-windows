@@ -5,8 +5,12 @@ using System.Text.Json;
 namespace Odyle.Core;
 public sealed record User(string Id, string DisplayName);
 public sealed record AuthResponse(string Token, User Record);
-public sealed record Room(string Id, string Name, int Cost, string Role, bool Sharing);
-public sealed record Membership(string Id, string Room, string User, string Role, bool Sharing);
+public sealed record Room(string Id, string Name, int Cost, string Role, bool Sharing, string[]? SharedCharacters = null)
+{
+    public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
+}
+public sealed record Membership(string Id, string Room, string User, string Role, string[]? SharedCharacters = null);
+public sealed record SharingResponse(string[] SharedCharacters);
 public sealed record JoinResponse(Room Room, Membership Membership);
 public sealed record RoomsResponse(Room[] Rooms);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt)
@@ -44,7 +48,8 @@ public sealed class PartyApi : IDisposable
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     public Task<JoinResponse> JoinAsync(string code) => PostAsync<JoinResponse>("api/odyle/join", new { code });
     public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null) => PostAsync<PublisherSession>("api/odyle/session", new { previousSessionId });
-    public Task SetSharingAsync(string roomId, bool enabled) => PostAsync<JsonElement>("api/odyle/sharing", new { roomId, enabled });
+    // Sharing is per character: each room lists which of the account's characters it may see.
+    public async Task<string[]> SetSharingAsync(string roomId, string characterId, bool enabled) => (await PostAsync<SharingResponse>("api/odyle/sharing", new { roomId, characterId, enabled })).SharedCharacters;
     public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });

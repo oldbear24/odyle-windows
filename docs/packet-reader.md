@@ -12,8 +12,8 @@ Packet bytes remain in bounded in-memory buffers. The app does not save or uploa
 
 ## What is published and when
 
-* The first decoded value (snapshot, or a live update on top of a known snapshot) is sent immediately to the selected character. When the game's own-character message has not been seen yet and the account has several characters, the app waits three seconds for it so the reading is attached to the character the game reports.
-* While game packets keep arriving, the current value is re-sent every 20 seconds together with the presence heartbeat. The dashboard treats a value as live while these confirmations continue and as stale 45 seconds after they stop.
+* A reading belongs to the character the game names, never just to the selected one. A snapshot is held until its owner is known: an own-character message that arrives next claims it, and after a character switch (often on a new connection, with the snapshot before the identity) the previous character never receives the new one's value. With no new identity after five seconds the snapshot goes to the current character, unless its stat owner differs from the one that character had; then the app waits up to 30 seconds for the game to name it. Live updates keep the owner of their snapshot.
+* Odyle is sent the first time a character's value is known and afterwards only when it changes. The 20-second presence heartbeat keeps an unchanged value live on the dashboard; it turns stale 45 seconds after the heartbeat stops.
 * No game packets for 20 seconds, stopping the reader, switching characters, disconnecting or quitting marks the reading stale on the server; the last value is kept.
 * A duplicate of the same frame seen on a second capture interface is ignored. A server refusal (unknown adapter, expired session) shows **Not saved** with the server's message and retries after a minute; an expired publisher session is rotated automatically.
 
@@ -23,7 +23,7 @@ The card shows both components as `base + bonus` so a mismatch with the in-game 
 
 The independently implemented `3336` own-character decoder reads a varint ID, four-byte mask, one-byte mask, UTF-8 byte count and name, little-endian server ID and class ID. A valid name with a known Global server/region is saved via the metadata-only API and selected automatically. Repeated messages are deduplicated; account-owned records are reused. The class is a structural check, not a stored profile field. Raw identifiers and packet payloads are not sent to the backend.
 
-Global server IDs encode faction, region and server number. The name/ID facts come from the public [Global server table](https://github.com/cyberbadger6969/aion2-dps-meter/blob/main/data/servers.json), and identity fields from its [protocol documentation](https://github.com/cyberbadger6969/aion2-dps-meter/blob/main/src/AionMeter.Core/Protocol/PacketParser.cs). For example, `2304` maps to Lumiel / Global EU. Unknown mappings, malformed text and unnamed tutorial characters do not produce an automatic account record; the app opens manual setup with the detected name instead. Manual identity setup cannot supply an Odyle value.
+Global server IDs encode faction, region and server number. The name/ID facts come from the public [Global server table](https://github.com/cyberbadger6969/aion2-dps-meter/blob/main/data/servers.json), and identity fields from its [protocol documentation](https://github.com/cyberbadger6969/aion2-dps-meter/blob/main/src/AionMeter.Core/Protocol/PacketParser.cs). For example, `2304` maps to Lumiel / Global EU. Unknown mappings, malformed text and unnamed tutorial characters do not produce an account record, and their readings are not saved; the app has no manual character entry.
 
 ## Wire format
 

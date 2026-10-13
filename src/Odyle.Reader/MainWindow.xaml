@@ -1,101 +1,46 @@
 <Window x:Class="Odyle.Reader.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Odyle" Width="400" Height="690" MinWidth="360" MinHeight="520" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12.5"
- Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" Loaded="Window_Loaded" KeyDown="Window_KeyDown"
+ Title="Odyle" Width="280" SizeToContent="Height" ResizeMode="CanMinimize" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
+ Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" Loaded="Window_Loaded"
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
  <Grid>
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
   <!-- Header -->
-  <DockPanel Margin="22,16,22,8">
-   <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Dashboard ↗" Click="Dashboard_Click" VerticalAlignment="Center" ToolTip="Open the party dashboard in your browser"/>
+  <DockPanel Margin="12,7,6,2">
+   <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="⚙" FontSize="14" Padding="7,1" Click="Settings_Click" VerticalAlignment="Center" ToolTip="Settings · account, rooms and reader setup"/>
    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-    <Viewbox Width="24" Height="24" Margin="0,0,10,0"><Canvas Width="24" Height="24"><Path Data="M12 2 L20 12 L12 22 L4 12 Z" Fill="#2EB5F2CD" Stroke="{StaticResource Mint}" StrokeThickness="1.7" StrokeLineJoin="Round"/><Path Data="M12 2 V22 M4 12 L12 15.6 L20 12" Stroke="{StaticResource Mint}" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
-    <TextBlock Text="odyle" FontSize="22" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" VerticalAlignment="Center"/><TextBlock Text="." FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Mint}" VerticalAlignment="Center"/>
+    <Viewbox Width="15" Height="15" Margin="0,1,6,0"><Canvas Width="24" Height="24"><Path Data="M12 2 L20 12 L12 22 L4 12 Z" Fill="#2EB5F2CD" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round"/><Path Data="M12 2 V22 M4 12 L12 15.6 L20 12" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
+    <TextBlock Text="odyle" FontSize="15" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" VerticalAlignment="Center"/><TextBlock Text="." FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Mint}" VerticalAlignment="Center"/>
+    <TextBlock x:Name="AccountLabel" Style="{StaticResource Eyebrow}" Text="NOT CONNECTED" Margin="9,3,0,0" VerticalAlignment="Center" MaxWidth="130" TextTrimming="CharacterEllipsis"/>
    </StackPanel>
   </DockPanel>
 
-  <ScrollViewer x:Name="Scroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-   <StackPanel Margin="22,4,22,10">
-
-    <!-- Reading card -->
-    <Border CornerRadius="14" BorderThickness="1" BorderBrush="#2B3F33" Padding="18,16,18,16">
-     <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>
-     <Grid>
-      <Border CornerRadius="13" Margin="-18,-16" IsHitTestVisible="False"><Border.Background><RadialGradientBrush GradientOrigin="0.95,0" Center="0.95,0" RadiusX="0.75" RadiusY="0.9"><GradientStop Color="#2EB5F2CD" Offset="0"/><GradientStop Color="#00B5F2CD" Offset="1"/></RadialGradientBrush></Border.Background></Border>
-      <StackPanel>
-       <DockPanel>
-        <Border x:Name="StatePill" DockPanel.Dock="Right" CornerRadius="999" Padding="9,4" Background="{StaticResource PillNeutral}" VerticalAlignment="Top" Margin="10,0,0,0"><StackPanel Orientation="Horizontal"><Ellipse x:Name="StateDot" Width="6" Height="6" Fill="{StaticResource Faint}" Margin="0,0,6,0" VerticalAlignment="Center"/><TextBlock x:Name="StateText" Text="Offline" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></StackPanel></Border>
-        <StackPanel><TextBlock x:Name="AccountLabel" Style="{StaticResource Eyebrow}" Text="NOT CONNECTED" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="HeroTitle" Text="Connect your Discord account" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/></StackPanel>
-       </DockPanel>
-       <StackPanel Orientation="Horizontal" Margin="0,10,0,0"><TextBlock x:Name="ValueLabel" Text="—" FontSize="46" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-2,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="12" Margin="10,0,0,11" VerticalAlignment="Bottom"/></StackPanel>
-       <ProgressBar x:Name="EnergyTrack" Margin="0,8,0,8" Maximum="100" Value="0"/>
-       <DockPanel><TextBlock x:Name="AgeLabel" DockPanel.Dock="Right" FontSize="11" Foreground="{StaticResource Faint}" Margin="10,0,0,0"/><TextBlock x:Name="CubeLabel" FontSize="11" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/></DockPanel>
-       <TextBlock x:Name="ReadingLabel" Text="Pair this app with the dashboard to see your Odyle here." Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"/>
-      </StackPanel>
-     </Grid>
-    </Border>
-
-    <!-- Pairing -->
-    <StackPanel x:Name="JoinPanel" Margin="0,22,0,0">
-     <TextBlock Text="Connect in one paste" FontSize="17" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI"/>
-     <TextBlock Style="{StaticResource Hint}" Text="Sign in on the dashboard, open Pair Windows app and copy the connection link. Then click the button below." Margin="0,6,0,14"/>
-     <Button x:Name="PasteButton" Content="Paste link &amp; connect" Click="PasteConnect_Click"/>
-     <Grid Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions><Rectangle Height="1" Fill="{StaticResource Line}" VerticalAlignment="Center"/><TextBlock Grid.Column="1" Text="or paste it here" FontSize="10.5" Foreground="{StaticResource Faint}" Margin="10,0"/><Rectangle Grid.Column="2" Height="1" Fill="{StaticResource Line}" VerticalAlignment="Center"/></Grid>
-     <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="CodeInput" ToolTip="Connection link or 16-character pairing code"/><Button x:Name="JoinButton" Grid.Column="2" Style="{StaticResource Secondary}" Content="Connect" Click="Pair_Click" Padding="16,0"/></Grid>
-     <Expander x:Name="ServerOptions" Header="Server address · code-only pairing" Margin="0,14,0,0">
-      <StackPanel Margin="0,10,0,0"><TextBlock Text="PocketBase server" Style="{StaticResource FieldLabel}"/><TextBox x:Name="EndpointInput" Text="http://127.0.0.1:8090" ToolTip="PocketBase server address"/><Button x:Name="RetryButton" Style="{StaticResource Secondary}" Content="Reconnect saved account" Click="Retry_Click" Visibility="Collapsed" Margin="0,10,0,0"/></StackPanel>
-     </Expander>
+  <StackPanel Grid.Row="1" Margin="12,4,12,10">
+   <!-- Reading card: the character the game reports -->
+   <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,9,12,10">
+    <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>
+    <StackPanel>
+     <DockPanel>
+      <Border x:Name="StatePill" DockPanel.Dock="Right" CornerRadius="999" Padding="7,2" Background="{StaticResource PillNeutral}" VerticalAlignment="Center" Margin="8,0,0,0"><StackPanel Orientation="Horizontal"><Ellipse x:Name="StateDot" Width="5" Height="5" Fill="{StaticResource Faint}" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock x:Name="StateText" Text="Offline" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></StackPanel></Border>
+      <TextBlock x:Name="HeroTitle" Text="Not connected" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+     </DockPanel>
+     <DockPanel Margin="0,1,0,0">
+      <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,6"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right" Margin="0,1,0,0"/></StackPanel>
+      <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="30" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,7" VerticalAlignment="Bottom"/></StackPanel>
+     </DockPanel>
+     <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,3,0,0" Maximum="100" Value="0"/>
+     <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"/>
     </StackPanel>
+   </Border>
 
-    <!-- Connected -->
-    <StackPanel x:Name="ReaderPanel" Visibility="Collapsed" IsEnabled="False">
-     <TextBlock Style="{StaticResource Section}" Text="CHARACTER"/>
-     <Grid>
-      <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Grid><ComboBox x:Name="CharactersInput" DisplayMemberPath="Label" SelectionChanged="Character_Changed" ToolTip="Your saved characters"/><TextBlock x:Name="NoCharactersLabel" Text="No characters yet" Foreground="{StaticResource Faint}" Margin="12,0,34,0" VerticalAlignment="Center" IsHitTestVisible="False" FontSize="12"/></Grid>
-      <Button Grid.Column="2" Style="{StaticResource Secondary}" Content="+ Add" Click="Switch_Click" Padding="13,0" ToolTip="Add a character by hand"/>
-     </Grid>
-     <Expander x:Name="CharacterDetails" Header="Character details" Margin="0,8,0,0">
-      <StackPanel x:Name="IdentityPanel" Margin="0,10,0,0">
-       <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Character" Style="{StaticResource FieldLabel}"/><TextBox x:Name="CharacterInput" MaxLength="40"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Server" Style="{StaticResource FieldLabel}"/><TextBox x:Name="ServerInput" MaxLength="40"/></StackPanel></Grid>
-       <TextBlock Text="Region" Style="{StaticResource FieldLabel}" Margin="2,10,0,5"/>
-       <ComboBox x:Name="RegionInput" SelectedIndex="0"><ComboBoxItem Content="Global EU" Tag="GLOBAL_EU"/><ComboBoxItem Content="Global NA" Tag="GLOBAL_NA"/><ComboBoxItem Content="Global SA" Tag="GLOBAL_SA"/><ComboBoxItem Content="Global Asia" Tag="GLOBAL_ASIA"/></ComboBox>
-       <Grid Margin="0,12,0,6"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Button x:Name="SaveCharacterButton" Content="Save character" Click="SaveCharacter_Click"/><Button x:Name="CancelCharacterButton" Grid.Column="1" Style="{StaticResource Ghost}" Content="Cancel" Click="CancelCharacter_Click" Margin="8,0,0,0" Visibility="Collapsed"/></Grid>
-      </StackPanel>
-     </Expander>
-
-     <TextBlock Style="{StaticResource Section}" Text="PACKET READER"/>
-     <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Padding="14,12,14,12">
-      <StackPanel>
-       <DockPanel><Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="8" Height="8" Fill="{StaticResource Faint}" Margin="1,5,10,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="11.5" TextWrapping="Wrap"/></DockPanel>
-       <TextBlock x:Name="CaptureStatsLabel" FontSize="10.5" Foreground="{StaticResource Faint}" Margin="19,3,0,0" Visibility="Collapsed"/>
-       <Button x:Name="ReportButton" Content="Start packet reader" Click="Reader_Click" Margin="0,12,0,0"/>
-       <DockPanel Margin="0,6,0,0"><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" Click="Npcap_Click" ToolTip="Npcap must be installed for packet reading"/><TextBlock Text="Reads the game's own packets. Nothing is injected." FontSize="10.5" Foreground="{StaticResource Faint}" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
-      </StackPanel>
-     </Border>
-
-     <Expander Header="Room sharing" Margin="0,16,0,0">
-      <StackPanel Margin="0,10,0,4">
-       <TextBlock Text="Room" Style="{StaticResource FieldLabel}"/>
-       <ComboBox x:Name="RoomsInput" DisplayMemberPath="Name" SelectionChanged="Room_Changed"/>
-       <CheckBox x:Name="ShareToggle" Click="Share_Click" Margin="2,14,0,4" Content="Share my characters in this room"/>
-       <TextBlock Text="Join another room" Style="{StaticResource FieldLabel}" Margin="2,12,0,5"/>
-       <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="InviteInput" ToolTip="Room invitation code"/><Button Grid.Column="2" Style="{StaticResource Secondary}" Content="Join" Click="JoinRoom_Click" Padding="16,0"/></Grid>
-      </StackPanel>
-     </Expander>
-     <Expander Header="Account" Margin="0,2,0,0">
-      <StackPanel Margin="0,10,0,4"><TextBlock x:Name="AccountDetail" Style="{StaticResource Hint}" Text="Connected through your Discord account." Margin="0,0,0,10"/><Button Style="{StaticResource Danger}" Content="Disconnect this app" Click="Logout_Click"/></StackPanel>
-     </Expander>
-    </StackPanel>
-   </StackPanel>
-  </ScrollViewer>
+   <!-- Packet reader -->
+   <DockPanel Margin="0,8,0,0"><Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><StackPanel><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/><TextBlock x:Name="CaptureStatsLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,1,0,0" Visibility="Collapsed"/></StackPanel></DockPanel>
+   <Button x:Name="ReportButton" Content="Connect in settings" Click="Reader_Click" Margin="0,6,0,0" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
+  </StackPanel>
 
   <!-- Footer -->
-  <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="22,10,22,12">
-   <StackPanel>
-    <TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="11"/>
-    <DockPanel Margin="0,8,0,0"><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,2" ToolTip="Quit Odyle completely"/><TextBlock Text="Packets only · close to keep in tray" FontSize="10.5" Foreground="{StaticResource Faint}" VerticalAlignment="Center"/></DockPanel>
-   </StackPanel>
+  <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,5,6,5">
+   <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
   </Border>
  </Grid>
 </Window>
