@@ -144,19 +144,25 @@ public sealed class PacketCapture : IAsyncDisposable
                     var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
                     var flow = new Flow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
                     if (!flows.Contains(flow)) { flows = GameFlows(); if (!flows.Contains(flow)) continue; }
-                    Interlocked.Add(ref gameBytes, total - ipLength - tcpLength);
+                    var flags = bytes[tcp + 13]; var payloadLength = total - ipLength - tcpLength;
+                    Interlocked.Add(ref gameBytes, payloadLength);
+                    // FIN/RST ends the stream. A closing connection's last packets must not
+                    // open a new one, or a relog would look like a midstream start.
+                    if ((flags & 5) != 0) { streams.Remove(flow); continue; }
                     if (!streams.TryGetValue(flow, out var state))
                     {
-                        var aligned = (bytes[tcp + 13] & 2) != 0;
+                        var aligned = (flags & 2) != 0;
+                        if (!aligned && payloadLength == 0) continue;
                         var decoder = new ExperimentalOdyleDecoder(startsAligned: aligned); decoder.Candidate += c => Candidate?.Invoke(c);
                         // Joining an established connection means the startup snapshot already passed.
-                        if (!aligned) Status?.Invoke(CaptureStatus.Midstream, "Game already connected · relog or change channel so the reader sees the Odyle snapshot.");
+                        // A new connection replaces that warning: its snapshot is still to come.
+                        if (aligned) Status?.Invoke(CaptureStatus.Listening, "Listening to AION2 · waiting for the Odyle snapshot.");
+                        else Status?.Invoke(CaptureStatus.Midstream, "Started after login · change channel or relog once so the game resends Odyle.");
                         decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
                         decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
                         decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
                         streams[flow] = state = (new(), decoder, false);
                     }
-                    if ((bytes[tcp + 13] & 5) != 0) { streams.Remove(flow); continue; }
                     if (state.Failed) continue;
                     foreach (var chunk in state.Tcp.Feed(BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength)))
                         state.Decoder.Feed(chunk);

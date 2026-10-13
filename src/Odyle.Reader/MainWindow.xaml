@@ -33,13 +33,15 @@
     </StackPanel>
    </Border>
 
-   <!-- Packet reader -->
-   <!-- Packet counts sit in the row's tooltip while the reader runs -->
-   <DockPanel x:Name="ReaderRow" Margin="0,7,0,0" Background="Transparent" ToolTipService.IsEnabled="False">
-    <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
-    <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+   <!-- Packet reader: status line with a compact start/stop toggle -->
+   <!-- Packet counts sit in the status tooltip while the reader runs -->
+   <DockPanel Margin="0,7,0,0">
+    <Button x:Name="ReportButton" DockPanel.Dock="Right" Content="Connect" Click="Reader_Click" Margin="8,0,0,0" MinHeight="22" Padding="10,2" FontSize="11" VerticalAlignment="Center" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
+    <DockPanel x:Name="ReaderRow" Background="Transparent" ToolTipService.IsEnabled="False" VerticalAlignment="Center">
+     <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
+     <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+    </DockPanel>
    </DockPanel>
-   <Button x:Name="ReportButton" Content="Connect in settings" Click="Reader_Click" Margin="0,6,0,0" MinHeight="28" Padding="12,4" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
 
    <!-- Party: other members' characters that are online in your rooms, one header per room -->
    <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">

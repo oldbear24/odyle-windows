@@ -26,7 +26,7 @@ static class ReaderChecks
                 Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
                 Check(settings.FindName("CodeInput") is PasswordBox && window.FindName("CodeInput") is null, "pairing lives in the settings window");
                 Check(settings.FindName("SharingList") is ItemsControl && settings.FindName("InviteInput") is null && settings.FindName("RoomsList") is null, "rooms and sharing are managed on the dashboard; settings only summarizes them");
-                Check(Control<Button>(window, "ReportButton").Content as string == "Connect in settings", "an unpaired reader points to settings");
+                Check(Control<Button>(window, "ReportButton").Content as string == "Connect", "an unpaired reader points to settings");
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "—", "no value is shown before a reading");
                 var root = (FrameworkElement)settings.Content;
                 root.Width = 300; root.Height = 480; root.Measure(new Size(300, 480)); root.Arrange(new Rect(0, 0, 300, 480)); root.UpdateLayout();
@@ -58,7 +58,7 @@ static class ReaderChecks
                     Field("api").SetValue(window, api);
                     await (Task)Call(window, "ConnectAsync", auth)!;
                     Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
-                    Check(Control<Button>(window, "ReportButton").Content as string == "Start reader", "a paired account can start the reader");
+                    Check(Control<Button>(window, "ReportButton").Content as string == "Start", "a paired account can start the reader");
                     var capture = new PacketCapture(); Field("capture").SetValue(window, capture);
                     var detected = new GameIdentity(42, "DetectedHero", 2304, "Lumiel", "GLOBAL_EU");
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, detected)!;
@@ -136,7 +136,7 @@ static class ReaderChecks
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-        Control<Button>(window, "ReportButton").Content = "Stop reader";
+        Call(window, "RenderReaderButton");
         Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
         Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
@@ -146,6 +146,9 @@ static class ReaderChecks
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
+        Field("latest").SetValue(window, null); Call(window, "RenderHero");
+        Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · change channel or relog once so the game resends Odyle.");
+        Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
         Field("capture").SetValue(window, null);
         Console.WriteLine("Rendered previews to " + directory);
     }

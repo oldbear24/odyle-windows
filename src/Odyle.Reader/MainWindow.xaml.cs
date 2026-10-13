@@ -118,7 +118,13 @@ public partial class MainWindow : Window
     {
         settings.JoinPanel.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
         settings.AccountPanel.Visibility = settings.RoomsPanel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
-        if (capture is null) ReportButton.Content = connected ? "Start reader" : "Connect in settings";
+        RenderReaderButton();
+    }
+    // Compact toggle beside the reader status: mint to start or connect, quiet while reading.
+    private void RenderReaderButton()
+    {
+        ReportButton.Content = capture is not null ? "Stop" : api is not null ? "Start" : "Connect";
+        if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
     }
 
     // ----- Presentation -----
@@ -269,6 +275,8 @@ public partial class MainWindow : Window
             api.Dispose(); api = null; settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
             Status("Server unavailable. Your connection is saved; reconnect in settings when it is back online.");
         }
+        // The game sends Odyle only at login, so read from the moment the account is connected.
+        if (api is not null && capture is null) await StartReaderAsync();
     }
     private async Task ConnectAsync(AuthResponse auth)
     {
@@ -278,7 +286,7 @@ public partial class MainWindow : Window
         settings.AccountDetail.Text = $"Signed in as {accountName} via Discord · {host}";
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
-        Status("Connected · start the reader, then log into your character.");
+        Status("Connected to your account.");
         lastTick = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); partyTimer.Start();
     }
@@ -313,6 +321,7 @@ public partial class MainWindow : Window
         var next = new PartyApi(connection.Endpoint); Status("Pairing with your account…");
         try { var auth = await next.PairAsync(connection.Code); api?.Dispose(); api = next; settings.EndpointInput.Text = connection.Endpoint; SessionStore.Save(new SavedSession(connection.Endpoint, auth.Token)); settings.CodeInput.Clear(); await ConnectAsync(auth); }
         catch { if (api != next) next.Dispose(); throw; }
+        if (capture is null) await StartReaderAsync();
     }
     private void UpdateCharacterInList(Character saved)
     {
@@ -356,7 +365,7 @@ public partial class MainWindow : Window
         if (old is not null) await old.DisposeAsync();
         await InvalidateActiveAsync();
         latest = null; publishFailure = null;
-        ReportButton.Content = api is null ? "Connect in settings" : "Start reader"; ToolTipService.SetIsEnabled(ReaderRow, false);
+        RenderReaderButton(); ToolTipService.SetIsEnabled(ReaderRow, false);
         SetReaderState(ReaderState.Stopped, old is null ? "Stopped · start the reader before logging in." : "Stopped · the last value stays saved on your account.");
         RenderHero();
     }
@@ -365,40 +374,45 @@ public partial class MainWindow : Window
         if (api is null && capture is null) { OpenSettings(); return; }
         await ExecuteAsync(async () =>
         {
-            if (capture is not null) { await StopReaderAsync(); return; }
-            if (api is null) return;
-            var next = new PacketCapture();
-            next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
-            {
-                if (capture != next) return;
-                SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
-            });
-            next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
-            next.CharacterChanged += () => Dispatcher.BeginInvoke(async () =>
-            {
-                if (capture != next) return;
-                await operations.WaitAsync();
-                try
-                {
-                    if (capture != next) return;
-                    // The game switched characters on this connection. Until it names the
-                    // new one, no reading may be attributed to either character.
-                    gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; ownerEntity = null;
-                    if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
-                    await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, "Character changed · detecting the new character."); RenderHero();
-                }
-                finally { operations.Release(); }
-            });
-            next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
+            if (capture is not null) await StopReaderAsync();
+            else if (api is not null) await StartReaderAsync();
+        });
+    }
+    private async Task StartReaderAsync()
+    {
+        var next = new PacketCapture();
+        next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
+        {
+            if (capture != next) return;
+            // A new game connection while a reading is live keeps the live line.
+            if (kind == CaptureStatus.Listening && readerState == ReaderState.Live) return;
+            SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
+        });
+        next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
+        next.CharacterChanged += () => Dispatcher.BeginInvoke(async () =>
+        {
+            if (capture != next) return;
+            await operations.WaitAsync();
             try
             {
-                next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
-                ReportButton.Content = "Stop reader"; CaptureStatsLabel.Text = "Waiting for packets…"; ToolTipService.SetIsEnabled(ReaderRow, true);
-                SetReaderState(ReaderState.Waiting, "Waiting for the AION2 game connection…");
-                Status("Reader running · log into your character to read its Odyle.");
+                if (capture != next) return;
+                // The game switched characters on this connection. Until it names the
+                // new one, no reading may be attributed to either character.
+                gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; ownerEntity = null;
+                if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
+                await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, "Character changed · detecting the new character."); RenderHero();
             }
-            catch { await next.DisposeAsync(); throw; }
+            finally { operations.Release(); }
         });
+        next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
+        try
+        {
+            next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
+            RenderReaderButton(); CaptureStatsLabel.Text = "Waiting for packets…"; ToolTipService.SetIsEnabled(ReaderRow, true);
+            SetReaderState(ReaderState.Waiting, "Waiting for the AION2 game connection…");
+            Status("Reader running · log into your character to read its Odyle.");
+        }
+        catch { await next.DisposeAsync(); throw; }
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
@@ -446,7 +460,12 @@ public partial class MainWindow : Window
             SetReaderState(ReaderState.Listening, $"Read {reading.Total:N0} Odyle · this character's server is not supported, so it is not saved."); RenderHero(); return;
         }
         if (DateTimeOffset.UtcNow < publishBlockedUntil) return;
-        if (publishedTotal == reading.Total && activeCharacterId == character.Id) return;
+        // A fresh snapshot of the value already saved (reconnect, channel change) is live again.
+        if (publishedTotal == reading.Total && activeCharacterId == character.Id)
+        {
+            if (readerState == ReaderState.Listening) SetReaderState(ReaderState.Live, $"Live · {reading.Total:N0} Odyle saved to your account.");
+            return;
+        }
         try
         {
             var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id));
