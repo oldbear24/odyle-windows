@@ -44,7 +44,9 @@ dotnet run --project tests/Odyle.Reader.Checks -c Release
 ./scripts/publish.ps1 -SelfContained
 ```
 
-Packaging defaults to the small single-file executable and SHA-256 checksum. `-SelfContained` produces the separate standalone ZIP. Use `-Runtime win-arm64` for ARM64. Builds are unsigned. Tag workflows create draft releases; checks build and upload both ZIPs on each push.
+Packaging defaults to the small single-file executable and SHA-256 checksum. `-SelfContained` produces the separate standalone ZIP. Use `-Runtime win-arm64` for ARM64. Builds are unsigned. `-Version` stamps a version into the executable and the ZIP names.
+
+Every push to `main` runs the checks and publishes the GitHub release `v<Version>.<run number>` (for example `v0.5.0.12`) with both ZIPs and their checksums. `<Version>` comes from `Odyle.Reader.csproj`; bump it to start a new line. Other branches and pull requests run the checks and upload both ZIPs as workflow artifacts.
 
 The optional end-to-end check accepts a test server URL and **disposable desktop pairing code** as two arguments. Against a disposable backend that approves the synthetic `test-fixture-v1` adapter, it pairs, refreshes the account, saves packet zero, sends presence, invalidates freshness and confirms the value is retained. It does not delete characters or memberships.
 

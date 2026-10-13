@@ -1,15 +1,18 @@
-param([ValidateSet('win-x64','win-arm64')][string]$Runtime = 'win-x64', [switch]$SelfContained)
+param([ValidateSet('win-x64','win-arm64')][string]$Runtime = 'win-x64', [switch]$SelfContained, [string]$Version)
 $ErrorActionPreference = 'Stop'
 $odyleRoot = Split-Path $PSScriptRoot -Parent
 $packageKind = if ($SelfContained) { 'self-contained' } else { 'small' }
 # A fresh staging folder prevents stale runtime files from inflating a package.
 $output = Join-Path $odyleRoot ('artifacts/staging/' + $packageKind + '-' + $Runtime + '-' + [guid]::NewGuid().ToString('N'))
 $bundledRuntime = if ($SelfContained) { 'true' } else { 'false' }
-dotnet publish (Join-Path $odyleRoot 'src/Odyle.Reader/Odyle.Reader.csproj') -c Release -r $Runtime --self-contained $bundledRuntime -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o $output
+# Release builds stamp their version into the executable and the archive name.
+$versionArgs = @(); if ($Version) { $versionArgs += "-p:Version=$Version" }
+dotnet publish (Join-Path $odyleRoot 'src/Odyle.Reader/Odyle.Reader.csproj') -c Release -r $Runtime --self-contained $bundledRuntime -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false @versionArgs -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
 Copy-Item -LiteralPath (Join-Path $odyleRoot 'THIRD-PARTY.md') -Destination $output
 $suffix = if ($SelfContained) { '-self-contained' } else { '' }
-$archive = Join-Path $odyleRoot "artifacts/odyle-$Runtime$suffix.zip"
+$prefix = if ($Version) { "odyle-$Version" } else { 'odyle' }
+$archive = Join-Path $odyleRoot "artifacts/$prefix-$Runtime$suffix.zip"
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $archive -Force
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$archive.sha256" -Value "$hash  $(Split-Path $archive -Leaf)"
