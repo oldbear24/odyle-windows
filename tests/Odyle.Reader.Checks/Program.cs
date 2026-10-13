@@ -136,7 +136,7 @@ static class ReaderChecks
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-        Control<Button>(window, "ReportButton").Content = "Stop reader"; Control<TextBlock>(window, "CaptureStatsLabel").Visibility = Visibility.Visible;
+        Control<Button>(window, "ReportButton").Content = "Stop reader";
         Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
         Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
@@ -144,7 +144,7 @@ static class ReaderChecks
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
         Call(window, "RenderHero"); Call(window, "RenderParty");
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
-        Control<TextBlock>(window, "StatusLabel").Text = "Detected TestHero · Lumiel. Saved to your account.";
+        Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
         Field("capture").SetValue(window, null);
         Console.WriteLine("Rendered previews to " + directory);

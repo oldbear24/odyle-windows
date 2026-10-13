@@ -15,43 +15,46 @@
    </StackPanel>
   </DockPanel>
 
-  <StackPanel Grid.Row="1" Margin="12,4,12,10">
+  <StackPanel Grid.Row="1" Margin="12,3,12,8">
    <!-- Reading card: the character the game reports -->
-   <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,9,12,10">
+   <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,8,12,8">
     <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>
     <StackPanel>
      <DockPanel>
       <Border x:Name="StatePill" DockPanel.Dock="Right" CornerRadius="999" Padding="7,2" Background="{StaticResource PillNeutral}" VerticalAlignment="Center" Margin="8,0,0,0"><StackPanel Orientation="Horizontal"><Ellipse x:Name="StateDot" Width="5" Height="5" Fill="{StaticResource Faint}" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock x:Name="StateText" Text="Offline" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></StackPanel></Border>
       <TextBlock x:Name="HeroTitle" Text="Not connected" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
      </DockPanel>
-     <DockPanel Margin="0,1,0,0">
-      <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,6"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right" Margin="0,1,0,0"/></StackPanel>
-      <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="30" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,7" VerticalAlignment="Bottom"/></StackPanel>
+     <DockPanel>
+      <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,5"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right"/></StackPanel>
+      <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="26" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,6" VerticalAlignment="Bottom"/></StackPanel>
      </DockPanel>
-     <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,3,0,0" Maximum="100" Value="0"/>
-     <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,6,0,0"/>
+     <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>
+     <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
     </StackPanel>
    </Border>
 
    <!-- Packet reader -->
-   <DockPanel Margin="0,8,0,0"><Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><StackPanel><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/><TextBlock x:Name="CaptureStatsLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,1,0,0" Visibility="Collapsed"/></StackPanel></DockPanel>
-   <Button x:Name="ReportButton" Content="Connect in settings" Click="Reader_Click" Margin="0,6,0,0" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
+   <!-- Packet counts sit in the row's tooltip while the reader runs -->
+   <DockPanel x:Name="ReaderRow" Margin="0,7,0,0" Background="Transparent" ToolTipService.IsEnabled="False">
+    <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
+    <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+   </DockPanel>
+   <Button x:Name="ReportButton" Content="Connect in settings" Click="Reader_Click" Margin="0,6,0,0" MinHeight="28" Padding="12,4" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
 
-   <!-- Party: other members' characters that are online in your rooms -->
-   <StackPanel x:Name="PartyPanel" Visibility="Collapsed">
-    <TextBlock Style="{StaticResource Section}" Text="ONLINE IN YOUR ROOMS"/>
-    <ScrollViewer MaxHeight="230" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+   <!-- Party: other members' characters that are online in your rooms, one header per room -->
+   <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">
+    <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
      <ItemsControl x:Name="PartyList" Focusable="False">
       <ItemsControl.ItemTemplate><DataTemplate>
-       <StackPanel Margin="0,0,0,6">
-        <TextBlock Text="{Binding Name}" FontSize="10" Foreground="{StaticResource Faint}" Margin="2,0,0,1" TextTrimming="CharacterEllipsis"/>
+       <StackPanel>
+        <DockPanel Margin="2,6,2,0"><TextBlock DockPanel.Dock="Right" Text="{Binding Online}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/><TextBlock Style="{StaticResource Eyebrow}" Text="{Binding Header}" TextTrimming="CharacterEllipsis"/></DockPanel>
         <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
          <ItemsControl.ItemTemplate><DataTemplate>
-          <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="9,5" Margin="0,3,0,0" ToolTip="{Binding Hint}">
+          <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">
            <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"><TextBlock Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right"/><TextBlock Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/></StackPanel>
-            <Ellipse DockPanel.Dock="Left" Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-            <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"/></StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center"><TextBlock Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,1,7,0"/><TextBlock Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/></StackPanel>
+            <Ellipse DockPanel.Dock="Left" Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+            <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold"/><Run Text="  "/><Run Text="{Binding Detail, Mode=OneWay}" FontSize="10" Foreground="{StaticResource Faint}"/></TextBlock>
            </DockPanel>
           </Border>
          </DataTemplate></ItemsControl.ItemTemplate>
@@ -60,12 +63,12 @@
       </DataTemplate></ItemsControl.ItemTemplate>
      </ItemsControl>
     </ScrollViewer>
-    <TextBlock x:Name="PartyEmptyLabel" Style="{StaticResource Hint}" Text="No one else is online in your rooms." Margin="2,0,0,0"/>
+    <TextBlock x:Name="PartyEmptyLabel" Style="{StaticResource Hint}" Text="No one else is online in your rooms." Margin="2,6,0,0"/>
    </StackPanel>
   </StackPanel>
 
   <!-- Footer -->
-  <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,5,6,5">
+  <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,4,6,4">
    <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
   </Border>
  </Grid>

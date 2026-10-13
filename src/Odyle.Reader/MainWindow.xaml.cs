@@ -19,7 +19,11 @@ using Forms = System.Windows.Forms;
 namespace Odyle.Reader;
 public sealed record CharacterSharing(string Title, string Rooms);
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint);
-public sealed record PartyRoom(string Name, PartyMate[] Mates);
+public sealed record PartyRoom(string Name, PartyMate[] Mates)
+{
+    public string Header => Name.ToUpperInvariant();
+    public string Online => $"{Mates.Length} online";
+}
 public partial class MainWindow : Window
 {
     private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem }
@@ -352,7 +356,7 @@ public partial class MainWindow : Window
         if (old is not null) await old.DisposeAsync();
         await InvalidateActiveAsync();
         latest = null; publishFailure = null;
-        ReportButton.Content = api is null ? "Connect in settings" : "Start reader"; CaptureStatsLabel.Visibility = Visibility.Collapsed;
+        ReportButton.Content = api is null ? "Connect in settings" : "Start reader"; ToolTipService.SetIsEnabled(ReaderRow, false);
         SetReaderState(ReaderState.Stopped, old is null ? "Stopped · start the reader before logging in." : "Stopped · the last value stays saved on your account.");
         RenderHero();
     }
@@ -389,7 +393,7 @@ public partial class MainWindow : Window
             try
             {
                 next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
-                ReportButton.Content = "Stop reader"; CaptureStatsLabel.Visibility = Visibility.Visible;
+                ReportButton.Content = "Stop reader"; CaptureStatsLabel.Text = "Waiting for packets…"; ToolTipService.SetIsEnabled(ReaderRow, true);
                 SetReaderState(ReaderState.Waiting, "Waiting for the AION2 game connection…");
                 Status("Reader running · log into your character to read its Odyle.");
             }
@@ -484,7 +488,7 @@ public partial class MainWindow : Window
                 }
                 var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.Region);
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
-                Status($"Detected {identity.CharacterName} · {identity.Server}. Saved to your account.");
+                Status($"{identity.CharacterName} · {identity.Server} saved to your account.");
             }
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0)
