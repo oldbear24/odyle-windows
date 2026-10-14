@@ -125,7 +125,8 @@ public sealed class ExperimentalOdyleDecoder
     /// <summary>True once a frame boundary is known. A midstream start waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
-    public event Action? CharacterChanged;
+    /// <summary>The game's id of the character switched to; 0 when the message did not carry one.</summary>
+    public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
@@ -197,17 +198,17 @@ public sealed class ExperimentalOdyleDecoder
         if (frame[0] == 0x33 && frame[1] == 0x36)
         {
             var identity = GameIdentity.Read(frame[2..]);
-            var offset = 2;
+            var offset = 2; ulong named = 0;
             // The own-character identity may arrive after its stat snapshot
             // and may repeat. Neither establishes a character switch alone.
             if (TryVarint(frame, ref offset, out var character) && character > 0 && frame.Length - offset >= 5)
             {
                 var changed = ownCharacter is { } previous && previous != character;
-                ownCharacter = character;
+                ownCharacter = named = character;
                 if (!changed) { if (identity is not null) IdentityObserved?.Invoke(identity); return; }
             }
             var hadOwner = entity is not null; ForgetOwner();
-            if (hadOwner) CharacterChanged?.Invoke();
+            if (hadOwner) CharacterChanged?.Invoke(named);
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }

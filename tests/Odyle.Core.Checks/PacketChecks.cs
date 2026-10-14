@@ -20,9 +20,9 @@ static class PacketChecks
         tcp.Reset(); tcp.Feed(100, new byte[] { 1 }); tcp.Feed(104, new byte[] { 5, 6 });
         Reject(() => tcp.Feed(103, new byte[] { 4, 9 }), "pending overlap");
 
-        var decoder = new ExperimentalOdyleDecoder(); var candidates = new List<PacketCandidate>(); var changed = 0;
+        var decoder = new ExperimentalOdyleDecoder(); var candidates = new List<PacketCandidate>(); var changed = 0; ulong changedTo = 0;
         var observations = new List<OdyleUpdateObservation>(); decoder.UpdateObserved += observations.Add;
-        decoder.Candidate += candidates.Add; decoder.CharacterChanged += () => changed++;
+        decoder.Candidate += candidates.Add; decoder.CharacterChanged += id => { changed++; changedTo = id; };
         // Decrease form: direction 0, one value, one trailing byte. The value is the new total
         // (reference measurement: base 40 + bonus 600, spend 80, packet value 560).
         var update = Frame(new byte[] { 0x0c, 0x61, 0, 8, 1, 7, 20, 0 });
@@ -50,14 +50,14 @@ static class PacketChecks
         Assert(changed == 0 && candidates.Last() is { Total: 20, OwnerConfirmed: true }, "first and repeated own identity keep the snapshot-confirmed owner");
         decoder.Feed(Frame(new byte[] { 0x33, 0x36, 43, 0, 0, 0, 0, 0 }));
         var beforeSwitch = candidates.Count; decoder.Feed(otherOwner);
-        Assert(changed == 1 && candidates.Count == beforeSwitch, "after a character switch only a confirmed owner is read");
+        Assert(changed == 1 && changedTo == 43 && candidates.Count == beforeSwitch, "after a character switch only a confirmed owner is read");
         decoder.Feed(update); Assert(candidates.Last() is { Total: 20, OwnerConfirmed: true }, "the confirmed owner keeps reading after a switch");
         decoder.Reset(); changed = 0; decoder.Feed(snapshot);
         var count = candidates.Count;
         decoder.Feed(otherOwner);
         decoder.Feed(Frame(new byte[] { 0x8d, 0, 3, 7, 50 })); Assert(candidates.Count == count, "other entity and sprint ignored");
         decoder.Feed(Frame(new byte[] { 0x33, 0x36 })); decoder.Feed(update);
-        Assert(changed == 1 && candidates.Last() is { Total: 20, OwnerConfirmed: true }, "a character change keeps the confirmed Odyle owner");
+        Assert(changed == 1 && changedTo == 0 && candidates.Last() is { Total: 20, OwnerConfirmed: true }, "a character change keeps the confirmed Odyle owner; an identity without an id reports none");
         // Owners confirmed by another stream or an earlier run are trusted before any snapshot.
         var owners = new KnownOwners(); owners.Add(7);
         var trusted = new ExperimentalOdyleDecoder(owners: owners); var trustedSeen = new List<PacketCandidate>(); trusted.Candidate += trustedSeen.Add;

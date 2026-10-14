@@ -27,7 +27,7 @@ public sealed class PacketCapture : IAsyncDisposable
     private Task supervisor = Task.CompletedTask;
     public event Action<CaptureStatus, string>? Status;
     public event Action<PacketCandidate>? Candidate;
-    public event Action? CharacterChanged;
+    public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
@@ -218,7 +218,7 @@ public sealed class PacketCapture : IAsyncDisposable
     }
     private void Attach(ExperimentalOdyleDecoder decoder)
     {
-        decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
+        decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += id => CharacterChanged?.Invoke(id); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
         decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value);
     }

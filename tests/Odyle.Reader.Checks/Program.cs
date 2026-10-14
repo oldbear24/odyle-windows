@@ -66,7 +66,20 @@ static class ReaderChecks
                 Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
                 Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
                 Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
-                // A reader started after login shows the next live update and asks for one relog so the game names the character.
+                Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
+                // A snapshot the game leaves unnamed for 30 seconds came without a world load: it goes to the
+                // named character only if that character's readings came from the same stat owner.
+                string Owner() => (string)Field("readingOwnerKey").GetValue(window)!;
+                Field("gameCharacterKey").SetValue(window, "TestHero|2304"); Field("ownerEntity").SetValue(window, 7UL);
+                Call(window, "AttributePending");
+                Check(Owner() == "", "during the loading screen a snapshot waits for the name even when the named character owns its stat id");
+                Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Field("ownerEntity").SetValue(window, null);
+                Call(window, "AttributePending");
+                Check(Owner() == "", "an unnamed snapshot never goes to a named character that had no Odyle reading");
+                Field("ownerEntity").SetValue(window, 7UL); Call(window, "AttributePending");
+                Check(Owner() == "TestHero|2304", "after 30 seconds an unnamed snapshot goes to the named character that owns its stat id");
+                // A reader started after login (no snapshot this run) shows the next live update and asks for one relog so the game names the character.
+                Call(window, "ResetAttribution");
                 Call(window, "OnCandidate", inert, new PacketCandidate(380, 7, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { OwnerConfirmed = false });
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Relog"), "a live update read without a snapshot is shown and asks for one relog");
                 // The party list shows other members' live and stale characters, never your own or offline ones.
@@ -192,10 +205,10 @@ static class ReaderChecks
                     var automatic = (await api.GetCharactersAsync()).Single();
                     Check(automatic.CharacterName == "DetectedHero" && automatic.Server == "Lumiel" && automatic.Region == "GLOBAL_EU" && !automatic.Confirmed, "the game's character is saved with unknown energy");
                     Check((string)Field("currentCharacterId").GetValue(window)! == automatic.Id, "the card follows the character the game reports");
+                    // A snapshot is held until the game names its owner after the loading screen, then saved to that character.
+                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1") { Primary = 0, Bonus = 390 });
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, detected)!;
                     Check((await api.GetCharactersAsync()).Length == 1, "repeated identity is deduplicated");
-                    // A snapshot is held until the game confirms its owner, then saved to that character.
-                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1") { Primary = 0, Bonus = 390 });
                     await Until(() => (int)Field("publishedTotal").GetValue(window)! == 390, 400);
                     var published = (await api.GetCharactersAsync()).Single(c => c.Id == automatic.Id);
                     Check(published.Confirmed && published.Valid && published.Value == 390, "decoded reading is saved to the detected character");
@@ -208,15 +221,23 @@ static class ReaderChecks
                     Call(window, "OnCandidate", capture, new PacketCandidate(395, 7, "test-fixture-v1", CandidateSource.Update) { Primary = 5, Bonus = 390 });
                     await Until(() => (int)Field("publishedTotal").GetValue(window)! == 395, 200);
                     Check((long)Field("sequence").GetValue(window)! == sent + 1, "a changed value is sent once");
-                    // In-game switch on a fresh connection: the new character's snapshot arrives before its identity.
-                    Call(window, "OnCandidate", capture, new PacketCandidate(120, 8, "test-fixture-v1") { Primary = 0, Bonus = 120 });
-                    await Task.Delay(300);
-                    Check((long)Field("sequence").GetValue(window)! == sent + 1, "a snapshot is not sent before the game names its character");
-                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(44, "SwitchedHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                    // In-game switches: a character without Odyle is named (its snapshot has no Odyle field), then
+                    // one with Odyle. The game sends the new snapshot first and names the character only after the
+                    // loading screen, 6 to 10 seconds later, when the publish delay has long run out.
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(45, "NoOdyleHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                    Call(window, "OnCandidate", capture, new PacketCandidate(120, 7, "test-fixture-v1") { Primary = 0, Bonus = 120 });
+                    Call(window, "AttributePending"); await (Task)Call(window, "PublishLatestAsync")!;
+                    Check((long)Field("sequence").GetValue(window)! == sent + 1 && Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot is not sent before the game names its character, however long the loading screen takes");
+                    // Two capture interfaces see the same connection, and each reports the switch and the identity.
+                    for (var copy = 0; copy < 2; copy++)
+                    {
+                        await (Task)Call(window, "CharacterChangedAsync", capture, 44UL)!;
+                        await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(44, "SwitchedHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                    }
                     var afterSwitch = await api.GetCharactersAsync();
-                    Check(afterSwitch.Single(c => c.Id == automatic.Id) is { Value: 395, Valid: false }, "a switch never moves the new character's Odyle onto the previous one");
+                    Check(afterSwitch.Single(c => c.Id == automatic.Id) is { Value: 395, Valid: false } && afterSwitch.Single(c => c.CharacterName == "NoOdyleHero") is { Confirmed: false }, "a switch never moves the new character's Odyle onto the previous one");
                     var switched = afterSwitch.Single(c => c.CharacterName == "SwitchedHero");
-                    Check(switched is { Value: 120, Valid: true, Confirmed: true }, "the new character receives its own snapshot");
+                    Check(switched is { Value: 120, Valid: true, Confirmed: true } && (long)Field("sequence").GetValue(window)! == sent + 2, "the new character receives its own snapshot, and the second interface's report keeps it live");
                     Check((string)Field("currentCharacterId").GetValue(window)! == switched.Id, "the card switches with the game");
                     // An update restart: the live character is handed over instead of marked stale, and the
                     // next start takes it over under its own session, whose heartbeat keeps it live.
@@ -244,7 +265,7 @@ static class ReaderChecks
                     await (Task)Call(window, "RefreshPartyAsync")!;
                     var summary = (CharacterSharing[])((ItemsControl)settings.FindName("SharingList")).ItemsSource;
                     Check(summary.Single(g => g.Title.StartsWith("SwitchedHero")).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero")).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
-                    Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 2, "the room snapshot is read from the server");
+                    Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 3, "the room snapshot is read from the server");
                     Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource).Length == 0 && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters are not listed as party members");
                     // The checklist kept on the dashboard is shown beside the card and ticked off from here.
                     using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
@@ -263,7 +284,7 @@ static class ReaderChecks
                     Call(window, "SetTasksShown", false, false);
                     // A character on an unmapped server is never saved under an assumed identity.
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(43, "UnmappedHero", 2360, null, "GLOBAL_EU"))!;
-                    Check((await api.GetCharactersAsync()).Length == 2, "unmapped server creates no character");
+                    Check((await api.GetCharactersAsync()).Length == 3, "unmapped server creates no character");
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Value: 120, Valid: false }, "leaving for an unsupported character ends the previous reading's freshness");
                     await (Task)Call(window, "StopReaderAsync")!;
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");

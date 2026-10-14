@@ -60,10 +60,16 @@ public partial class MainWindow : Window
     // The character always comes from the game; the user cannot pick one.
     // currentCharacterId: character shown in the card (last one the game named).
     // gameCharacterKey: identity the game last named (UnknownOwner after a switch it
-    // has not named yet). detectedCharacterKey: that identity once saved to the account.
+    // has not named yet), gameCharacterId its id in the game, 0 when unknown.
+    // detectedCharacterKey: that identity once saved to the account.
     // readingOwnerKey: identity that owns `latest`, "" while undecided.
+    // nameDue: a snapshot came and the game has not named the character since. The game sends
+    // one whenever it loads a character into the world (login, switch, teleport, channel change)
+    // and names the character only after the loading screen, 6 to 10 seconds later.
     private const string UnknownOwner = "?";
     private string currentCharacterId = "", gameCharacterKey = "", gameCharacterName = "", detectedCharacterKey = "", readingOwnerKey = "";
+    private ulong gameCharacterId;
+    private bool nameDue;
     private ulong? ownerEntity;
     private Character[] characters = [];
     private Room[] rooms = [];
@@ -292,13 +298,14 @@ public partial class MainWindow : Window
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
         else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
-        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(6) ? T("Sending") : T("Stale"));
+        // A snapshot waits for the loading screen to end before the game names its character.
+        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(nameDue ? 30 : 6) ? T("Sending") : T("Stale"));
         else if (capture is not null) SetPill("MintSoft", "MintSoft", "PillNeutral", T("Listening"));
         else if (character is null) SetPill("Muted", "Muted", "PillNeutral", T("No character"));
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
         ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
-            : reading is not null && !owned ? (gameCharacterKey.Length == 0 ? T("Relog or change channel once so the game names the character.") : T("Waiting for the game to name the character."))
+            : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("Relog or change channel once so the game names the character.") : T("Waiting for the game to name the character."))
             : reading is not null ? publishFailure ?? ""
             : capture is not null ? (character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
             : character is null ? T("Start the reader, then log into your character.")
@@ -720,7 +727,7 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; ownerEntity = null; }
+    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; ownerEntity = null; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
     // invalidate is false when a restart hands the live character over (QuitAsync).
     private async Task StopCaptureAsync(bool invalidate)
@@ -758,21 +765,7 @@ public partial class MainWindow : Window
             SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
-        next.CharacterChanged += () => Dispatcher.BeginInvoke(async () =>
-        {
-            if (capture != next) return;
-            await operations.WaitAsync();
-            try
-            {
-                if (capture != next) return;
-                // The game switched characters on this connection. Until it names the
-                // new one, no reading may be attributed to either character.
-                gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; ownerEntity = null;
-                if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
-                await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
-            }
-            finally { operations.Release(); }
-        });
+        next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await CharacterChangedAsync(next, character));
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update and
         // identity, and each distinct stat frame layout once per run (not every frame).
@@ -797,24 +790,35 @@ public partial class MainWindow : Window
         var duplicate = latest is not null && latest.Total == observation.Total && DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(2);
         if (duplicate && readingOwnerKey.Length > 0) { latestAt = DateTimeOffset.UtcNow; return; }
         latest = observation; latestAt = DateTimeOffset.UtcNow;
-        // A snapshot is sent at login, and after a character switch the new
-        // character's identity can follow it, often on a fresh connection. Hold
-        // every snapshot until the game names its owner so it can never be saved
-        // to the previous character. Updates keep the owner of their snapshot; one
+        // A snapshot is sent at login, at a character switch and at every teleport or
+        // channel change, and the game names its character only after the loading
+        // screen. Hold every snapshot until the game names its owner so it can never be
+        // saved to the previous character. Updates keep the owner of their snapshot; one
         // read without any snapshot waits for an owner the same way.
-        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); OwnerStore.Remember(accountId, observation.EntityId); }
+        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; nameDue = true; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); OwnerStore.Remember(accountId, observation.EntityId); }
         else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
         if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle from the game · saving…", observation.Total));
         RenderHero();
         if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
     }
-    // Runs when no new identity followed a snapshot within the publish delay. Without
-    // any named character the snapshot keeps waiting for the identity message.
+    // Runs when a reading has had no owner for the publish delay. Without any named character
+    // the reading keeps waiting for the identity message.
     private void AttributePending()
     {
         if (capture is null || latest is not { } reading || readingOwnerKey.Length > 0 || gameCharacterKey.Length == 0 || gameCharacterKey == UnknownOwner) return;
+        var waiting = DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30);
+        if (nameDue)
+        {
+            // After a snapshot the identity the game sends next names the owner, however long the
+            // loading screen takes: the character named before it may be the one just left. One still
+            // unnamed after 30 seconds came without a world load, and only goes to the named character
+            // if that character's readings already came from its stat owner.
+            if (waiting) publishDelay.Start();
+            if (waiting || ownerEntity != reading.EntityId) return;
+            nameDue = false;
+        }
         // A stat owner other than the named character's: give the game longer to name it.
-        if (ownerEntity is { } known && known != reading.EntityId && DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30)) { publishDelay.Start(); return; }
+        else if (ownerEntity is { } known && known != reading.EntityId && waiting) { publishDelay.Start(); return; }
         readingOwnerKey = gameCharacterKey;
         if (reading.OwnerConfirmed) ownerEntity = reading.EntityId;
     }
@@ -831,8 +835,9 @@ public partial class MainWindow : Window
         if (api is null || capture is null || latest is not { } reading) return;
         if (readingOwnerKey.Length == 0)
         {
-            // Without any identity this run (a start after login) only a relog or channel change names the character.
-            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 ? T("Read {0:N0} Odyle · relog or change channel once so the game names your character.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
+            // Without any identity this run (a start after login) only a relog or channel change names
+            // the character; after a snapshot the game names it by itself once the loading screen ends.
+            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 && !nameDue ? T("Read {0:N0} Odyle · relog or change channel once so the game names your character.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
         }
         if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
         {
@@ -868,6 +873,23 @@ public partial class MainWindow : Window
         catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
         RenderHero();
     }
+    private async Task CharacterChangedAsync(PacketCapture source, ulong character)
+    {
+        if (capture != source) return;
+        await operations.WaitAsync();
+        try
+        {
+            // Two capture interfaces can see the same connection, and each reports the switch.
+            // Once the game named the new character the second report changes nothing.
+            if (capture != source || (character != 0 && character == gameCharacterId)) return;
+            // The game switched characters on this connection. Until it names the
+            // new one, no reading may be attributed to either character.
+            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; ownerEntity = null;
+            if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
+            await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
+        }
+        finally { operations.Release(); }
+    }
     private async Task SaveDetectedCharacterAsync(PacketCapture next, GameIdentity identity)
     {
         await operations.WaitAsync();
@@ -883,6 +905,7 @@ public partial class MainWindow : Window
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
+            gameCharacterId = identity.Id; nameDue = false;
             if (detectedCharacterKey != key)
             {
                 if (identity.Server is null || identity.Region is null)
