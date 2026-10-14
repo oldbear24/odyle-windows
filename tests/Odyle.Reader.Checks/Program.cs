@@ -20,7 +20,7 @@ static class ReaderChecks
         Localizer.Use("en");
         // The pairing, stat owners and the log go to temporary files too.
         var scratch = Directory.CreateTempSubdirectory("odyle-check-").FullName;
-        SessionStore.FilePath = Path.Combine(scratch, "session.bin"); OwnerStore.FilePath = Path.Combine(scratch, "stat-owners.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
+        SessionStore.FilePath = Path.Combine(scratch, "session.bin"); OwnerStore.FilePath = Path.Combine(scratch, "stat-owners.json"); HandoverStore.FilePath = Path.Combine(scratch, "handover.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
         // Start with Windows writes to a Run key kept in memory, never to the real one.
         var runKey = new MemoryRunKey(); Autostart.Key = runKey; Autostart.Executable = @"C:\Odyle\Odyle.exe";
         App.Headless = true; var app = new App(); app.InitializeComponent();
@@ -80,6 +80,29 @@ static class ReaderChecks
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
                 Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
+                // An update restart hands the live character to the next start, which takes it over without a relog.
+                Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+                Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
+                foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
+                Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version));
+                Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
+                Field("activeCharacterId").SetValue(window, "c1");
+                var handover = (Handover?)Call(window, "LiveHandover");
+                Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, EntityId: 7, OwnerConfirmed: true }, "a live reading is handed to the restart");
+                HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
+                // The restarted build: connected again, the reader running, nothing named by the game yet.
+                Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
+                await (Task)Call(window, "TakeOverAsync")!;
+                Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is PacketCandidate { Total: 390, EntityId: 7 }, "the next start takes the character over, once");
+                Check(Control<TextBlock>(window, "HeroTitle").Text == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
+                HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
+                Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");
+                HandoverStore.Save(handover! with { AccountId = "someone-else" }); await (Task)Call(window, "StopCaptureAsync", false)!;
+                Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+                Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "" && Field("latest").GetValue(window) is null, "another account's hand-over is ignored");
+                await (Task)Call(window, "StopCaptureAsync", false)!;
+                Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("accountId").SetValue(window, ""); Call(window, "RenderHero");
                 // Window preferences: pinned above other windows and the checklist beside the card, remembered on this PC.
                 Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && !File.Exists(PreferencesStore.FilePath), "the window starts unpinned and compact");
                 Call(window, "SetStayOnTop", true, true);
@@ -195,6 +218,21 @@ static class ReaderChecks
                     var switched = afterSwitch.Single(c => c.CharacterName == "SwitchedHero");
                     Check(switched is { Value: 120, Valid: true, Confirmed: true }, "the new character receives its own snapshot");
                     Check((string)Field("currentCharacterId").GetValue(window)! == switched.Id, "the card switches with the game");
+                    // An update restart: the live character is handed over instead of marked stale, and the
+                    // next start takes it over under its own session, whose heartbeat keeps it live.
+                    var handed = (Handover?)Call(window, "LiveHandover");
+                    Check(handed is { CharacterName: "SwitchedHero", Total: 120 }, "the live character is handed to the restart");
+                    HandoverStore.Save(handed!); await (Task)Call(window, "StopCaptureAsync", false)!;
+                    Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Valid: true, Value: 120 }, "a restart does not mark the handed-over character stale");
+                    var before = (string)Field("sessionId").GetValue(window)!;
+                    await (Task)Call(window, "ConnectAsync", auth)!;
+                    capture = new PacketCapture(); Field("capture").SetValue(window, capture);
+                    await (Task)Call(window, "TakeOverAsync")!;
+                    var resumed = (string)Field("sessionId").GetValue(window)!;
+                    Check(resumed != before && (string)Field("activeCharacterId").GetValue(window)! == switched.Id && Control<TextBlock>(window, "StateText").Text == "Live", "the next start takes the character over under its own session");
+                    var seen = (await api.GetCharactersAsync()).Single(c => c.Id == switched.Id).LastSeenAt;
+                    await Task.Delay(100); await api.HeartbeatAsync(resumed, switched.Id);
+                    Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Valid: true, Value: 120 } live && string.CompareOrdinal(live.LastSeenAt, seen) > 0, "the new session's heartbeat keeps the character live");
                     // Sharing is chosen on the dashboard; the app picks it up and lists the room's party.
                     using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
                     {

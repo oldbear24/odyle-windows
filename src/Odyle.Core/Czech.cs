@@ -95,6 +95,7 @@ public static class Czech
         ["Character changed · detecting the new character."] = "Postava se změnila · zjišťuji novou postavu.",
         ["Waiting for packets…"] = "Čekám na pakety…", ["Waiting for the AION2 game connection…"] = "Čekám na spojení hry AION2…",
         ["Reader running · log into your character to read its Odyle."] = "Čtečka běží · přihlas se na postavu a přečte se její Odyle.",
+        ["Reader running · {0} stays live after the restart."] = "Čtečka běží · {0} zůstává po restartu živě.",
         ["Listening to AION2 · waiting for the Odyle snapshot."] = "Poslouchám AION2 · čekám na údaje o Odyle.",
         ["Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character."] = "Spuštěno po přihlášení · hodnota se objeví při další změně Odyle; jednou se přihlas znovu nebo změň kanál, ať hra tvou postavu pojmenuje.",
         ["Unsupported or incomplete packets · reconnect the game before retrying."] = "Nepodporované nebo neúplné pakety · před dalším pokusem připoj hru znovu.",

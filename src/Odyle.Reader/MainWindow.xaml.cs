@@ -422,6 +422,7 @@ public partial class MainWindow : Window
         }
         // The login snapshot names the character, so read from the moment the account is connected.
         if (api is not null && capture is null) await StartReaderAsync();
+        if (capture is not null) await TakeOverAsync();
     }
     private void ScheduleRestore(Exception error)
     {
@@ -720,11 +721,13 @@ public partial class MainWindow : Window
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
     private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; ownerEntity = null; }
-    private async Task StopReaderAsync()
+    private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
+    // invalidate is false when a restart hands the live character over (QuitAsync).
+    private async Task StopCaptureAsync(bool invalidate)
     {
         var old = capture; capture = null; ResetAttribution(); publishDelay.Stop();
         if (old is not null) await old.DisposeAsync();
-        await InvalidateActiveAsync();
+        if (invalidate) await InvalidateActiveAsync();
         latest = null; publishFailure = null;
         RenderReaderButton(); ToolTipService.SetIsEnabled(ReaderRow, false);
         SetReaderState(ReaderState.Stopped, old is null ? T("Stopped · start the reader before logging in.") : T("Stopped · the last value stays saved on your account."));
@@ -749,8 +752,9 @@ public partial class MainWindow : Window
             if (capture != next) return;
             // A reading the game never attributed belongs to its connection; a new connection starts over.
             if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
-            // A new game connection while a reading is live keeps the live line.
-            if (kind == CaptureStatus.Listening && readerState == ReaderState.Live) return;
+            // A new game connection while a reading is live keeps the live line, and so does joining
+            // one midstream while the character is known (taken over after a restart).
+            if (kind is CaptureStatus.Listening or CaptureStatus.Midstream && readerState == ReaderState.Live) return;
             SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
@@ -907,6 +911,32 @@ public partial class MainWindow : Window
         finally { operations.Release(); }
     }
 
+    // ----- Restart hand-over -----
+    // The character the reader keeps live right now: named by the game, saved, its reading sent.
+    private Handover? LiveHandover()
+    {
+        if (api is null || capture is null || latest is not { } reading || activeCharacterId.Length == 0 || readingOwnerKey.Length == 0
+            || readingOwnerKey != detectedCharacterKey || readingOwnerKey != gameCharacterKey || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
+        return new Handover(api.Endpoint, accountId, character.Id, readingOwnerKey, character.CharacterName, reading.Total, reading.EntityId, reading.OwnerConfirmed, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
+    }
+    // The first start after an update or language restart takes over the character the previous
+    // build was reading, for the same server and account. Sending its reading again ties it to this
+    // start's session, so the heartbeat keeps it live without a relog; a game that stopped in the
+    // meantime sends nothing and the reading turns stale after 20 seconds as usual (PulseAsync).
+    // Caller holds the operations lock.
+    private async Task TakeOverAsync()
+    {
+        if (api is null || capture is null || HandoverStore.Take(DateTimeOffset.UtcNow) is not { } handed) return;
+        if (handed.Endpoint != api.Endpoint || handed.AccountId != accountId || Array.Find(characters, c => c.Id == handed.CharacterId) is not { } character) return;
+        currentCharacterId = character.Id; gameCharacterKey = detectedCharacterKey = readingOwnerKey = handed.CharacterKey; gameCharacterName = handed.CharacterName;
+        ownerEntity = handed.OwnerConfirmed ? handed.EntityId : null;
+        latest = new PacketCandidate(handed.Total, handed.EntityId, handed.ParserVersion, handed.Source) { OwnerConfirmed = handed.OwnerConfirmed }; latestAt = DateTimeOffset.UtcNow;
+        Log.Info($"Took over {handed.CharacterName} ({handed.Total} Odyle) from before the restart.");
+        await PublishCoreAsync();
+        if (activeCharacterId == character.Id) Status(T("Reader running · {0} stays live after the restart.", character.CharacterName));
+        RenderHero();
+    }
+
     // ----- Updates -----
     // A released build looks for a newer GitHub release at every start and once a day,
     // downloads and verifies it in the background and offers a restart. A package left
@@ -1040,7 +1070,10 @@ public partial class MainWindow : Window
     private async Task QuitAsync(bool restart = false)
     {
         SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); await operations.WaitAsync();
-        try { await Task.WhenAny(StopReaderAsync(), Task.Delay(4000)); api?.Dispose(); }
+        // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
+        var handover = restart ? LiveHandover() : null;
+        if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }
+        try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); api?.Dispose(); }
         finally
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();
