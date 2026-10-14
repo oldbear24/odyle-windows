@@ -31,6 +31,22 @@ try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU
 try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, " ")); throw new Exception("Blank adapter accepted."); } catch (ArgumentException) { }
 try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, "test-fixture-v1", Source: "manual")); throw new Exception("Manual source accepted."); } catch (ArgumentException) { }
 if (ExperimentalOdyleDecoder.Version != "global-reference-v1") throw new Exception("Adapter name must match the backend registry.");
+// Release feed: GitHub's latest-release JSON names the packages the updater may fetch. Only
+// GitHub download links count, so the duplicate asset pointing elsewhere is dropped.
+const string releaseJson = """{"tag_name":"v0.5.0.2","name":"Odyle 0.5.0.2","html_url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.5.0.2","published_at":"2026-10-13T22:34:09Z","draft":false,"prerelease":false,"assets":[{"name":"odyle-0.5.0.2-win-x64-self-contained.zip","size":71595826,"browser_download_url":"https://github.com/oldbear24/odyle-windows/releases/download/v0.5.0.2/odyle-0.5.0.2-win-x64-self-contained.zip"},{"name":"odyle-0.5.0.2-win-x64-self-contained.zip.sha256","size":108,"browser_download_url":"https://github.com/oldbear24/odyle-windows/releases/download/v0.5.0.2/odyle-0.5.0.2-win-x64-self-contained.zip.sha256"},{"name":"odyle-0.5.0.2-win-x64.zip","size":217557,"browser_download_url":"https://github.com/oldbear24/odyle-windows/releases/download/v0.5.0.2/odyle-0.5.0.2-win-x64.zip"},{"name":"odyle-0.5.0.2-win-x64.zip.sha256","size":93,"browser_download_url":"https://github.com/oldbear24/odyle-windows/releases/download/v0.5.0.2/odyle-0.5.0.2-win-x64.zip.sha256"},{"name":"odyle-0.5.0.2-win-x64.zip","size":1,"browser_download_url":"http://mirror.example/odyle-0.5.0.2-win-x64.zip"}]}""";
+var release = ReleaseFeed.Parse(releaseJson) ?? throw new Exception("Release feed not parsed.");
+if (release.Version != new Version(0, 5, 0, 2) || release.Tag != "v0.5.0.2" || release.Url != "https://github.com/oldbear24/odyle-windows/releases/tag/v0.5.0.2" || release.PublishedAt != DateTimeOffset.Parse("2026-10-13T22:34:09Z") || release.Assets.Length != 4) throw new Exception("Release metadata contract failed.");
+var small = release.Package("win-x64", false) ?? throw new Exception("Small package not found.");
+if (small.Name != "odyle-0.5.0.2-win-x64.zip" || small.Size != 217557 || !small.Url.StartsWith("https://github.com/")) throw new Exception("Small package selection failed.");
+if (release.Package("win-x64", true)?.Name != "odyle-0.5.0.2-win-x64-self-contained.zip" || release.Package("win-arm64", false) is not null) throw new Exception("Package kind selection failed.");
+if (release.Checksum(small)?.Name != "odyle-0.5.0.2-win-x64.zip.sha256") throw new Exception("Checksum asset lookup failed.");
+if (!release.IsNewerThan(new Version(0, 5, 0, 1)) || !release.IsNewerThan(new Version(0, 5, 0)) || release.IsNewerThan(new Version(0, 5, 0, 2)) || release.IsNewerThan(new Version(0, 6, 0, 1))) throw new Exception("Release version comparison failed.");
+if (ReleaseFeed.Parse(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true")) is not null || ReleaseFeed.Parse("""{"tag_name":"nightly","assets":[]}""") is not null || ReleaseFeed.Parse("[]") is not null) throw new Exception("Pre-releases and unversioned tags must never be offered.");
+const string hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+if (ReleaseFeed.ExpectedHash(hash.ToUpperInvariant() + "  odyle-0.5.0.2-win-x64.zip\n", "odyle-0.5.0.2-win-x64.zip") != hash) throw new Exception("Checksum file parsing failed.");
+if (ReleaseFeed.ExpectedHash(hash + "  odyle-0.5.0.2-win-x64-self-contained.zip", "odyle-0.5.0.2-win-x64.zip") is not null || ReleaseFeed.ExpectedHash("not-a-hash  odyle-0.5.0.2-win-x64.zip", "odyle-0.5.0.2-win-x64.zip") is not null) throw new Exception("A checksum for another file or a malformed hash was accepted.");
+if (!ReleaseFeed.TryParseTag("v0.6.0.15", out var tagged) || tagged != new Version(0, 6, 0, 15) || ReleaseFeed.TryParseTag("v1", out _) || ReleaseFeed.TryParseTag("latest", out _)) throw new Exception("Tag parsing failed.");
+if (ReleaseFeed.Describe("odyle-0.5.0.2-win-arm64-self-contained.zip") is not { Runtime: "win-arm64", SelfContained: true } || ReleaseFeed.Describe("odyle-0.5.0.2-win-x64.zip.sha256") is not null) throw new Exception("Package name parsing failed.");
 if (args.Length is 1 or 2)
 {
     var pairing = ConnectionDetails.Parse(args[^1], args.Length == 2 ? args[0] : "http://127.0.0.1:8090");
@@ -45,4 +61,4 @@ if (args.Length is 1 or 2)
     if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
     await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");
 }
-Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract and URL/value protection passed.");
+Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract, release feed and URL/value protection passed.");

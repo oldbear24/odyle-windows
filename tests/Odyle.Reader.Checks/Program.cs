@@ -22,6 +22,7 @@ static class ReaderChecks
             try
             {
                 if (args.Length == 2 && args[0] == "--screenshots") { Screenshots(window, args[1]); return; }
+                if (args is ["--update-probe"]) { await UpdateProbe(); return; }
                 var settings = Settings(window);
                 Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
                 Check(settings.FindName("CodeInput") is PasswordBox && window.FindName("CodeInput") is null, "pairing lives in the settings window");
@@ -32,6 +33,9 @@ static class ReaderChecks
                 root.Width = 300; root.Height = 480; root.Measure(new Size(300, 480)); root.Arrange(new Rect(0, 0, 300, 480)); root.UpdateLayout();
                 var scroll = (ScrollViewer)settings.FindName("Scroller");
                 Check(scroll.ExtentWidth <= scroll.ViewportWidth + 1, "narrow settings window has no horizontal overflow");
+                // Updates: nothing is offered before a verified package exists, and an unstamped build never replaces itself.
+                Check(!Updater.IsReleaseBuild && ((TextBlock)settings.FindName("UpdateLabel")).Text.Contains("development build") && Control<Button>(window, "UpdateButton").Visibility == Visibility.Collapsed && ((Button)settings.FindName("InstallUpdateButton")).Visibility == Visibility.Collapsed, "an unstamped build shows no update and never replaces itself");
+                UpdateChecks();
                 // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
@@ -122,11 +126,56 @@ static class ReaderChecks
         });
         Dispatcher.Run();
     }
+    // Installing copies the staged files the way Windows allows while the app runs: the
+    // executable moves aside to .old and the rest is overwritten. A staged folder counts
+    // only when its Odyle.exe is stamped with the folder's version and that is newer.
+    static void UpdateChecks()
+    {
+        var root = Directory.CreateTempSubdirectory("odyle-update-check-").FullName;
+        var staging = Updater.Staging;
+        try
+        {
+            var source = Path.Combine(root, "source"); var target = Path.Combine(root, "target"); Directory.CreateDirectory(source); Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "Odyle.exe"), "running"); File.WriteAllText(Path.Combine(target, "Odyle.exe.old"), "older"); File.WriteAllText(Path.Combine(target, "THIRD-PARTY.md"), "old notices");
+            File.WriteAllText(Path.Combine(source, "Odyle.exe"), "new"); File.WriteAllText(Path.Combine(source, "THIRD-PARTY.md"), "new notices");
+            Updater.Apply(source, target);
+            Check(File.ReadAllText(Path.Combine(target, "Odyle.exe")) == "new" && File.ReadAllText(Path.Combine(target, "Odyle.exe.old")) == "running" && File.ReadAllText(Path.Combine(target, "THIRD-PARTY.md")) == "new notices", "installing moves the executable aside and copies the new files in");
+            // This checks executable is stamped 1.0.0.0, newer than the unstamped app build.
+            Updater.Staging = Path.Combine(root, "updates");
+            foreach (var (folder, stamped) in new[] { ("1.0.0.0", true), ("9.9.9.9", true), ("9.9.9.8", false), ("0.0.0.1", true), ("9.9.9.7.partial", true) })
+            {
+                var dir = Path.Combine(Updater.Staging, folder); Directory.CreateDirectory(dir);
+                if (stamped) File.Copy(Environment.ProcessPath!, Path.Combine(dir, "Odyle.exe")); else File.WriteAllText(Path.Combine(dir, "Odyle.exe"), "not an executable");
+            }
+            var staged = Updater.Staged();
+            Check(staged is { Version: { Major: 1, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
+            Updater.CleanUp();
+            Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "1.0.0.0", "9.9.9.8", "9.9.9.9" }), "cleanup removes partial downloads and versions that are not newer");
+        }
+        finally { Updater.Staging = staging; Directory.Delete(root, true); }
+    }
+    // Opt-in and online: fetches the newest GitHub release and stages this machine's package
+    // in a temporary folder, exercising download, checksum verification and extraction.
+    static async Task UpdateProbe()
+    {
+        var root = Directory.CreateTempSubdirectory("odyle-update-probe-").FullName; Updater.Staging = root;
+        try
+        {
+            var release = await Updater.FetchLatestAsync(CancellationToken.None) ?? throw new Exception("No release is published.");
+            Console.WriteLine($"Latest release {release.Version} ({release.Url}); this build is {Updater.Current}, {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}.");
+            var staged = await Updater.DownloadAsync(release, new Progress<double>(part => Console.Write($"\r{part:P0}")), CancellationToken.None);
+            Console.WriteLine($"\nStaged {staged.Version} in {staged.Directory}: {string.Join(", ", Directory.GetFiles(staged.Directory).Select(Path.GetFileName))}");
+        }
+        finally { Directory.Delete(root, true); }
+    }
     static void Screenshots(MainWindow window, string directory)
     {
         Directory.CreateDirectory(directory);
         var settings = Settings(window);
         Control<TextBlock>(window, "StatusLabel").Text = "Pair the app in settings to start.";
+        // Previews show a released build, which keeps itself current.
+        ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · looks for new releases every six hours and installs them on restart.";
+        ((Button)settings.FindName("CheckUpdateButton")).Visibility = Visibility.Visible;
         Snapshot(window, Path.Combine(directory, "connect-preview.png"));
         Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), 320);
         Field("accountName").SetValue(window, "Sample account");
@@ -136,6 +185,7 @@ static class ReaderChecks
         Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
         Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot() });
         ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
+        ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);

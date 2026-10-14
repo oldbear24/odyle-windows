@@ -71,7 +71,7 @@
 
   <!-- Footer -->
   <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,4,6,4">
-   <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
+   <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
   </Border>
  </Grid>
 </Window>

@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -59,6 +60,11 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    // First update check shortly after start, then every six hours while the app runs.
+    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromSeconds(20) };
+    private StagedUpdate? staged;
+    private bool updating;
+    private string updateNote = "";
     private readonly Forms.NotifyIcon tray;
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
@@ -69,18 +75,21 @@ public partial class MainWindow : Window
         tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = "Odyle · Not connected", Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add("Open Odyle", null, (_, _) => Dispatcher.Invoke(ShowWindow));
         menu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
-        menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(QuitAsync).Task.Unwrap()); tray.ContextMenuStrip = menu;
+        menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
-        settings.NpcapButton.Click += Npcap_Click; settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.NpcapButton.Click += (_, _) => OpenLink("https://npcap.com/#download"); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
+        settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
+        updateTimer.Tick += async (_, _) => { updateTimer.Interval = TimeSpan.FromHours(6); Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); };
         // Only while the window is open; showing it refreshes at once.
         partyTimer.Tick += async (_, _) => { if (IsVisible) await RefreshPartyAsync(); };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); };
         clock.Start();
-        ShowConnected(false); RenderRooms(); RenderParty(); RenderHero();
+        ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
     }
     private static System.Drawing.Icon LoadTrayIcon()
     {
@@ -264,6 +273,9 @@ public partial class MainWindow : Window
     {
         await ExecuteAsync(RestoreAsync);
         if (api is null) OpenSettings();
+        // The build that installed this one may still have been exiting when the start-up
+        // clean-up ran; by now its Odyle.exe.old can go.
+        if (Updater.IsReleaseBuild && !App.Headless) { Updater.CleanUp(); updateTimer.Start(); }
     }
     private async void Retry_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(RestoreAsync);
     private async Task RestoreAsync()
@@ -355,7 +367,11 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
         finally { refreshingParty = false; }
     }
-    private void Npcap_Click(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://npcap.com/#download") { UseShellExecute = true });
+    private void OpenLink(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception error) { Status(error.Message); }
+    }
 
     // ----- Packet reader -----
     private async Task InvalidateActiveAsync()
@@ -535,6 +551,57 @@ public partial class MainWindow : Window
         finally { operations.Release(); }
     }
 
+    // ----- Updates -----
+    // A released build looks for a newer GitHub release shortly after start and every
+    // six hours, downloads and verifies it in the background and offers a restart. A
+    // package left waiting installs by itself the next time the app starts.
+    private void RenderUpdate()
+    {
+        var build = $"Odyle {Updater.Current}{(Updater.SelfContained ? " · self-contained" : "")}";
+        settings.UpdateLabel.Text = !Updater.IsReleaseBuild ? $"{build} · development build. Released builds update themselves from GitHub releases."
+            : staged is not null ? $"{build} · Odyle {staged.Version} is downloaded and verified. Restart to install it; otherwise it installs at the next start."
+            : updateNote.Length > 0 ? $"{build} · {updateNote}"
+            : Updater.LastFailure is { } failure ? $"{build} · the downloaded update could not be installed: {failure}"
+            : $"{build} · looks for new releases every six hours and installs them on restart.";
+        settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = staged is not null ? Visibility.Visible : Visibility.Collapsed;
+        settings.CheckUpdateButton.Visibility = Updater.IsReleaseBuild && staged is null ? Visibility.Visible : Visibility.Collapsed;
+        settings.CheckUpdateButton.IsEnabled = !updating;
+        UpdateButton.ToolTip = staged is null ? null : $"Install Odyle {staged.Version} and start it · the reader stops for a moment";
+    }
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (updating || staged is not null || !Updater.IsReleaseBuild) return;
+        updating = true; updateNote = "checking GitHub for a newer release…"; RenderUpdate();
+        try
+        {
+            var release = await Updater.CheckAsync(CancellationToken.None);
+            if (release is null) { updateNote = $"up to date · checked {DateTime.Now:HH:mm}"; return; }
+            updateNote = $"downloading Odyle {release.Version}…"; RenderUpdate();
+            var progress = new Progress<double>(part => { updateNote = $"downloading Odyle {release.Version} · {part:P0}"; RenderUpdate(); });
+            staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
+            updateNote = "";
+            Status($"Odyle {staged.Version} is ready · restart to update, or it installs at the next start.");
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            updateNote = (manual ? "update check failed: " : "could not check for updates: ") + error.Message;
+        }
+        finally { updating = false; RenderUpdate(); }
+    }
+    private async void Install_Click(object sender, RoutedEventArgs e) => await InstallUpdateAsync();
+    // The files are swapped while this build still runs; only then does it stop and
+    // start the new one. A swap that fails leaves everything as it was.
+    private async Task InstallUpdateAsync()
+    {
+        if (staged is not { } update || busy) return;
+        try { Updater.Apply(update); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Status($"Could not install the update: {error.Message} Download it from the release page instead."); return;
+        }
+        await QuitAsync(restart: true);
+    }
+
     // ----- Session upkeep -----
     private async Task ReconnectAsync()
     {
@@ -579,10 +646,14 @@ public partial class MainWindow : Window
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(() => DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true));
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
-    private async Task QuitAsync()
+    private async Task QuitAsync(bool restart = false)
     {
-        heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); await operations.WaitAsync();
+        heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); await operations.WaitAsync();
         try { await Task.WhenAny(StopReaderAsync(), Task.Delay(4000)); api?.Dispose(); }
-        finally { operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); System.Windows.Application.Current.Shutdown(); }
+        finally
+        {
+            operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();
+            if (restart && System.Windows.Application.Current is App app) app.Restart(); else System.Windows.Application.Current.Shutdown();
+        }
     }
 }
