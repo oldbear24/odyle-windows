@@ -98,7 +98,35 @@ static class PacketChecks
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
         Assert(candidates.Count == 0, "ambiguous mixed snapshot is unknown");
-        Console.WriteLine("Synthetic TCP, framing, LZ4, identity, owner and candidate checks passed.");
+        Streams();
+        Console.WriteLine("Synthetic TCP, framing, LZ4, identity, owner, candidate and connection table checks passed.");
+    }
+    // The connection table of one capture interface: only bytes that reach a decoder count
+    // as game traffic, and a connection blocked by a lost segment or a decoding error says
+    // so and counts nothing until the game reconnects.
+    static void Streams()
+    {
+        var statuses = new List<(CaptureStatus Kind, string Message)>(); var candidates = new List<PacketCandidate>();
+        var streams = new GameStreams(new KnownOwners(), decoder => decoder.Candidate += candidates.Add, (kind, message) => statuses.Add((kind, message)));
+        var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328); var snapshot = Frame(new byte[] { 0x0b, 0x61, 0x0c, 1, 7, 100, 50 });
+        Assert(streams.Feed(game, 1000, 0x02, []) == 0 && statuses.Last().Kind == CaptureStatus.Listening, "a new connection waits for the snapshot");
+        Assert(streams.Feed(game, 1001, 0x18, snapshot) == snapshot.Length && candidates.Single().Total == 150, "decoded bytes count as game traffic");
+        Assert(streams.Feed(game, 1001, 0x18, snapshot) == 0, "a retransmission adds nothing");
+        var next = 1001u + (uint)snapshot.Length;
+        Assert(streams.Feed(game, next + 10, 0x18, snapshot) == 0, "data after a lost segment waits and does not count");
+        streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(1)); Assert(!streams.IsBlocked(game), "a short gap is waited out");
+        streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
+        Assert(streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var lost } && lost.Contains("lost"), "a persistent gap blocks the connection and says so");
+        Assert(streams.Feed(game, next, 0x18, new byte[10]) == 0 && streams.Feed(game, next + 10, 0x18, snapshot) == 0 && candidates.Count == 1, "a blocked connection is not decoded and counts no bytes");
+        streams.Feed(game, next, 0x11, []); Assert(streams.Count == 0, "FIN ends the connection");
+        var relog = game with { LocalPort = 50001 };
+        streams.Feed(relog, 5000, 0x02, []);
+        Assert(streams.Feed(relog, 5001, 0x18, snapshot) == snapshot.Length && candidates.Count == 2 && statuses.Last().Kind == CaptureStatus.Listening, "a new connection is read again");
+        Assert(streams.Feed(relog, 5001, 0x18, snapshot.Select(b => (byte)~b).ToArray()) == 0 && streams.IsBlocked(relog) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var damaged } && damaged.StartsWith("Unsupported"), "a conflicting retransmission blocks only that connection");
+        var midstream = game with { LocalPort = 50002 };
+        Assert(streams.Feed(midstream, 9000, 0x18, new byte[] { 1, 2, 3 }) == 3 && statuses.Last().Kind == CaptureStatus.Midstream, "a connection joined after login waits for a heartbeat");
+        streams.Maintain([midstream], DateTimeOffset.UtcNow); Assert(streams.Count == 1 && !streams.IsBlocked(midstream), "connections the game closed are forgotten");
+        Assert(streams.Feed(game with { LocalPort = 50003 }, 1, 0x10, []) == 0 && streams.Count == 1, "an empty ACK opens no connection");
     }
     static byte[] Frame(byte[] content)
     {

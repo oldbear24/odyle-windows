@@ -899,7 +899,7 @@ public partial class MainWindow : Window
                 var bytes = running.GameBytes; var alive = bytes > lastGameBytes; lastGameBytes = bytes;
                 // Re-sends only after the reading went stale; otherwise the heartbeat below keeps it live.
                 if (alive) await PublishCoreAsync();
-                else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
+                else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
             await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
