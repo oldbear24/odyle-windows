@@ -111,6 +111,9 @@ public partial class MainWindow : Window
     private bool updating;
     private string updateNote = "";
     private readonly Forms.NotifyIcon tray;
+    // The last tray notification, kept for the checks (the tray icon is off there).
+    private (string Title, string Text)? LastNotice { get; set; }
+    private int hiddenTicks;
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     public MainWindow() : this(true) { }
@@ -122,7 +125,7 @@ public partial class MainWindow : Window
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
         menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
         menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
-        tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
+        tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += (_, _) => OpenLink("https://npcap.com/#download"); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
@@ -131,6 +134,7 @@ public partial class MainWindow : Window
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
+        settings.RemindersToggle.Click += (_, _) => { PreferencesStore.Save(preferences = preferences with { RemindRuns = settings.RemindersToggle.IsChecked == true }); CheckReminders(); };
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
         restoreTimer.Tick += async (_, _) =>
@@ -140,14 +144,20 @@ public partial class MainWindow : Window
             await ExecuteAsync(RestoreAsync);
         };
         updateTimer.Tick += async (_, _) => { updateTimer.Interval = TimeSpan.FromHours(6); Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); };
-        // Only while the window is open; showing it refreshes at once.
-        partyTimer.Tick += async (_, _) => { if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync()); };
+        // Open, the party and the checklist refresh every 15 seconds (showing the window refreshes
+        // at once); in the tray the rooms refresh every minute, for the run reminders.
+        partyTimer.Tick += async (_, _) =>
+        {
+            if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
+            else if (preferences.RemindRuns && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
+        };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        settings.RemindersToggle.IsChecked = preferences.RemindRuns;
         // Automatic follows the Windows display language; a change applies when the app restarts.
         settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
         settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
@@ -526,11 +536,35 @@ public partial class MainWindow : Window
             if (api != current) return;
             rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray();
             if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
-            RenderRooms(); RenderParty(); RenderHero();
+            RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
         }
         // Connection problems are reported by the heartbeat; keep the last list.
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
         finally { refreshingParty = false; }
+    }
+    // Tray notifications (toasts on Windows 10 and 11); clicking one opens the window.
+    private void Notify(string title, string text)
+    {
+        LastNotice = (title, text); Log.Info("Notification: " + title);
+        if (tray.Visible) tray.ShowBalloonTip(10000, title, text, Forms.ToolTipIcon.Info);
+    }
+    // Planned runs the account joined on the dashboard: one notification 15 minutes before
+    // each start, with the dungeon, room, local time and note. Reminded runs are kept in
+    // preferences.json, so a restart does not repeat them; a run moved to another time reminds again.
+    private void CheckReminders()
+    {
+        if (!preferences.RemindRuns || accountId.Length == 0) return;
+        var now = DateTimeOffset.UtcNow + serverOffset; var reminded = new HashSet<string>(preferences.RemindedRuns ?? []);
+        var due = Reminders.Due(snapshots, accountId, now, reminded);
+        if (due.Length == 0) return;
+        foreach (var run in due)
+        {
+            var minutes = Math.Max(1, (long)Math.Ceiling((run.StartsAt - now).TotalMinutes));
+            var details = T("{0} · starts at {1:t}", run.Room.Name, run.StartsAt.ToLocalTime().DateTime) + (run.Run.Note.Length > 0 ? "\n" + run.Run.Note : "");
+            Notify(Tn(minutes, "{1} starts in {0} minute", "{1} starts in {0} minutes", run.Run.Dungeon), details);
+            reminded.Add(run.Key); Log.Info($"Reminded of the planned run {run.Run.Id} ({run.Run.Dungeon}) at {run.StartsAt:u}.");
+        }
+        PreferencesStore.Save(preferences = preferences with { RemindedRuns = Reminders.Prune(reminded, now) });
     }
     private void OpenLink(string url)
     {
@@ -896,6 +930,12 @@ public partial class MainWindow : Window
             var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
             staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
             updateNote = ""; Log.Info($"Odyle {staged.Version} is downloaded, verified and waiting in {staged.Directory}.");
+            // Once per version, also from the tray.
+            if (preferences.NotifiedUpdate != staged.Version.ToString())
+            {
+                Notify(T("Odyle {0} is ready", staged.Version), T("Restart Odyle to update, or it installs at the next start."));
+                PreferencesStore.Save(preferences = preferences with { NotifiedUpdate = staged.Version.ToString() });
+            }
             Status(T("Odyle {0} is ready · restart to update, or it installs at the next start.", staged.Version));
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
@@ -963,6 +1003,7 @@ public partial class MainWindow : Window
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         {
             Log.Warn("The server no longer knows this PC's pairing (401)."); await DisconnectAsync(Unpaired, clearSaved: true);
+            if (!IsVisible) Notify(T("Odyle is no longer paired"), Unpaired);
         }
         catch (ServerBusyException error) { lastTick = error.Until; Log.Warn($"Server busy (429); requests pause until {error.Until.ToLocalTime():HH:mm:ss}."); RenderBusy(); }
         catch (Exception error) { needsReconnect = true; Log.Warn($"Heartbeat failed: {error.Message}"); Status(Describe(error)); }

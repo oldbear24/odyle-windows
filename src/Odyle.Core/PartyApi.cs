@@ -22,7 +22,9 @@ public sealed record Character(string Id, string User, string CharacterName, str
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters);
-public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow);
+// A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
+public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
+public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 public sealed record PublisherSession(string SessionId, long Sequence);
 public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
 public sealed record ReportResponse(Character Character);

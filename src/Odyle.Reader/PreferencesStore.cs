@@ -6,8 +6,11 @@ using Odyle.Core;
 namespace Odyle.Reader;
 // How the window is shown on this PC: pinned above other windows, with the daily and
 // weekly checklist beside the card, in which language ("auto" follows Windows) and
-// where it was last (WPF units). Everything else is configured on the dashboard.
-public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null);
+// where it was last (WPF units). RemindRuns switches the planned-run reminders;
+// RemindedRuns and NotifiedUpdate keep notifications from repeating after a restart.
+// Everything else is configured on the dashboard.
+public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null,
+    bool RemindRuns = true, string[]? RemindedRuns = null, string NotifiedUpdate = "");
 public static class PreferencesStore
 {
     // Checks point this at a temporary file so they never touch the user's preferences.

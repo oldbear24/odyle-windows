@@ -122,6 +122,12 @@ public static class Czech
         ["Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard."] = "Pamatuje si to tento počítač, stejně jako místo, kde okno bylo. Spuštěné se systémem Windows čeká Odyle v oznamovací oblasti. Úkoly samotné se přidávají a odebírají na dashboardu.",
         ["Start with Windows could not be changed: {0}"] = "Spouštění se systémem Windows nejde změnit: {0}",
         ["Checking Npcap…"] = "Kontroluji Npcap…", ["Npcap installed"] = "Npcap je nainstalovaný", ["Npcap not found · install it to read the game"] = "Npcap nebyl nalezen · pro čtení hry ho nainstaluj",
+        ["NOTIFICATIONS"] = "OZNÁMENÍ", ["Remind me of planned runs"] = "Připomínat naplánované runy",
+        ["A notification 15 minutes before each run you joined on the dashboard"] = "Oznámení 15 minut před každým runem, ke kterému ses na dashboardu přidal(a)",
+        ["15 minutes before each run you joined on the dashboard, also while Odyle waits in the tray. A downloaded update is announced once."] = "15 minut před každým runem, ke kterému ses na dashboardu přidal(a), i když Odyle čeká v oznamovací oblasti. Stažená aktualizace se oznámí jednou.",
+        ["{0} · starts at {1:t}"] = "{0} · začátek v {1:t}", ["Odyle {0} is ready"] = "Odyle {0} je připravené",
+        ["Restart Odyle to update, or it installs at the next start."] = "Restartuj Odyle a aktualizuj, jinak se nainstaluje při příštím spuštění.",
+        ["Odyle is no longer paired"] = "Odyle už není spárované",
         ["LANGUAGE"] = "JAZYK", ["Language of Odyle on this PC"] = "Jazyk Odyle na tomto počítači", ["Automatic · Windows language"] = "Automaticky · jazyk Windows",
         ["Restart now"] = "Restartovat teď", ["Restarts Odyle in the chosen language · the reader stops for a moment"] = "Restartuje Odyle ve zvoleném jazyce · čtečka se na chvíli zastaví",
         ["The new language applies when Odyle restarts."] = "Nový jazyk se použije po restartu Odyle.",
@@ -170,5 +176,6 @@ public static class Czech
     public static readonly IReadOnlyDictionary<string, string[]> Plurals = new Dictionary<string, string[]>
     {
         ["{0} cube|{0} cubes"] = ["{0} kostka", "{0} kostky", "{0} kostek"],
+        ["{1} starts in {0} minute|{1} starts in {0} minutes"] = ["{1} začíná za {0} minutu", "{1} začíná za {0} minuty", "{1} začíná za {0} minut"],
     };
 }

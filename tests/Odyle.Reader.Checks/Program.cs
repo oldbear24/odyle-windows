@@ -139,6 +139,22 @@ static class ReaderChecks
                     Check(Localizer.Tn(3, "{0} cube", "{0} cubes") == "3 kostky" && Localizer.T("Publisher session expired. Reconnect.") == "Relace čtečky vypršela. Připoj se znovu.", "Czech plurals and server messages");
                 }
                 finally { Localizer.Use("en"); }
+                // Planned runs: one reminder 15 minutes before a run the account joined, once per start time.
+                string RunAt(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+                var soon = DateTimeOffset.UtcNow.AddMinutes(10).AddSeconds(-20);
+                RoomSnapshot Planned(string startsAt) => new(new Room("r1", "Evening", 40, "owner", true), [], DateTime.UtcNow.ToString("O"), [new PlannedRun("run1", "Fire Temple", startsAt, "Bring potions", "u", ["u", "l"]), new PlannedRun("run2", "Ice Cave", RunAt(soon), "", "l", ["l"])]);
+                (string Title, string Text)? Notice() => ((string Title, string Text)?)typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+                void ClearNotice() => typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
+                Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon)) }); Call(window, "CheckReminders");
+                Check(Notice() is { Title: "Fire Temple starts in 10 minutes", Text: var text } && text.StartsWith("Evening · starts at ") && text.EndsWith("\nBring potions"), "a joined run is announced with its dungeon, room, local time and note");
+                ClearNotice(); Call(window, "CheckReminders");
+                Check(Notice() is null && PreferencesStore.Load().RemindedRuns is [var reminded] && reminded.StartsWith("run1|"), "a run is announced once, also across restarts, and runs others joined are not");
+                Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(3))) }); Call(window, "CheckReminders");
+                Check(Notice() is { Title: "Fire Temple starts in 13 minutes" }, "a run moved to another time is announced again");
+                ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(1))) }); ((CheckBox)settings.FindName("RemindersToggle")).IsChecked = false;
+                Field("preferences").SetValue(window, PreferencesStore.Load() with { RemindRuns = false }); Call(window, "CheckReminders");
+                Check(Notice() is null, "reminders can be switched off");
+                Field("preferences").SetValue(window, PreferencesStore.Load()); Field("accountId").SetValue(window, ""); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>());
                 Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");
                 if (args.Length == 2)
                 {

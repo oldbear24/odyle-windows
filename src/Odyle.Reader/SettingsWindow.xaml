@@ -50,6 +50,11 @@
    <CheckBox x:Name="AutostartToggle" Content="Start with Windows" Margin="0,8,0,0" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
    <TextBlock Style="{StaticResource Hint}" Text="Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard." Margin="2,6,0,0"/>
 
+   <!-- Notifications: planned runs joined on the dashboard, also while Odyle waits in the tray -->
+   <TextBlock Style="{StaticResource Section}" Text="NOTIFICATIONS"/>
+   <CheckBox x:Name="RemindersToggle" Content="Remind me of planned runs" IsChecked="True" ToolTip="A notification 15 minutes before each run you joined on the dashboard"/>
+   <TextBlock Style="{StaticResource Hint}" Text="15 minutes before each run you joined on the dashboard, also while Odyle waits in the tray. A downloaded update is announced once." Margin="2,6,0,0"/>
+
    <!-- Language: automatic follows the Windows display language; a change applies after a restart -->
    <TextBlock Style="{StaticResource Section}" Text="LANGUAGE"/>
    <ComboBox x:Name="LanguageInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Language of Odyle on this PC"/>
