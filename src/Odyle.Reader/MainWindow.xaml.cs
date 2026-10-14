@@ -103,8 +103,11 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
-    // First update check shortly after start, then every six hours while the app runs.
-    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromSeconds(20) };
+    // An update check a few seconds after every start, then once a day while the app runs.
+    // The timer looks every hour, so a check that failed (no network yet when Windows
+    // starts) or a day spent asleep catches up within the hour.
+    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private DateTimeOffset updatesCheckedAt = DateTimeOffset.MinValue;
     // The window's position is remembered a second after it last moved.
     private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private StagedUpdate? staged;
@@ -143,7 +146,12 @@ public partial class MainWindow : Window
             if (busy) { restoreTimer.Interval = TimeSpan.FromSeconds(2); restoreTimer.Start(); return; }
             await ExecuteAsync(RestoreAsync);
         };
-        updateTimer.Tick += async (_, _) => { updateTimer.Interval = TimeSpan.FromHours(6); Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); };
+        updateTimer.Tick += async (_, _) =>
+        {
+            updateTimer.Interval = TimeSpan.FromHours(1);
+            if (staged is not null || DateTimeOffset.UtcNow - updatesCheckedAt < TimeSpan.FromDays(1)) return;
+            Updater.CleanUp(); await CheckForUpdatesAsync(manual: false);
+        };
         // Open, the party and the checklist refresh every 15 seconds (showing the window refreshes
         // at once); in the tray the rooms refresh every minute, for the run reminders.
         partyTimer.Tick += async (_, _) =>
@@ -374,15 +382,15 @@ public partial class MainWindow : Window
     // Windows) stays there while the app is paired; unpaired, the window and settings open.
     public async Task StartAsync(bool tray)
     {
+        // The update check does not wait for the server. Its first tick also removes the
+        // Odyle.exe.old of the build that installed this one, which by then has exited.
+        if (Updater.IsReleaseBuild && !App.Headless) updateTimer.Start();
         await ExecuteAsync(RestoreAsync);
         if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
         {
             if (!IsVisible) ShowWindow();
             if (api is null) OpenSettings();
         }
-        // The build that installed this one may still have been exiting when the start-up
-        // clean-up ran; by now its Odyle.exe.old can go.
-        if (Updater.IsReleaseBuild && !App.Headless) { Updater.CleanUp(); updateTimer.Start(); }
     }
     private async void Retry_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(RestoreAsync);
     private async Task RestoreAsync()
@@ -900,9 +908,9 @@ public partial class MainWindow : Window
     }
 
     // ----- Updates -----
-    // A released build looks for a newer GitHub release shortly after start and every
-    // six hours, downloads and verifies it in the background and offers a restart. A
-    // package left waiting installs by itself the next time the app starts.
+    // A released build looks for a newer GitHub release at every start and once a day,
+    // downloads and verifies it in the background and offers a restart. A package left
+    // waiting installs by itself the next time the app starts.
     private void RenderUpdate()
     {
         var build = Updater.SelfContained ? T("Odyle {0} · self-contained", Updater.Current) : T("Odyle {0}", Updater.Current);
@@ -910,7 +918,7 @@ public partial class MainWindow : Window
             : staged is not null ? T("{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start.", build, staged.Version)
             : updateNote.Length > 0 ? $"{build} · {updateNote}"
             : Updater.LastFailure is { } failure ? T("{0} · the downloaded update could not be installed: {1}", build, T(failure))
-            : T("{0} · looks for new releases every six hours and installs them on restart.", build);
+            : T("{0} · looks for new releases at every start and once a day and installs them on restart.", build);
         settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = staged is not null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.Visibility = Updater.IsReleaseBuild && staged is null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.IsEnabled = !updating;
@@ -923,7 +931,7 @@ public partial class MainWindow : Window
         try
         {
             var release = await Updater.CheckAsync(CancellationToken.None);
-            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
+            if (release is null) { updatesCheckedAt = DateTimeOffset.UtcNow; updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
             Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");
             updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
             var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });

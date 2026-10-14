@@ -297,7 +297,7 @@ static class ReaderChecks
         var settings = Settings(window);
         Control<TextBlock>(window, "StatusLabel").Text = "Pair the app in settings to start.";
         // Previews show a released build, which keeps itself current.
-        ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · looks for new releases every six hours and installs them on restart.";
+        ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · looks for new releases at every start and once a day and installs them on restart.";
         ((Button)settings.FindName("CheckUpdateButton")).Visibility = Visibility.Visible;
         Snapshot(window, Path.Combine(directory, "connect-preview.png"));
         Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), 320);

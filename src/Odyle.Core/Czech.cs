@@ -138,7 +138,7 @@ public static class Czech
         ["{0} · development build. Released builds update themselves from GitHub releases."] = "{0} · vývojové sestavení. Vydané verze se samy aktualizují z GitHubu.",
         ["{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start."] = "{0} · Odyle {1} je stažené a ověřené. Restartem ho nainstaluješ; jinak se nainstaluje při příštím spuštění.",
         ["{0} · the downloaded update could not be installed: {1}"] = "{0} · staženou aktualizaci se nepodařilo nainstalovat: {1}",
-        ["{0} · looks for new releases every six hours and installs them on restart."] = "{0} · každých šest hodin hledá nové verze a instaluje je při restartu.",
+        ["{0} · looks for new releases at every start and once a day and installs them on restart."] = "{0} · hledá nové verze při každém spuštění a jednou denně a instaluje je při restartu.",
         ["Install Odyle {0} and start it · the reader stops for a moment"] = "Nainstalovat Odyle {0} a spustit · čtečka se na chvíli zastaví",
         ["checking GitHub for a newer release…"] = "hledám na GitHubu novější verzi…", ["up to date · checked {0:HH:mm}"] = "aktuální · ověřeno v {0:HH:mm}",
         ["downloading Odyle {0}…"] = "stahuji Odyle {0}…", ["downloading Odyle {0} · {1:P0}"] = "stahuji Odyle {0} · {1:P0}",
