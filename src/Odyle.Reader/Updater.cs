@@ -12,6 +12,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Odyle.Core;
+using static Odyle.Core.Localizer;
 
 namespace Odyle.Reader;
 // A newer package that was downloaded, checked against the release checksum and
@@ -46,7 +47,7 @@ public static class Updater
         using var request = Request(ReleaseFeed.Latest, "application/vnd.github+json"); request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        if (!response.IsSuccessStatusCode) throw new HttpRequestException($"GitHub answered {(int)response.StatusCode}.", null, response.StatusCode);
+        if (!response.IsSuccessStatusCode) throw new HttpRequestException(T("GitHub answered {0}.", (int)response.StatusCode), null, response.StatusCode);
         return ReleaseFeed.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
     }
     // A release newer than this build that has a package for this machine, else null.
@@ -59,21 +60,21 @@ public static class Updater
     // and extracts it; the folder is renamed into place only once everything checked out.
     public static async Task<StagedUpdate> DownloadAsync(AppRelease release, IProgress<double>? progress, CancellationToken token)
     {
-        var package = release.Package(Runtime, SelfContained) ?? throw new InvalidOperationException($"Release {release.Version} has no {Runtime} {(SelfContained ? "self-contained" : "small")} package.");
-        var checksum = release.Checksum(package) ?? throw new InvalidOperationException($"Release {release.Version} has no checksum for {package.Name}.");
+        var package = release.Package(Runtime, SelfContained) ?? throw new InvalidOperationException(T("Release {0} has no package for this PC ({1}).", release.Version, Runtime));
+        var checksum = release.Checksum(package) ?? throw new InvalidOperationException(T("Release {0} has no checksum for {1}.", release.Version, package.Name));
         Directory.CreateDirectory(Staging);
         string target = Path.Combine(Staging, release.Version.ToString()), partial = target + ".partial", archive = Path.Combine(Staging, package.Name);
         if (Directory.Exists(partial)) Directory.Delete(partial, true);
         try
         {
-            var expected = ReleaseFeed.ExpectedHash(await ReadTextAsync(new Uri(checksum.Url), token), package.Name) ?? throw new InvalidOperationException("The release checksum does not name " + package.Name + ".");
+            var expected = ReleaseFeed.ExpectedHash(await ReadTextAsync(new Uri(checksum.Url), token), package.Name) ?? throw new InvalidOperationException(T("The release checksum does not name {0}.", package.Name));
             await DownloadFileAsync(new Uri(package.Url), archive, package.Size, progress, token);
             string actual;
             await using (var stream = File.OpenRead(archive)) actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, token)).ToLowerInvariant();
-            if (actual != expected) throw new InvalidOperationException("The downloaded package does not match the release checksum.");
+            if (actual != expected) throw new InvalidOperationException(T("The downloaded package does not match the release checksum."));
             // ExtractToDirectory refuses entries that would land outside the folder.
             ZipFile.ExtractToDirectory(archive, partial, overwriteFiles: true);
-            if (StampedVersion(Path.Combine(partial, "Odyle.exe")) != release.Version) throw new InvalidOperationException($"The package does not contain Odyle {release.Version}.");
+            if (StampedVersion(Path.Combine(partial, "Odyle.exe")) != release.Version) throw new InvalidOperationException(T("The package does not contain Odyle {0}.", release.Version));
             if (Directory.Exists(target)) Directory.Delete(target, true);
             Directory.Move(partial, target);
         }
@@ -92,7 +93,7 @@ public static class Updater
         }
         return best;
     }
-    public static void Apply(StagedUpdate update) => Apply(update.Directory, Path.GetDirectoryName(Executable) ?? throw new InvalidOperationException("The application folder is unknown."));
+    public static void Apply(StagedUpdate update) => Apply(update.Directory, Path.GetDirectoryName(Executable) ?? throw new InvalidOperationException(T("The application folder is unknown.")));
     // Copies the staged files over the installed ones. The running executable cannot be
     // overwritten, so it moves aside first; a failure puts it back and this build keeps working.
     public static void Apply(string source, string target)
@@ -120,7 +121,7 @@ public static class Updater
     }
     public static void Relaunch()
     {
-        var exe = Executable ?? throw new InvalidOperationException("The application path is unknown.");
+        var exe = Executable ?? throw new InvalidOperationException(T("The application path is unknown."));
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) });
     }
     // Removes the executable an update moved aside and packages that are no longer newer than this build.
@@ -153,7 +154,7 @@ public static class Updater
         using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync(timeout.Token);
-        return text.Length <= 4096 ? text : throw new InvalidOperationException("The checksum file is unexpectedly large.");
+        return text.Length <= 4096 ? text : throw new InvalidOperationException(T("The checksum file is unexpectedly large."));
     }
     private static async Task DownloadFileAsync(Uri url, string path, long expectedSize, IProgress<double>? progress, CancellationToken token)
     {
@@ -162,14 +163,14 @@ public static class Updater
         using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
         var total = response.Content.Headers.ContentLength ?? expectedSize;
-        if (total > PackageLimit) throw new InvalidOperationException("The package is unexpectedly large.");
+        if (total > PackageLimit) throw new InvalidOperationException(T("The package is unexpectedly large."));
         await using var source = await response.Content.ReadAsStreamAsync(timeout.Token);
         await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
         var buffer = new byte[1 << 16]; long done = 0; int read;
         while ((read = await source.ReadAsync(buffer, timeout.Token)) > 0)
         {
             await file.WriteAsync(buffer.AsMemory(0, read), timeout.Token); done += read;
-            if (done > PackageLimit) throw new InvalidOperationException("The package is unexpectedly large.");
+            if (done > PackageLimit) throw new InvalidOperationException(T("The package is unexpectedly large."));
             if (total > 0) progress?.Report(Math.Min(1, (double)done / total));
         }
     }

@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Odyle.Core;
+using static Odyle.Core.Localizer;
 
 namespace Odyle.Reader;
 
@@ -42,9 +43,9 @@ public sealed class PacketCapture : IAsyncDisposable
         {
             if (name != "wpcap") return IntPtr.Zero;
             var path = Path.Combine(Environment.SystemDirectory, "Npcap", "wpcap.dll");
-            if (!File.Exists(path)) throw new DllNotFoundException("Install Npcap from npcap.com before starting the packet reader.");
+            if (!File.Exists(path)) throw new DllNotFoundException(T("Install Npcap from npcap.com before starting the packet reader."));
             var handle = LoadLibraryEx(path, IntPtr.Zero, 0x1100);
-            if (handle == IntPtr.Zero) throw new DllNotFoundException("Npcap could not load. Check its installation and CPU architecture.");
+            if (handle == IntPtr.Zero) throw new DllNotFoundException(T("Npcap could not load. Check its installation and CPU architecture."));
             return handle;
         });
     }
@@ -64,11 +65,11 @@ public sealed class PacketCapture : IAsyncDisposable
     public void Start()
     {
         var error = new StringBuilder(256);
-        if (pcap_findalldevs(out var list, error) != 0) throw new InvalidOperationException("Npcap device discovery failed. Check capture permissions.");
+        if (pcap_findalldevs(out var list, error) != 0) throw new InvalidOperationException(T("Npcap device discovery failed. Check capture permissions."));
         var names = new List<string>();
         try { for (var p = list; p != IntPtr.Zero; ) { var device = Marshal.PtrToStructure<Device>(p); var name = Marshal.PtrToStringAnsi(device.Name); if (name is not null) names.Add(name); p = device.Next; } }
         finally { if (list != IntPtr.Zero) pcap_freealldevs(list); }
-        if (names.Count == 0) throw new InvalidOperationException("No Npcap capture interfaces available.");
+        if (names.Count == 0) throw new InvalidOperationException(T("No Npcap capture interfaces available."));
         workers = names.Select(name => Task.Run(() => Receive(name))).ToArray();
     }
     // The game's connections, shared by every capture worker: refreshed every two
@@ -121,7 +122,7 @@ public sealed class PacketCapture : IAsyncDisposable
     private void Receive(string name)
     {
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
-        if (handle == IntPtr.Zero) { Status?.Invoke(CaptureStatus.Problem, "Capture interface unavailable. Check Npcap permissions."); return; }
+        if (handle == IntPtr.Zero) { Status?.Invoke(CaptureStatus.Problem, T("Capture interface unavailable. Check Npcap permissions.")); return; }
         var streams = new Dictionary<Flow, (TcpReceiveStream Tcp, ExperimentalOdyleDecoder Decoder, bool Failed)>();
         var lastFilter = ""; var flows = Array.Empty<Flow>(); var nextRefresh = DateTimeOffset.MinValue; bool? previouslyConnected = null;
         try
@@ -146,7 +147,7 @@ public sealed class PacketCapture : IAsyncDisposable
                     }
                     foreach (var removed in streams.Keys.Where(key => !flows.Contains(key)).ToArray()) streams.Remove(removed);
                     var connected = flows.Length > 0;
-                    if (connected != previouslyConnected) { if (connected) Status?.Invoke(CaptureStatus.Listening, "Listening to AION2 · waiting for the Odyle snapshot."); else Status?.Invoke(CaptureStatus.Waiting, "Waiting for the AION2 game connection…"); }
+                    if (connected != previouslyConnected) { if (connected) Status?.Invoke(CaptureStatus.Listening, T("Listening to AION2 · waiting for the Odyle snapshot.")); else Status?.Invoke(CaptureStatus.Waiting, T("Waiting for the AION2 game connection…")); }
                     previouslyConnected = connected;
                     foreach (var key in streams.Keys.ToArray()) if (streams[key].Tcp.GapSince is { } gap && DateTimeOffset.UtcNow - gap > TimeSpan.FromSeconds(3)) streams[key] = (new(), new(), true);
                 }
@@ -181,8 +182,8 @@ public sealed class PacketCapture : IAsyncDisposable
                         var decoder = new ExperimentalOdyleDecoder(startsAligned: aligned, owners); decoder.Candidate += c => Candidate?.Invoke(c);
                         // Joining an established connection means the startup snapshot and identity already
                         // passed; live updates still carry the total. A new connection replaces that warning.
-                        if (aligned) Status?.Invoke(CaptureStatus.Listening, "Listening to AION2 · waiting for the Odyle snapshot.");
-                        else Status?.Invoke(CaptureStatus.Midstream, "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
+                        if (aligned) Status?.Invoke(CaptureStatus.Listening, T("Listening to AION2 · waiting for the Odyle snapshot."));
+                        else Status?.Invoke(CaptureStatus.Midstream, T("Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character."));
                         decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size); decoder.UpdateObserved += value => UpdateObserved?.Invoke(value);
                         decoder.LayoutObserved += value => LayoutObserved?.Invoke(value);
                         decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
@@ -197,12 +198,12 @@ public sealed class PacketCapture : IAsyncDisposable
                     // Only the damaged connection is blocked, until it closes; framing is never
                     // restarted midstream. The game's other connections keep being read.
                     if (flow is not null && streams.ContainsKey(flow)) streams[flow] = (new(), new(), true);
-                    Status?.Invoke(CaptureStatus.Problem, "Unsupported or incomplete packets · reconnect the game before retrying.");
+                    Status?.Invoke(CaptureStatus.Problem, T("Unsupported or incomplete packets · reconnect the game before retrying."));
                 }
                 finally { Array.Clear(bytes); }
             }
         }
-        catch (Exception) { Status?.Invoke(CaptureStatus.Problem, "Capture unavailable. Check Npcap and reconnect the game."); }
+        catch (Exception) { Status?.Invoke(CaptureStatus.Problem, T("Capture unavailable. Check Npcap and reconnect the game.")); }
         finally { pcap_close(handle); }
     }
     public async ValueTask DisposeAsync() { cancellation.Cancel(); await Task.WhenAll(workers); cancellation.Dispose(); }

@@ -16,7 +16,7 @@ public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
-    public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => "Asia", var other => other };
+    public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string Location => $"{Server} · {RegionLabel}";
 }
 public sealed record RecordList<T>(T[] Items);
@@ -88,16 +88,16 @@ public sealed class PartyApi : IDisposable
     public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
-        if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException("Enter a character name (up to 40 characters).");
-        if (string.IsNullOrWhiteSpace(server) || server.Trim().Length > 40) throw new ArgumentException("Enter a server (up to 40 characters).");
-        if (region is not ("GLOBAL_EU" or "GLOBAL_NA" or "GLOBAL_SA" or "GLOBAL_ASIA")) throw new ArgumentException("Select a Global region.");
+        if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));
+        if (string.IsNullOrWhiteSpace(server) || server.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a server (up to 40 characters)."));
+        if (region is not ("GLOBAL_EU" or "GLOBAL_NA" or "GLOBAL_SA" or "GLOBAL_ASIA")) throw new ArgumentException(Localizer.T("Select a Global region."));
         return (await PostAsync<ReportResponse>("api/odyle/character", new { characterName = characterName.Trim(), server = server.Trim(), region })).Character;
     }
     public async Task<Character> ReportAsync(PacketReading reading)
     {
-        if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion)) throw new ArgumentException("A packet adapter name is required.");
-        if (reading.Value is < 0 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(reading), "Odyle must be between 0 and 1,000,000.");
-        if (string.IsNullOrWhiteSpace(reading.CharacterName) || string.IsNullOrWhiteSpace(reading.Server)) throw new ArgumentException("Character and server are required.");
+        if (reading.Source != "packet" || string.IsNullOrWhiteSpace(reading.ParserVersion)) throw new ArgumentException(Localizer.T("A packet adapter name is required."));
+        if (reading.Value is < 0 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(reading), Localizer.T("Odyle must be between 0 and 1,000,000."));
+        if (string.IsNullOrWhiteSpace(reading.CharacterName) || string.IsNullOrWhiteSpace(reading.Server)) throw new ArgumentException(Localizer.T("Character and server are required."));
         return (await PostAsync<ReportResponse>("api/odyle/report", reading)).Character;
     }
     private Task<T> GetAsync<T>(string route) => SendAsync<T>(HttpMethod.Get, route, null, renew: true);
@@ -123,11 +123,11 @@ public sealed class PartyApi : IDisposable
     {
         if (!response.IsSuccessStatusCode)
         {
-            string message = "Server returned " + (int)response.StatusCode + ".";
+            string message = Localizer.T("Server returned {0}.", (int)response.StatusCode);
             try { using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); message = doc.RootElement.GetProperty("message").GetString() ?? message; } catch (JsonException) { }
             throw new HttpRequestException(message, null, response.StatusCode);
         }
-        return await response.Content.ReadFromJsonAsync<T>(Json) ?? throw new InvalidOperationException("The server returned an empty response.");
+        return await response.Content.ReadFromJsonAsync<T>(Json) ?? throw new InvalidOperationException(Localizer.T("The server returned an empty response."));
     }
     public void Dispose() => client.Dispose();
 }

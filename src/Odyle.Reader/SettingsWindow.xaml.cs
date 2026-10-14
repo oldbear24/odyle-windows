@@ -7,6 +7,6 @@ namespace Odyle.Reader;
 public partial class SettingsWindow : Window
 {
     internal bool Exiting;
-    public SettingsWindow() => InitializeComponent();
+    public SettingsWindow() { InitializeComponent(); Translation.Apply(this); }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!Exiting) { e.Cancel = true; Hide(); } }
 }

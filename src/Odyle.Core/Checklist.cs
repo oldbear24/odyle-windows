@@ -31,6 +31,6 @@ public static class Checklist
     public static string Remaining(TimeSpan span)
     {
         var minutes = Math.Max(0, (long)Math.Floor(span.TotalMinutes)); var hours = minutes / 60 % 24; var days = minutes / 1440;
-        return days > 0 ? $"{days}d {hours}h" : hours > 0 ? $"{hours}h {minutes % 60}m" : minutes > 0 ? $"{minutes}m" : "under a minute";
+        return days > 0 ? Localizer.T("{0}d {1}h", days, hours) : hours > 0 ? Localizer.T("{0}h {1}m", hours, minutes % 60) : minutes > 0 ? Localizer.T("{0}m", minutes) : Localizer.T("under a minute");
     }
 }

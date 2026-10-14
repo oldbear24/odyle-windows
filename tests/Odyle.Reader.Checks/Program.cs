@@ -16,6 +16,8 @@ static class ReaderChecks
     {
         // Window preferences go to a temporary file so the checks never touch the user's.
         PreferencesStore.FilePath = Path.Combine(Path.GetTempPath(), "odyle-check-preferences-" + Guid.NewGuid().ToString("N") + ".json");
+        // The checks read English texts whatever the language of the Windows running them.
+        Localizer.Use("en");
         App.Headless = true; var app = new App(); app.InitializeComponent();
         var window = new MainWindow(false);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
@@ -83,6 +85,22 @@ static class ReaderChecks
                 shell.Width = double.NaN;
                 Call(window, "SetTasksShown", false, true); Call(window, "SetStayOnTop", false, true);
                 Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "unpinning and hiding the checklist are remembered too");
+                // Language: automatic by default; a choice is remembered and applies after a restart.
+                var language = (ComboBox)settings.FindName("LanguageInput");
+                Check((string)language.SelectedValue == Localizer.Automatic && language.Items.Count == 3, "the language follows Windows until one is chosen");
+                language.SelectedValue = "cs";
+                Check(PreferencesStore.Load().Language == "cs" && ((FrameworkElement)settings.FindName("LanguageRestartPanel")).Visibility == Visibility.Visible && Localizer.Language == "en", "choosing Czech is remembered and offers a restart");
+                language.SelectedValue = Localizer.Automatic; Check(PreferencesStore.Load().Language == Localizer.Automatic, "automatic can be chosen again");
+                // The XAML is written in English and translated once per window.
+                Localizer.Use("cs");
+                try
+                {
+                    var czech = new SettingsWindow();
+                    Check(czech.Title == "Nastavení Odyle" && ((Button)czech.FindName("PasteButton")).Content as string == "Vložit odkaz a připojit" && ((Expander)czech.FindName("ServerOptions")).Header as string == "Adresa serveru"
+                        && ((Button)czech.FindName("NpcapButton")).ToolTip as string == "Pro čtení paketů musí být nainstalovaný Npcap", "settings speak Czech when Czech is chosen");
+                    Check(Localizer.Tn(3, "{0} cube", "{0} cubes") == "3 kostky" && Localizer.T("Publisher session expired. Reconnect.") == "Relace čtečky vypršela. Připoj se znovu.", "Czech plurals and server messages");
+                }
+                finally { Localizer.Use("en"); }
                 Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");
                 if (args.Length == 2)
                 {

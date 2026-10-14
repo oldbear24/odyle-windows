@@ -15,15 +15,17 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Odyle.Core;
+using static Odyle.Core.Localizer;
 using Forms = System.Windows.Forms;
 
 namespace Odyle.Reader;
 public sealed record CharacterSharing(string Title, string Rooms);
+public sealed record LanguageChoice(string Code, string Name);
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint);
 public sealed record PartyRoom(string Name, PartyMate[] Mates)
 {
-    public string Header => Name.ToUpperInvariant();
-    public string Online => $"{Mates.Length} online";
+    public string Header => Name.ToUpper(Culture);
+    public string Online => T("{0} online", Mates.Length);
 }
 // One checklist task as the panel shows it: done within the current reset period or not.
 public sealed record TaskItem(UserTask Task, bool Done, string Hint)
@@ -37,10 +39,10 @@ public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropert
     private string reset = "", resetAt = "";
     public string Cadence => cadence;
     public TaskItem[] Tasks => tasks;
-    public string Header => cadence == "daily" ? "DAILY" : "WEEKLY";
+    public string Header => cadence == "daily" ? T("DAILY") : T("WEEKLY");
     public string Progress => $"  {tasks.Count(t => t.Done)} / {tasks.Length}";
     public double Percent => tasks.Length == 0 ? 0 : tasks.Count(t => t.Done) * 100.0 / tasks.Length;
-    public string Empty => cadence == "daily" ? "No daily tasks yet · add them on the dashboard." : "No weekly tasks yet · add them on the dashboard.";
+    public string Empty => cadence == "daily" ? T("No daily tasks yet · add them on the dashboard.") : T("No weekly tasks yet · add them on the dashboard.");
     public Visibility EmptyVisibility => tasks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
     public string Reset { get => reset; set => Set(ref reset, value, nameof(Reset)); }
     public string ResetAt { get => resetAt; set => Set(ref resetAt, value, nameof(ResetAt)); }
@@ -78,7 +80,7 @@ public partial class MainWindow : Window
     private DateTimeOffset renderedDaily, renderedWeekly;
     // Pinned above other windows and the checklist beside the card: remembered on this PC.
     private Preferences preferences = new();
-    private readonly Forms.ToolStripMenuItem pinItem = new("Stay on top") { CheckOnClick = true };
+    private readonly Forms.ToolStripMenuItem pinItem = new(T("Stay on top")) { CheckOnClick = true };
     private long sequence, lastGameBytes;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
     private PacketCandidate? latest;
@@ -102,12 +104,12 @@ public partial class MainWindow : Window
     public MainWindow() : this(true) { }
     public MainWindow(bool enableTray)
     {
-        InitializeComponent();
-        tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = "Odyle · Not connected", Visible = enableTray };
-        var menu = new Forms.ContextMenuStrip(); menu.Items.Add("Open Odyle", null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        InitializeComponent(); Translation.Apply(this);
+        tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = T("Odyle · Not connected"), Visible = enableTray };
+        var menu = new Forms.ContextMenuStrip(); menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
-        menu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
-        menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
+        menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
+        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
@@ -125,6 +127,17 @@ public partial class MainWindow : Window
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false);
+        // Automatic follows the Windows display language; a change applies when the app restarts.
+        settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
+        settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
+        settings.LanguageInput.SelectionChanged += (_, _) => ChooseLanguage(settings.LanguageInput.SelectedValue as string ?? Automatic);
+        settings.LanguageRestartButton.Click += async (_, _) => await QuitAsync(restart: true);
+    }
+    private void ChooseLanguage(string choice)
+    {
+        if (choice == (preferences.Language is "en" or "cs" ? preferences.Language : Automatic)) return;
+        PreferencesStore.Save(preferences = preferences with { Language = choice });
+        settings.LanguageRestartPanel.Visibility = Resolve(choice, System.Globalization.CultureInfo.CurrentUICulture) != Localizer.Language ? Visibility.Visible : Visibility.Collapsed;
     }
     private static System.Drawing.Icon LoadTrayIcon()
     {
@@ -169,7 +182,7 @@ public partial class MainWindow : Window
     // Compact toggle beside the reader status: mint to start or connect, quiet while reading.
     private void RenderReaderButton()
     {
-        ReportButton.Content = capture is not null ? "Stop" : api is not null ? "Start" : "Connect";
+        ReportButton.Content = capture is not null ? T("Stop") : api is not null ? T("Start") : T("Connect");
         if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
     }
 
@@ -196,7 +209,7 @@ public partial class MainWindow : Window
     private static string Age(DateTimeOffset moment)
     {
         var seconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - moment).TotalSeconds);
-        return seconds < 60 ? $"{seconds}s ago" : seconds < 3600 ? $"{seconds / 60}m ago" : seconds < 86400 ? $"{seconds / 3600}h ago" : $"{seconds / 86400}d ago";
+        return seconds < 60 ? T("{0}s ago", seconds) : seconds < 3600 ? T("{0}m ago", seconds / 60) : seconds < 86400 ? T("{0}h ago", seconds / 3600) : T("{0}d ago", seconds / 86400);
     }
     private void RenderHero()
     {
@@ -207,38 +220,38 @@ public partial class MainWindow : Window
         // A reading whose owner is not yet the shown character is displayed, but never under its name.
         var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
         int? value = reading?.Total ?? (character is { Confirmed: true } ? character.Value : null);
-        AccountLabel.Text = !connected ? "NOT CONNECTED" : accountName.Length > 0 ? accountName.ToUpperInvariant() : "CONNECTING…";
-        HeroTitle.Text = !connected ? "Not connected"
-            : reading is not null && !owned ? (gameCharacterName.Length > 0 && gameCharacterKey != detectedCharacterKey && readingOwnerKey == gameCharacterKey ? gameCharacterName + " · not saved" : "Detecting character…")
-            : character is not null ? $"{character.CharacterName} · {character.Server}" : "No character yet";
-        ValueLabel.Text = value is { } v ? v.ToString("N0") : "—";
+        AccountLabel.Text = !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? accountName.ToUpper(Culture) : T("CONNECTING…");
+        HeroTitle.Text = !connected ? T("Not connected")
+            : reading is not null && !owned ? (gameCharacterName.Length > 0 && gameCharacterKey != detectedCharacterKey && readingOwnerKey == gameCharacterKey ? T("{0} · not saved", gameCharacterName) : T("Detecting character…"))
+            : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet");
+        ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
-        CubeLabel.Text = value is { } total ? $"{total / cost} {(total / cost == 1 ? "cube" : "cubes")} · {total % cost}/{cost}" : connected ? $"{cost} per cube" : "";
-        if (!connected) SetPill("Faint", "Muted", "PillNeutral", "Offline");
-        else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", "Not saved");
-        else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", "Live");
-        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(6) ? "Sending" : "Stale");
-        else if (capture is not null) SetPill("MintSoft", "MintSoft", "PillNeutral", "Listening");
-        else if (character is null) SetPill("Muted", "Muted", "PillNeutral", "No character");
-        else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", "Saved");
-        else SetPill("Muted", "Muted", "PillNeutral", "No reading");
-        ReadingLabel.Text = !connected ? "Open settings to pair with the dashboard."
-            : reading is not null && !owned ? (gameCharacterKey.Length == 0 ? "Relog or change channel once so the game names the character." : "Waiting for the game to name the character.")
+        CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
+        else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
+        else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
+        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(6) ? T("Sending") : T("Stale"));
+        else if (capture is not null) SetPill("MintSoft", "MintSoft", "PillNeutral", T("Listening"));
+        else if (character is null) SetPill("Muted", "Muted", "PillNeutral", T("No character"));
+        else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
+        else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
+        ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
+            : reading is not null && !owned ? (gameCharacterKey.Length == 0 ? T("Relog or change channel once so the game names the character.") : T("Waiting for the game to name the character."))
             : reading is not null ? Components(reading) + (publishFailure is null ? "" : " · " + publishFailure)
-            : capture is not null ? (character is null ? "Log into a character · it is detected automatically." : "Listening for the game's Odyle snapshot…")
-            : character is null ? "Start the reader, then log into your character."
-            : character.Confirmed ? "Last saved value · start the reader for live values."
-            : "No reading yet · start the reader before logging in.";
+            : capture is not null ? (character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
+            : character is null ? T("Start the reader, then log into your character.")
+            : character.Confirmed ? T("Last saved value · start the reader for live values.")
+            : T("No reading yet · start the reader before logging in.");
         RenderClock();
         var name = character?.CharacterName ?? accountName;
-        var tip = !connected ? "Odyle · Not connected" : value is { } shown ? $"Odyle · {name} · {shown:N0}" : $"Odyle · {name}";
+        var tip = !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
     }
     // A single-value live update carries the total only; the login snapshot shows both components.
     private static string Components(PacketCandidate reading) => reading is { Primary: { } b, Bonus: { } x }
-        ? $"{b:N0} base + {x:N0} bonus · {(reading.Source == CandidateSource.Update ? "live update" : "game snapshot")}"
-        : "live update · base + bonus split after the next login";
+        ? T("{0:N0} base + {1:N0} bonus · {2}", b, x, reading.Source == CandidateSource.Update ? T("live update") : T("game snapshot"))
+        : T("live update · base + bonus split after the next login");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character)
     {
@@ -251,9 +264,9 @@ public partial class MainWindow : Window
         settings.SharingList.ItemsSource = rooms.Length == 0 ? Array.Empty<CharacterSharing>() : characters.Select(c =>
         {
             var shared = rooms.Where(r => r.Shares(c.Id)).Select(r => r.Name).ToArray();
-            return new CharacterSharing($"{c.CharacterName} · {c.Server}", shared.Length == 0 ? "Private in every room" : "Shared in " + string.Join(", ", shared));
+            return new CharacterSharing($"{c.CharacterName} · {c.Server}", shared.Length == 0 ? T("Private in every room") : T("Shared in {0}", string.Join(", ", shared)));
         }).ToArray();
-        settings.NoRoomsLabel.Text = characters.Length == 0 ? "No characters yet · start the reader and log into the game." : rooms.Length == 0 ? "No rooms yet · create or join one on the dashboard." : "";
+        settings.NoRoomsLabel.Text = characters.Length == 0 ? T("No characters yet · start the reader and log into the game.") : rooms.Length == 0 ? T("No rooms yet · create or join one on the dashboard.") : "";
         settings.NoRoomsLabel.Visibility = settings.NoRoomsLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     // Other members' characters that are live or recently stale, per room. Offline
@@ -276,16 +289,16 @@ public partial class MainWindow : Window
         cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
         return new PartyMate(c.CharacterName, c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}",
-            c.Value.ToString("N0"), $"{cubes} {(cubes == 1 ? "cube" : "cubes")}{(live ? "" : " · stale")}", Brush(live ? "Mint" : "Amber"),
-            live ? $"{member.DisplayName} · live from the game" : $"{member.DisplayName} · last value; their reader stopped reporting");
+            c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale")), Brush(live ? "Mint" : "Amber"),
+            live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName));
     }
     private void RenderClock()
     {
         var character = CurrentCharacter;
-        AgeLabel.Text = capture is not null && latest is not null ? "updated " + Age(latestAt)
-            : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? "saved " + Age(saved) : "";
+        AgeLabel.Text = capture is not null && latest is not null ? T("updated {0}", Age(latestAt))
+            : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
         if (capture is { } running)
-            CaptureStatsLabel.Text = $"{running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game";
+            CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
     }
 
     // ----- Operations -----
@@ -300,7 +313,7 @@ public partial class MainWindow : Window
         catch (Exception error)
         {
             if (api is not null && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
-            Status(error.Message);
+            Status(T(error.Message));
         }
         finally { SetBusy(false); operations.Release(); RenderHero(); }
     }
@@ -316,7 +329,7 @@ public partial class MainWindow : Window
     private async Task RestoreAsync()
     {
         var saved = SessionStore.Load(); if (saved is null) return;
-        settings.EndpointInput.Text = saved.Endpoint; api = new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey); Status("Connecting to your account…");
+        settings.EndpointInput.Text = saved.Endpoint; api = new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey); Status(T("Connecting to your account…"));
         try { var auth = await api.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
@@ -326,12 +339,12 @@ public partial class MainWindow : Window
         catch
         {
             api.Dispose(); api = null; settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
-            Status("Server unavailable. Your connection is saved; reconnect in settings when it is back online.");
+            Status(T("Server unavailable. Your connection is saved; reconnect in settings when it is back online."));
         }
         // The login snapshot names the character, so read from the moment the account is connected.
         if (api is not null && capture is null) await StartReaderAsync();
     }
-    private const string Unpaired = "This PC is no longer paired with your account. Copy a new connection link from the dashboard.";
+    private static string Unpaired => T("This PC is no longer paired with your account. Copy a new connection link from the dashboard.");
     // Saves the pairing on this PC. An app paired before device keys existed gets its key
     // here, so from now on it stays paired however long it is closed.
     private async Task SavePairingAsync(AuthResponse auth)
@@ -344,11 +357,11 @@ public partial class MainWindow : Window
     {
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountName = auth.Record.DisplayName; accountId = auth.Record.Id;
-        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch { host = "server"; }
-        settings.AccountDetail.Text = $"Signed in as {accountName} via Discord · {host}";
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch { host = T("server"); }
+        settings.AccountDetail.Text = T("Signed in as {0} via Discord · {1}", accountName, host);
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
-        Status("Connected to your account.");
+        Status(T("Connected to your account."));
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start();
     }
@@ -364,12 +377,12 @@ public partial class MainWindow : Window
     private void OpenDashboard(string page)
     {
         try { Process.Start(new ProcessStartInfo(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text) + "/" + page) { UseShellExecute = true }); }
-        catch (Exception error) { Status(error.Message); }
+        catch (Exception error) { Status(T(error.Message)); }
     }
     private async void Pair_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(PairAsync);
     private async void PasteConnect_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
     {
-        if (!System.Windows.Clipboard.ContainsText()) throw new InvalidOperationException("Copy the connection link from the dashboard first.");
+        if (!System.Windows.Clipboard.ContainsText()) throw new InvalidOperationException(T("Copy the connection link from the dashboard first."));
         settings.CodeInput.Password = System.Windows.Clipboard.GetText().Trim();
         await PairAsync();
     });
@@ -380,7 +393,7 @@ public partial class MainWindow : Window
     private async Task PairAsync()
     {
         var connection = ConnectionDetails.Parse(settings.CodeInput.Password, settings.EndpointInput.Text);
-        var next = new PartyApi(connection.Endpoint); Status("Pairing with your account…");
+        var next = new PartyApi(connection.Endpoint); Status(T("Pairing with your account…"));
         try
         {
             var auth = await next.PairAsync(connection.Code); var previous = api; api = next;
@@ -420,7 +433,7 @@ public partial class MainWindow : Window
     private void OpenLink(string url)
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
-        catch (Exception error) { Status(error.Message); }
+        catch (Exception error) { Status(T(error.Message)); }
     }
 
     // ----- Window -----
@@ -430,7 +443,7 @@ public partial class MainWindow : Window
     {
         Topmost = on; pinItem.Checked = on; settings.StayOnTopToggle.IsChecked = on;
         PinButton.Foreground = Brush(on ? "Mint" : "Muted");
-        PinButton.ToolTip = on ? "Pinned above other windows · click to unpin" : "Stay on top of other windows, for example the game in windowed mode";
+        PinButton.ToolTip = on ? T("Pinned above other windows · click to unpin") : T("Stay on top of other windows, for example the game in windowed mode");
         if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
     }
     private void Pin_Click(object sender, RoutedEventArgs e) => SetStayOnTop(!Topmost, persist: true);
@@ -439,7 +452,7 @@ public partial class MainWindow : Window
     {
         TasksPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed; settings.TasksToggle.IsChecked = on;
         TasksButton.Foreground = Brush(on ? "Mint" : "Muted");
-        TasksButton.ToolTip = on ? "Hide the daily & weekly tasks" : "Show your daily & weekly tasks beside the card";
+        TasksButton.ToolTip = on ? T("Hide the daily & weekly tasks") : T("Show your daily & weekly tasks beside the card");
         if (persist) PreferencesStore.Save(preferences = preferences with { ShowTasks = on });
         RenderTasks(); if (on) _ = RefreshTasksAsync();
     }
@@ -464,7 +477,7 @@ public partial class MainWindow : Window
         if (api is not { } current || TasksPanel.Visibility != Visibility.Visible || refreshingTasks) return;
         refreshingTasks = true;
         try { var listed = await current.GetTasksAsync(); if (api == current) ApplyTasks(listed); }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { if (api == current) { tasksProblem = error.Message; RenderTasks(); } }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { if (api == current) { tasksProblem = T(error.Message); RenderTasks(); } }
         finally { refreshingTasks = false; }
     }
     private void ApplyTasks(TasksResponse listed)
@@ -478,7 +491,7 @@ public partial class MainWindow : Window
     {
         if (api is not { } current) return;
         try { var listed = await current.SetTaskDoneAsync(item.Id, done); if (api == current) ApplyTasks(listed); }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Status("Could not update the task: " + error.Message); RenderTasks(); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Status(T("Could not update the task: {0}", T(error.Message))); RenderTasks(); }
     }
     private async void Task_Click(object sender, RoutedEventArgs e)
     {
@@ -495,19 +508,24 @@ public partial class MainWindow : Window
             var items = tasks.Where(t => t.Cadence == cadence).Select(t =>
             {
                 var done = Checklist.IsDone(t, now, resets);
-                var hint = done ? $"Done {Age(Readiness.Parse(t.DoneAt) ?? now)} · unchecks itself at the {cadence} reset" : cadence == "daily" ? "Still to do today" : "Still to do this week";
+                var age = Age(Readiness.Parse(t.DoneAt) ?? now);
+                var hint = done ? (cadence == "daily" ? T("Done {0} · unchecks itself at the daily reset", age) : T("Done {0} · unchecks itself at the weekly reset", age)) : cadence == "daily" ? T("Still to do today") : T("Still to do this week");
                 return new TaskItem(t, done, hint);
             }).ToArray();
             return new TaskGroup(cadence, items) { Reset = ResetIn(cadence, now), ResetAt = ResetAt(cadence, now) };
         }).ToArray();
-        TasksHint.Text = !connected ? "Pair the app in settings to see your daily and weekly tasks."
-            : tasksProblem is { } problem ? "Could not load the tasks: " + problem
-            : !tasksLoaded ? "Loading your checklist…"
-            : tasks.Length == 0 ? "Add tasks on the dashboard under Daily & weekly; they show up here."
-            : "Tick a task when it is done · it unchecks itself at the game's reset.";
+        TasksHint.Text = !connected ? T("Pair the app in settings to see your daily and weekly tasks.")
+            : tasksProblem is { } problem ? T("Could not load the tasks: {0}", problem)
+            : !tasksLoaded ? T("Loading your checklist…")
+            : tasks.Length == 0 ? T("Add tasks on the dashboard under Daily & weekly; they show up here.")
+            : T("Tick a task when it is done · it unchecks itself at the game's reset.");
     }
-    private string ResetIn(string cadence, DateTimeOffset now) => "resets in " + Checklist.Remaining(Checklist.NextReset(cadence, now, resets) - now);
-    private string ResetAt(string cadence, DateTimeOffset now) => $"{(cadence == "daily" ? "Daily" : "Weekly")} reset {Checklist.NextReset(cadence, now, resets).ToLocalTime().ToString("ddd d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture)} local time";
+    private string ResetIn(string cadence, DateTimeOffset now) => T("resets in {0}", Checklist.Remaining(Checklist.NextReset(cadence, now, resets) - now));
+    private string ResetAt(string cadence, DateTimeOffset now)
+    {
+        var at = Checklist.NextReset(cadence, now, resets).ToLocalTime().ToString("ddd d MMM HH:mm", Culture);
+        return cadence == "daily" ? T("Daily reset {0} local time", at) : T("Weekly reset {0} local time", at);
+    }
     // Every second while the panel is open: the countdowns tick and a reset clears the ticks.
     private void TickTasks()
     {
@@ -532,7 +550,7 @@ public partial class MainWindow : Window
         await InvalidateActiveAsync();
         latest = null; publishFailure = null;
         RenderReaderButton(); ToolTipService.SetIsEnabled(ReaderRow, false);
-        SetReaderState(ReaderState.Stopped, old is null ? "Stopped · start the reader before logging in." : "Stopped · the last value stays saved on your account.");
+        SetReaderState(ReaderState.Stopped, old is null ? T("Stopped · start the reader before logging in.") : T("Stopped · the last value stays saved on your account."));
         RenderHero();
     }
     private async void Reader_Click(object sender, RoutedEventArgs e)
@@ -570,7 +588,7 @@ public partial class MainWindow : Window
                 // new one, no reading may be attributed to either character.
                 gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; ownerEntity = null;
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
-                await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, "Character changed · detecting the new character."); RenderHero();
+                await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
             }
             finally { operations.Release(); }
         });
@@ -578,9 +596,9 @@ public partial class MainWindow : Window
         try
         {
             next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
-            RenderReaderButton(); CaptureStatsLabel.Text = "Waiting for packets…"; ToolTipService.SetIsEnabled(ReaderRow, true);
-            SetReaderState(ReaderState.Waiting, "Waiting for the AION2 game connection…");
-            Status("Reader running · log into your character to read its Odyle.");
+            RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
+            SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
+            Status(T("Reader running · log into your character to read its Odyle."));
         }
         catch { await next.DisposeAsync(); throw; }
     }
@@ -598,7 +616,7 @@ public partial class MainWindow : Window
         // read without any snapshot waits for an owner the same way.
         if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); OwnerStore.Remember(accountId, observation.EntityId); }
         else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
-        if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, $"Read {observation.Total:N0} Odyle from the game · saving…");
+        if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle from the game · saving…", observation.Total));
         RenderHero();
         if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
     }
@@ -626,17 +644,17 @@ public partial class MainWindow : Window
         if (readingOwnerKey.Length == 0)
         {
             // Without any identity this run (a start after login) only a relog or channel change names the character.
-            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 ? $"Read {reading.Total:N0} Odyle · relog or change channel once so the game names your character." : $"Read {reading.Total:N0} Odyle · waiting for the game to name the character."); RenderHero(); return;
+            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 ? T("Read {0:N0} Odyle · relog or change channel once so the game names your character.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
         }
         if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
         {
-            SetReaderState(ReaderState.Listening, $"Read {reading.Total:N0} Odyle · this character's server is not supported, so it is not saved."); RenderHero(); return;
+            SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle · this character's server is not supported, so it is not saved.", reading.Total)); RenderHero(); return;
         }
         if (DateTimeOffset.UtcNow < publishBlockedUntil) return;
         // A fresh snapshot of the value already saved (reconnect, channel change) is live again.
         if (publishedTotal == reading.Total && activeCharacterId == character.Id)
         {
-            if (readerState == ReaderState.Listening) SetReaderState(ReaderState.Live, $"Live · {reading.Total:N0} Odyle saved to your account.");
+            if (readerState == ReaderState.Listening) SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
             return;
         }
         try
@@ -645,15 +663,15 @@ public partial class MainWindow : Window
             if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
             activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null;
             UpdateCharacterInList(saved);
-            SetReaderState(ReaderState.Live, $"Live · {reading.Total:N0} Odyle saved to your account.");
+            SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
         }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
         {
-            publishFailure = error.Message; publishBlockedUntil = DateTimeOffset.UtcNow.AddSeconds(60);
+            publishFailure = T(error.Message); publishBlockedUntil = DateTimeOffset.UtcNow.AddSeconds(60);
             if (error.StatusCode == HttpStatusCode.Forbidden) needsReconnect = true;
-            SetReaderState(ReaderState.Problem, "The server refused the reading: " + error.Message);
+            SetReaderState(ReaderState.Problem, T("The server refused the reading: {0}", T(error.Message)));
         }
-        catch (Exception error) { needsReconnect = true; publishFailure = "Connection problem"; SetReaderState(ReaderState.Problem, "Could not send the reading: " + error.Message); }
+        catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", T(error.Message))); }
         RenderHero();
     }
     private async Task SaveDetectedCharacterAsync(PacketCapture next, GameIdentity identity)
@@ -675,12 +693,12 @@ public partial class MainWindow : Window
             {
                 if (identity.Server is null || identity.Region is null)
                 {
-                    Status($"Detected {identity.CharacterName}, but its server ({identity.ServerId}) is not supported yet. Its Odyle is not saved.");
+                    Status(T("Detected {0}, but its server ({1}) is not supported yet. Its Odyle is not saved.", identity.CharacterName, identity.ServerId));
                     RenderHero(); return;
                 }
                 var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.Region);
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
-                Status($"{identity.CharacterName} · {identity.Server} saved to your account.");
+                Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
             }
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0)
@@ -691,7 +709,7 @@ public partial class MainWindow : Window
             if (latest is not null) await PublishCoreAsync();
             RenderHero();
         }
-        catch (Exception error) { Status("Could not save the detected character: " + error.Message); }
+        catch (Exception error) { Status(T("Could not save the detected character: {0}", T(error.Message))); }
         finally { operations.Release(); }
     }
 
@@ -701,34 +719,34 @@ public partial class MainWindow : Window
     // package left waiting installs by itself the next time the app starts.
     private void RenderUpdate()
     {
-        var build = $"Odyle {Updater.Current}{(Updater.SelfContained ? " · self-contained" : "")}";
-        settings.UpdateLabel.Text = !Updater.IsReleaseBuild ? $"{build} · development build. Released builds update themselves from GitHub releases."
-            : staged is not null ? $"{build} · Odyle {staged.Version} is downloaded and verified. Restart to install it; otherwise it installs at the next start."
+        var build = Updater.SelfContained ? T("Odyle {0} · self-contained", Updater.Current) : T("Odyle {0}", Updater.Current);
+        settings.UpdateLabel.Text = !Updater.IsReleaseBuild ? T("{0} · development build. Released builds update themselves from GitHub releases.", build)
+            : staged is not null ? T("{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start.", build, staged.Version)
             : updateNote.Length > 0 ? $"{build} · {updateNote}"
-            : Updater.LastFailure is { } failure ? $"{build} · the downloaded update could not be installed: {failure}"
-            : $"{build} · looks for new releases every six hours and installs them on restart.";
+            : Updater.LastFailure is { } failure ? T("{0} · the downloaded update could not be installed: {1}", build, T(failure))
+            : T("{0} · looks for new releases every six hours and installs them on restart.", build);
         settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = staged is not null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.Visibility = Updater.IsReleaseBuild && staged is null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.IsEnabled = !updating;
-        UpdateButton.ToolTip = staged is null ? null : $"Install Odyle {staged.Version} and start it · the reader stops for a moment";
+        UpdateButton.ToolTip = staged is null ? null : T("Install Odyle {0} and start it · the reader stops for a moment", staged.Version);
     }
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (updating || staged is not null || !Updater.IsReleaseBuild) return;
-        updating = true; updateNote = "checking GitHub for a newer release…"; RenderUpdate();
+        updating = true; updateNote = T("checking GitHub for a newer release…"); RenderUpdate();
         try
         {
             var release = await Updater.CheckAsync(CancellationToken.None);
-            if (release is null) { updateNote = $"up to date · checked {DateTime.Now:HH:mm}"; return; }
-            updateNote = $"downloading Odyle {release.Version}…"; RenderUpdate();
-            var progress = new Progress<double>(part => { updateNote = $"downloading Odyle {release.Version} · {part:P0}"; RenderUpdate(); });
+            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); return; }
+            updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
+            var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
             staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
             updateNote = "";
-            Status($"Odyle {staged.Version} is ready · restart to update, or it installs at the next start.");
+            Status(T("Odyle {0} is ready · restart to update, or it installs at the next start.", staged.Version));
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
         {
-            updateNote = (manual ? "update check failed: " : "could not check for updates: ") + error.Message;
+            updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
         }
         finally { updating = false; RenderUpdate(); }
     }
@@ -741,7 +759,7 @@ public partial class MainWindow : Window
         try { Updater.Apply(update); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            Status($"Could not install the update: {error.Message} Download it from the release page instead."); return;
+            Status(T("Could not install the update: {0} Download it from the release page instead.", T(error.Message))); return;
         }
         await QuitAsync(restart: true);
     }
@@ -754,7 +772,7 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not HttpStatusCode.Unauthorized) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Status("Reconnected to your account.");
+        Status(T("Reconnected to your account."));
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
     }
@@ -773,13 +791,13 @@ public partial class MainWindow : Window
                 var bytes = running.GameBytes; var alive = bytes > lastGameBytes; lastGameBytes = bytes;
                 // Re-sends only after the reading went stale; otherwise the heartbeat below keeps it live.
                 if (alive) await PublishCoreAsync();
-                else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, "No game packets for 20 seconds · the last value is kept but marked stale."); RenderHero(); }
+                else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
             await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
         }
         // With a device key the request already signed in again; still 401 means the pairing ended.
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { await DisconnectAsync(Unpaired, clearSaved: true); }
-        catch (Exception error) { needsReconnect = true; Status(error.Message); }
+        catch (Exception error) { needsReconnect = true; Status(T(error.Message)); }
         finally { operations.Release(); }
     }
     private async Task DisconnectAsync(string message, bool clearSaved)
@@ -793,7 +811,7 @@ public partial class MainWindow : Window
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
     {
         if (api is { } current) await UnpairQuietlyAsync(current);
-        await DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true);
+        await DisconnectAsync(T("Disconnected · your characters stay saved on your account."), clearSaved: true);
     });
     // Best effort: offline, the key is still deleted from this PC with the saved session.
     private static async Task UnpairQuietlyAsync(PartyApi paired)

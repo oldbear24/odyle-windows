@@ -1,7 +1,10 @@
 using System;
+using System.Globalization;
 using System.Security.Principal;
 using System.Threading;
 using System.Windows;
+using System.Windows.Markup;
+using Odyle.Core;
 namespace Odyle.Reader;
 public partial class App : System.Windows.Application
 {
@@ -13,8 +16,13 @@ public partial class App : System.Windows.Application
     {
         if (!Headless)
         {
+            // The language chosen in settings, else the Windows display language; numbers
+            // and dates follow it (Localizer.Culture).
+            Localizer.Use(PreferencesStore.Load().Language);
+            CultureInfo.DefaultThreadCurrentCulture = CultureInfo.CurrentCulture = Localizer.Culture;
+            FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement), new FrameworkPropertyMetadata(XmlLanguage.GetLanguage(Localizer.Culture.IetfLanguageTag)));
             instance = new Mutex(true, "Local\\Odyle-" + WindowsIdentity.GetCurrent().User!.Value, out var created);
-            if (!created) { MessageBox.Show("Odyle is already running. Open it from the system tray.", "Odyle"); Shutdown(); return; }
+            if (!created) { MessageBox.Show(Localizer.T("Odyle is already running. Open it from the system tray."), "Odyle"); Shutdown(); return; }
             // A newer version downloaded and verified by an earlier run replaces this
             // build before any window opens; the new version then starts in its place.
             if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged)) return;
