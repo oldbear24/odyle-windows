@@ -37,7 +37,7 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
 
 | Method / route | Body | Answer and use |
 | --- | --- | --- |
-| POST `/api/odyle/session` | `{ previousSessionId?, deviceKey? }` | `{ sessionId, sequence: 0 }`. `previousSessionId` rotates the app's own session and invalidates its last readings. A paired app sends its `deviceKey`, which ties the session to the PC; a key the server no longer knows answers 401. Absent fields are left out of the body |
+| POST `/api/odyle/session` | `{ previousSessionId?, deviceKey?, appVersion? }` | `{ sessionId, sequence: 0 }`. `previousSessionId` rotates the app's own session and invalidates its last readings. A paired app sends its `deviceKey`, which ties the session to the PC; a key the server no longer knows answers 401. `appVersion` (for example `0.6.0.12`) shows on the server's superuser monitor. Absent fields are left out of the body |
 | POST `/api/odyle/character` | `{ characterName, server, region }` | `{ character }`: saves the character the game names (unknown Odyle until the first reading); repeating an identity returns the same record. Any other field is refused. Used for automatic game identification only: the app has no manual character entry |
 | POST `/api/odyle/report` | see below | `{ character, serverNow }` |
 | POST `/api/odyle/heartbeat` | `{ sessionId, characterId }` | Every 20 seconds: keeps the session's latest reading live; `characterId` is `null` without a live reading |
@@ -65,7 +65,7 @@ An existing `characterId` must belong to the account and keeps its saved identit
 
 | Method / route | Answer and use |
 | --- | --- |
-| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, serverNow }`; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
+| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, announcement, serverNow }`; `announcement` is the server's message `{ text, level }` (`info` or `warning`) or `null`, shown above the card; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
 | GET `/api/odyle/snapshot/{id}` | `{ room, members, wishlist, runs, dungeons, serverNow }`; members have `id`, `user`, `role`, `displayName` and `characters`. The app lists other members' live and stale characters, corrects its clock with `serverNow` and reads `runs` for reminders; it ignores `wishlist` and `dungeons` |
 
 The app reads the rooms and their snapshots every 15 seconds while its window is open and every minute while it waits in the tray. Sharing, rooms, invitations, the wishlist and planning are managed on the dashboard.

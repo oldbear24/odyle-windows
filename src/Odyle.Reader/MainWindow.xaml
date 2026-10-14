@@ -21,6 +21,13 @@
    </DockPanel>
 
    <StackPanel Grid.Row="1" Margin="12,3,12,8">
+    <!-- Announcement from the server (Server controls on the dashboard's superuser pages) -->
+    <Border x:Name="AnnouncementBar" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" Padding="9,5,3,5" Margin="0,0,0,6">
+     <DockPanel>
+      <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="✕" FontSize="10" Padding="5,0" VerticalAlignment="Top" Click="HideAnnouncement_Click" ToolTip="Hide until the message changes"/>
+      <TextBlock x:Name="AnnouncementText" TextWrapping="Wrap" FontSize="11" VerticalAlignment="Center"/>
+     </DockPanel>
+    </Border>
     <!-- Reading card: the character the game reports -->
     <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,8,12,8">
      <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>

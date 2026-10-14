@@ -15,7 +15,7 @@ static class LocalizationChecks
         "Request could not be completed.", "Something went wrong.", "Something went wrong while processing your request.", "The request requires valid record authorization token.",
         "Too Many Requests.", "The requested resource wasn't found.", "You are not a member of this room.", "This character no longer exists.", "This character belongs to another account.",
         "Publisher session expired. Reconnect.", "Publisher session changed. Reconnect your client.", "This task no longer exists.", "This task belongs to another account.",
-        "Send done (true or false) or remove: true.", "Only character name, server and region may be saved here.", "Pairing code is invalid or expired.", "Pairing code is required (max 24 characters).",
+        "Send done (true or false) or remove: true.", "Only character name, server and region may be saved here.", "Pairing code is invalid or expired.", "Pairing new PCs is paused for now. Try again later.", "Pairing code is required (max 24 characters).",
         "Device key is required (max 100 characters).", "This PC is no longer paired with an account.", "Select a Global region.", "Outdated reading.",
         "Odyle must come from game packets. Manual readings are disabled.", "This packet adapter has not been validated for Global. No reading was saved.", "A verified packet observation is required.",
         "You can keep up to 30 characters. Delete one you no longer play under My rooms & characters.", "Character is required (max 40 characters).", "Server is required (max 40 characters)."];

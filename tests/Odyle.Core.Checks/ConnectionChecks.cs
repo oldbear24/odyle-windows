@@ -113,6 +113,16 @@ static class ConnectionChecks
             Check(pair.RootElement.GetProperty("code").GetString() == "ABCDEFGH23456789" && pair.RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, "pairing sends the code and this PC's name");
             Check(pairing.Requests[1].Body == "{}" && JsonDocument.Parse(pairing.Requests[2].Body).RootElement.GetProperty("name").GetString() == PartyApi.DeviceName && pairing.Requests[3].Body == """{"deviceKey":"k"}""", "absent session fields are left out; the device request names this PC");
         }
+        // The app names its version with each session; the rooms answer carries the server's announcement.
+        var versioned = new Stub((route, _) => route == "/api/odyle/rooms" ? Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":{"text":"Maintenance at 10:00 UTC","level":"warning"}}""") : Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0}"""));
+        using (var api = new PartyApi("https://party.example", "token", null, versioned) { AppVersion = "0.6.0.12" })
+        {
+            await api.StartSessionAsync(); var listed = await api.GetRoomsAsync();
+            using var session = JsonDocument.Parse(versioned.Requests[0].Body);
+            Check(session.RootElement.GetProperty("appVersion").GetString() == "0.6.0.12", "a session request names the app version");
+            Check(listed.Announcement is { Text: "Maintenance at 10:00 UTC", IsWarning: true }, "the rooms answer carries the server's announcement");
+        }
+        Check(JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Announcement is null, "a backend without announcements answers none");
         Check(PartyApi.NameOf("  DESKTOP-ODYLE  ") == "DESKTOP-ODYLE" && PartyApi.NameOf(new string('x', 55)).Length == 40 && PartyApi.NameOf("") == "Windows PC" && PartyApi.DeviceName.Length is > 0 and <= 40, "device names are trimmed to 40 characters");
 
         // The log rotates at its limit, keeps one previous file, takes writes from many threads and masks secrets.

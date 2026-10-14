@@ -457,7 +457,7 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next;
+        api = next; next.AppVersion = Updater.Current.ToString();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
@@ -494,7 +494,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube;
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -548,7 +548,7 @@ public partial class MainWindow : Window
             var listed = await current.GetRoomsAsync();
             var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
             if (api != current) return;
-            rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray();
+            rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); ShowAnnouncement(listed.Announcement);
             if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
             RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
         }
@@ -556,6 +556,22 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
         finally { refreshingParty = false; }
     }
+    // The server's announcement above the reading card, as plain text. Hiding it lasts
+    // until the text changes; a new message also shows up when the window is hidden.
+    private Announcement? announcement;
+    private string hiddenAnnouncement = "";
+    private void ShowAnnouncement(Announcement? next)
+    {
+        if (next is { } shown && shown.Text != announcement?.Text) Log.Info("Announcement from the server: " + shown.Text);
+        announcement = next is { Text.Length: > 0 } ? next : null;
+        if (announcement is not { } current || current.Text == hiddenAnnouncement) { AnnouncementBar.Visibility = Visibility.Collapsed; return; }
+        AnnouncementText.Text = current.Text;
+        AnnouncementBar.Background = Brush(current.IsWarning ? "PillAmber" : "PillLive");
+        AnnouncementBar.BorderBrush = Brush(current.IsWarning ? "Amber" : "LineStrong");
+        AnnouncementText.Foreground = Brush(current.IsWarning ? "Amber" : "Text");
+        AnnouncementBar.Visibility = Visibility.Visible;
+    }
+    private void HideAnnouncement_Click(object sender, RoutedEventArgs e) { hiddenAnnouncement = announcement?.Text ?? ""; ShowAnnouncement(announcement); }
     // Tray notifications (toasts on Windows 10 and 11); clicking one opens the window.
     private void Notify(string title, string text)
     {
@@ -1076,7 +1092,7 @@ public partial class MainWindow : Window
         DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
-        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks();
+        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
         Status(message); RenderHero();
     }
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>

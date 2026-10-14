@@ -12,7 +12,12 @@ public sealed record Room(string Id, string Name, int Cost, string Role, bool Sh
 {
     public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
 }
-public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40);
+// The message superusers set on the server (Server controls), shown on the card; level is "info" or "warning".
+public sealed record Announcement(string Text, string Level = "info")
+{
+    public bool IsWarning => Level == "warning";
+}
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
@@ -49,6 +54,9 @@ public sealed class PartyApi : IDisposable
     // The name the dashboard lists this PC under: its Windows computer name, at most 40 characters.
     public static string DeviceName => NameOf(Environment.MachineName);
     public static string NameOf(string? machine) { var name = (machine ?? "").Trim(); return name.Length == 0 ? "Windows PC" : name.Length > 40 ? name[..40].TrimEnd() : name; }
+    // The app version (for example 0.6.0.12) sent with each reader session, so the server's
+    // superuser dashboard can list which versions are connected.
+    public string? AppVersion { get; set; }
     // The checks pass a handler that answers like the server; the app always uses the network.
     public PartyApi(string endpoint, string? token = null, string? deviceKey = null, HttpMessageHandler? handler = null)
     {
@@ -96,12 +104,14 @@ public sealed class PartyApi : IDisposable
     public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     // A paired app names its device key, so a PC removed on the dashboard gets 401 here
-    // and ends its pairing like an unknown key at sign-in. Absent fields are left out.
+    // and ends its pairing like an unknown key at sign-in. Absent fields are left out;
+    // backends from before app versions ignore the version.
     public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null)
     {
         var body = new Dictionary<string, string>();
         if (!string.IsNullOrEmpty(previousSessionId)) body["previousSessionId"] = previousSessionId;
         if (DeviceKey is { } key) body["deviceKey"] = key;
+        if (!string.IsNullOrEmpty(AppVersion)) body["appVersion"] = AppVersion;
         return PostAsync<PublisherSession>("api/odyle/session", body);
     }
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));

@@ -93,6 +93,19 @@ static class ReaderChecks
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
                 Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
+                // The server's announcement sits above the reading card until it is hidden; a new text shows again.
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "no announcement is shown before the server sends one");
+                Call(window, "ShowAnnouncement", new Announcement("Maintenance at 10:00 UTC", "warning"));
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Maintenance at 10:00 UTC", "the server's announcement is shown on the card");
+                Call(window, "HideAnnouncement_Click", window, new RoutedEventArgs());
+                Call(window, "ShowAnnouncement", new Announcement("Maintenance at 10:00 UTC", "warning"));
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "a hidden announcement stays hidden while its text is the same");
+                Call(window, "ShowAnnouncement", new Announcement("Please update to the newest Odyle today."));
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Please update to the newest Odyle today.", "a new announcement shows again");
+                Call(window, "ShowAnnouncement", new object[] { null! });
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "a removed announcement disappears");
+                Check(Field("hiddenAnnouncement").GetValue(window) is "Maintenance at 10:00 UTC", "hiding is remembered while the app runs");
+                Field("hiddenAnnouncement").SetValue(window, "");
                 // An update restart hands the live character to the next start, which takes it over without a relog.
                 Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
@@ -394,6 +407,9 @@ static class ReaderChecks
         Field("latest").SetValue(window, null); Call(window, "RenderHero");
         Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
+        Call(window, "ShowAnnouncement", new Announcement("Server maintenance on Thursday 10:00–11:00 UTC. Readings pause meanwhile.", "warning"));
+        Snapshot(window, Path.Combine(directory, "announcement-preview.png"));
+        Call(window, "ShowAnnouncement", new object[] { null! });
         Field("capture").SetValue(window, null);
         Console.WriteLine("Rendered previews to " + directory);
     }
