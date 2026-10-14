@@ -17,9 +17,15 @@ jobs:
       - run: dotnet build src/Odyle.Reader/Odyle.Reader.csproj -c Release
       - run: dotnet run --project tests/Odyle.Core.Checks -c Release
       - run: dotnet run --project tests/Odyle.Reader.Checks -c Release
+      # The same packages as a release, unversioned, so a broken ARM64 build or installer shows up before main.
       - run: ./scripts/publish.ps1
-      - run: ./scripts/publish.ps1 -SelfContained
+      - run: ./scripts/publish.ps1 -SelfContained -Installer
+      - run: ./scripts/publish.ps1 -Runtime win-arm64
+      - run: ./scripts/publish.ps1 -Runtime win-arm64 -SelfContained
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: odyle-windows
-          path: artifacts/*.zip
+          path: |
+            artifacts/*.zip
+            artifacts/*.exe
+            artifacts/*.sha256

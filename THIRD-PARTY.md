@@ -26,3 +26,7 @@ SOFTWARE.
 
 Npcap is an external prerequisite, not distributed with this application.
 Its own license and installer terms apply.
+
+The Windows installer (odyle-<version>-win-x64-setup.exe) is built with Inno Setup
+(https://jrsoftware.org/isinfo.php); the Inno Setup license applies to its setup and
+uninstall programs.
