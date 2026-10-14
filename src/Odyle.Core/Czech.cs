@@ -118,7 +118,10 @@ public static class Czech
         // Window and language
         ["WINDOW"] = "OKNO", ["Keeps the card above the game in windowed or borderless mode"] = "Drží kartu nad hrou v okně nebo v okně bez okrajů",
         ["Show daily & weekly tasks beside the card"] = "Ukazovat denní a týdenní úkoly vedle karty", ["Your checklist from the dashboard; tick tasks off here"] = "Tvůj seznam z dashboardu; úkoly zaškrtáváš tady",
-        ["Both are remembered on this PC. Tasks themselves are added and removed on the dashboard."] = "Obojí si pamatuje tento počítač. Úkoly samotné se přidávají a odebírají na dashboardu.",
+        ["Start with Windows"] = "Spouštět se systémem Windows", ["Starts Odyle in the tray when you sign in to Windows"] = "Po přihlášení do Windows spustí Odyle v oznamovací oblasti",
+        ["Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard."] = "Pamatuje si to tento počítač, stejně jako místo, kde okno bylo. Spuštěné se systémem Windows čeká Odyle v oznamovací oblasti. Úkoly samotné se přidávají a odebírají na dashboardu.",
+        ["Start with Windows could not be changed: {0}"] = "Spouštění se systémem Windows nejde změnit: {0}",
+        ["Checking Npcap…"] = "Kontroluji Npcap…", ["Npcap installed"] = "Npcap je nainstalovaný", ["Npcap not found · install it to read the game"] = "Npcap nebyl nalezen · pro čtení hry ho nainstaluj",
         ["LANGUAGE"] = "JAZYK", ["Language of Odyle on this PC"] = "Jazyk Odyle na tomto počítači", ["Automatic · Windows language"] = "Automaticky · jazyk Windows",
         ["Restart now"] = "Restartovat teď", ["Restarts Odyle in the chosen language · the reader stops for a moment"] = "Restartuje Odyle ve zvoleném jazyce · čtečka se na chvíli zastaví",
         ["The new language applies when Odyle restarts."] = "Nový jazyk se použije po restartu Odyle.",

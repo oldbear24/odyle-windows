@@ -105,6 +105,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     // First update check shortly after start, then every six hours while the app runs.
     private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromSeconds(20) };
+    // The window's position is remembered a second after it last moved.
+    private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private StagedUpdate? staged;
     private bool updating;
     private string updateNote = "";
@@ -128,6 +130,8 @@ public partial class MainWindow : Window
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
+        settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
+        positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
         restoreTimer.Tick += async (_, _) =>
         {
@@ -143,7 +147,7 @@ public partial class MainWindow : Window
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
-        preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false);
+        preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         // Automatic follows the Windows display language; a change applies when the app restarts.
         settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
         settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
@@ -181,8 +185,17 @@ public partial class MainWindow : Window
         catch { }
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
+    // A second start of Odyle signals this one (App) to show its window in front.
+    public void BringToFront()
+    {
+        ShowWindow();
+        if (!Topmost) { Topmost = true; Topmost = false; }
+        Focus();
+    }
     private void OpenSettings()
     {
+        // Checked each time: Npcap may have been installed or removed in the meantime.
+        settings.AutostartToggle.IsChecked = Autostart.Enabled; RenderNpcap();
         if (settings.Owner is null && IsVisible) settings.Owner = this;
         settings.Show(); settings.WindowState = WindowState.Normal; settings.Activate();
     }
@@ -349,10 +362,16 @@ public partial class MainWindow : Window
         }
         finally { SetBusy(false); operations.Release(); RenderHero(); }
     }
-    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    // Called by App once the window exists, shown or not. A start in the tray (with
+    // Windows) stays there while the app is paired; unpaired, the window and settings open.
+    public async Task StartAsync(bool tray)
     {
         await ExecuteAsync(RestoreAsync);
-        if (api is null) OpenSettings();
+        if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
+        {
+            if (!IsVisible) ShowWindow();
+            if (api is null) OpenSettings();
+        }
         // The build that installed this one may still have been exiting when the start-up
         // clean-up ran; by now its Odyle.exe.old can go.
         if (Updater.IsReleaseBuild && !App.Headless) { Updater.CleanUp(); updateTimer.Start(); }
@@ -547,8 +566,42 @@ public partial class MainWindow : Window
         if (!IsVisible || PresentationSource.FromVisual(this) is not { CompositionTarget: { } target }) return;
         var area = Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
         var corner = target.TransformFromDevice.Transform(new Point(area.Left, area.Top)); var far = target.TransformFromDevice.Transform(new Point(area.Right, area.Bottom));
-        if (Left + ActualWidth > far.X) Left = Math.Max(corner.X, far.X - ActualWidth);
-        if (Top + ActualHeight > far.Y) Top = Math.Max(corner.Y, far.Y - ActualHeight);
+        var (left, top) = Placement.Clamp(Left, Top, ActualWidth, ActualHeight, new ScreenArea(corner.X, corner.Y, far.X, far.Y));
+        if (left != Left) Left = left;
+        if (top != Top) Top = top;
+    }
+    // The window opens where it was last, while that is still on a connected screen;
+    // otherwise centred as on a first start. Screens are converted with the system DPI,
+    // which is what this system-aware app's coordinates use.
+    private void RestorePosition()
+    {
+        if (preferences is not { Left: { } left, Top: { } top } || double.IsNaN(left) || double.IsNaN(top)) return;
+        var scale = Forms.Screen.PrimaryScreen is { } primary && SystemParameters.PrimaryScreenWidth > 0 ? primary.Bounds.Width / SystemParameters.PrimaryScreenWidth : 1;
+        var areas = Forms.Screen.AllScreens.Select(s => new ScreenArea(s.WorkingArea.Left / scale, s.WorkingArea.Top / scale, s.WorkingArea.Right / scale, s.WorkingArea.Bottom / scale));
+        if (!Placement.OnScreen(left, top, areas)) return;
+        WindowStartupLocation = WindowStartupLocation.Manual; Left = left; Top = top;
+    }
+    private void Window_LocationChanged(object? sender, EventArgs e) { if (IsVisible) { positionTimer.Stop(); positionTimer.Start(); } }
+    private void SavePosition()
+    {
+        if (!IsVisible || WindowState != WindowState.Normal || double.IsNaN(Left) || double.IsNaN(Top) || preferences is { Left: var l, Top: var t } && l == Left && t == Top) return;
+        PreferencesStore.Save(preferences = preferences with { Left = Left, Top = Top });
+    }
+    // Settings → Start with Windows writes or removes the Run entry ("<Odyle.exe>" --tray).
+    private void SetAutostart(bool on)
+    {
+        try { Autostart.Set(on); Log.Info(on ? "Start with Windows is on." : "Start with Windows is off."); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException)
+        {
+            Log.Error("Start with Windows could not be changed", error); Status(T("Start with Windows could not be changed: {0}", error.Message));
+        }
+        settings.AutostartToggle.IsChecked = Autostart.Enabled;
+    }
+    private void RenderNpcap()
+    {
+        var installed = Npcap.Probe();
+        settings.NpcapLabel.Text = installed ? T("Npcap installed") : T("Npcap not found · install it to read the game");
+        settings.NpcapDot.Fill = Brush(installed ? "Mint" : "Amber"); settings.NpcapLabel.Foreground = Brush(installed ? "Text" : "Amber");
     }
 
     // ----- Daily & weekly tasks -----
@@ -934,11 +987,11 @@ public partial class MainWindow : Window
     {
         try { await paired.UnpairAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
     }
-    private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { e.Cancel = true; Hide(); settings.Hide(); } }
+    private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     private async Task QuitAsync(bool restart = false)
     {
-        heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); await operations.WaitAsync();
+        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); await operations.WaitAsync();
         try { await Task.WhenAny(StopReaderAsync(), Task.Delay(4000)); api?.Dispose(); }
         finally
         {

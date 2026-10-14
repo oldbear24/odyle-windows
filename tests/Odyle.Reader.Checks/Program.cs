@@ -21,6 +21,8 @@ static class ReaderChecks
         // The pairing, stat owners and the log go to temporary files too.
         var scratch = Directory.CreateTempSubdirectory("odyle-check-").FullName;
         SessionStore.FilePath = Path.Combine(scratch, "session.bin"); OwnerStore.FilePath = Path.Combine(scratch, "stat-owners.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
+        // Start with Windows writes to a Run key kept in memory, never to the real one.
+        var runKey = new MemoryRunKey(); Autostart.Key = runKey; Autostart.Executable = @"C:\Odyle\Odyle.exe";
         App.Headless = true; var app = new App(); app.InitializeComponent();
         var window = new MainWindow(false);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
@@ -105,6 +107,28 @@ static class ReaderChecks
                 language.SelectedValue = "cs";
                 Check(PreferencesStore.Load().Language == "cs" && ((FrameworkElement)settings.FindName("LanguageRestartPanel")).Visibility == Visibility.Visible && Localizer.Language == "en", "choosing Czech is remembered and offers a restart");
                 language.SelectedValue = Localizer.Automatic; Check(PreferencesStore.Load().Language == Localizer.Automatic, "automatic can be chosen again");
+                // Start with Windows: "<Odyle.exe>" --tray in the Run key, removed again when switched off.
+                Call(window, "SetAutostart", true);
+                Check(runKey.Values.Single() is { Key: "Odyle", Value: "\"C:\\Odyle\\Odyle.exe\" --tray" } && ((CheckBox)settings.FindName("AutostartToggle")).IsChecked == true && Autostart.Enabled, "Start with Windows writes the Run entry for a start in the tray");
+                Call(window, "SetAutostart", false);
+                Check(runKey.Values.Count == 0 && ((CheckBox)settings.FindName("AutostartToggle")).IsChecked == false, "switching it off removes the entry");
+                runKey.Values["Odyle"] = "\"C:\\Moved away\\Odyle.exe\" --tray"; Autostart.Repair();
+                Check(runKey.Values["Odyle"] == "\"C:\\Odyle\\Odyle.exe\" --tray", "an entry for an executable that is gone starts this one");
+                runKey.Values["Odyle"] = StartupCommand.For(Environment.ProcessPath!); Autostart.Repair();
+                Check(runKey.Values["Odyle"] == StartupCommand.For(Environment.ProcessPath!), "an entry for another existing Odyle is left alone"); runKey.Values.Clear();
+                // Npcap is checked whenever settings open.
+                Npcap.Probe = () => false; Call(window, "RenderNpcap");
+                Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap not found · install it to read the game" && ((Button)settings.FindName("NpcapButton")).Visibility == Visibility.Visible, "a missing Npcap is pointed out with its download");
+                Npcap.Probe = () => true; Call(window, "RenderNpcap"); Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap installed", "an installed Npcap is confirmed");
+                // The window reopens where it was, while that is on a connected screen.
+                var kept = Field("preferences").GetValue(window)!;
+                var area = System.Windows.SystemParameters.WorkArea;
+                Field("preferences").SetValue(window, new Preferences(Left: area.Left + 40, Top: area.Top + 30)); Call(window, "RestorePosition");
+                Check(window.WindowStartupLocation == WindowStartupLocation.Manual && window.Left == area.Left + 40 && window.Top == area.Top + 30, "a remembered position on a connected screen is restored");
+                window.WindowStartupLocation = WindowStartupLocation.CenterScreen; window.Left = double.NaN; window.Top = double.NaN;
+                Field("preferences").SetValue(window, new Preferences(Left: -40000, Top: -40000)); Call(window, "RestorePosition");
+                Check(window.WindowStartupLocation == WindowStartupLocation.CenterScreen && double.IsNaN(window.Left), "a position on a screen that is gone opens centred instead");
+                Field("preferences").SetValue(window, kept);
                 // The XAML is written in English and translated once per window.
                 Localizer.Use("cs");
                 try
@@ -327,6 +351,13 @@ static class ReaderChecks
             new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5)]),
             new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
             new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
+    }
+    sealed class MemoryRunKey : IRunKey
+    {
+        public readonly Dictionary<string, string> Values = new();
+        public string? Get(string name) => Values.GetValueOrDefault(name);
+        public void Set(string name, string value) => Values[name] = value;
+        public void Delete(string name) => Values.Remove(name);
     }
     static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
     static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;

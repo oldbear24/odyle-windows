@@ -5,9 +5,9 @@ using Odyle.Core;
 
 namespace Odyle.Reader;
 // How the window is shown on this PC: pinned above other windows, with the daily and
-// weekly checklist beside the card, and in which language ("auto" follows Windows).
-// Everything else is configured on the dashboard.
-public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto");
+// weekly checklist beside the card, in which language ("auto" follows Windows) and
+// where it was last (WPF units). Everything else is configured on the dashboard.
+public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null);
 public static class PreferencesStore
 {
     // Checks point this at a temporary file so they never touch the user's preferences.
