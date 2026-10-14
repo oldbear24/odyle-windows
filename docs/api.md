@@ -1,101 +1,91 @@
-# Odyle API v2 · Discord accounts
+# Odyle API · what the Windows app uses
 
-PocketBase 0.40.5. JSON requests; authenticated requests use a PocketBase **users** token (`Authorization: Bearer <token>`). HTTPS for hosted connections. No superuser credentials belong in either client.
+The backend contract lives in the dashboard repository: [odyle-dashboard docs/api.md](https://github.com/oldbear24/odyle-dashboard/blob/main/docs/api.md). This page covers every route and field the Windows companion relies on, how it reacts to each answer, and summarizes the rest.
 
-## Authentication
+PocketBase 0.40.5. JSON requests; authenticated requests use a PocketBase **users** token (`Authorization: Bearer <token>`). Hosted connections require HTTPS; HTTP is accepted only on localhost. No superuser credentials belong in either client. The app's requests time out after 12 seconds.
 
-The browser calls `pb.collection('users').authWithOAuth2({ provider: 'discord', createData: { displayName: 'Adventurer' } })`. PocketBase creates or loads the account linked to that Discord identity. Public password registration and password sign-in are disabled.
+## Answers and errors
 
-`POST /api/odyle/desktop-code` with `{}` returns `{ code, expiresAt }` to an authenticated account. The 16-character code expires after five minutes, is stored as a digest, and replaces that account's previous unused code.
+Every answer that is not 2xx becomes an error carrying its status code. The message is the body's `message` when the body is JSON with a text `message` (PocketBase and the Odyle routes answer `{ message, data }`), otherwise *Server returned &lt;code&gt;.*; a success answer whose body is empty, `null` or not JSON is an error with its status code as well. The server's English messages are shown in Czech too when the app runs in Czech (the same translations as the dashboard).
 
-The dashboard presents a connection link such as `https://your-backend.example/#odyle-pair=ABCDEFGH23456789`. The Windows app extracts the endpoint and code when the user clicks **Paste link & connect** or presses Enter in the pairing input. The fragment is never sent as part of an HTTP request. This link contains the short-lived pairing code, not the account token; only the intended Windows companion should receive it. Base-path deployments are preserved, insecure remote HTTP and embedded URL credentials are rejected. Older apps can still use the raw code with a separate endpoint.
+| Answer | What the app does |
+| --- | --- |
+| 401 | The token expired or was replaced: a paired app signs in with its device key (`desktop-sign-in`) and repeats the request once. A 401 from that sign-in means the server no longer knows this PC: the pairing has ended, every further request fails at once without contacting the server, the saved session is removed and the app asks for a new connection link |
+| 403 | Never a lost pairing. *Publisher session expired. Reconnect.* starts a new reader session at the next heartbeat; a refused reading is shown as **Not saved** and retried after a minute; at start-up a 403 is retried like an unavailable server |
+| 429 | Every request pauses until `Retry-After` (seconds or an HTTP date; a minute when missing or unusable, at most an hour) without reaching the server; the reader session is kept, so the reading stays live. The footer shows **Server busy · retrying in …** |
+| 5xx, timeout, offline | While running: retried with the next 20-second heartbeat, which opens a new reader session. At start-up the saved pairing is kept and tried again after 15 s, 30 s, 1 min, 2 min and then every 5 minutes (**Reconnect saved account** tries at once) |
 
-`POST /api/odyle/pair` is public and rate limited. Body `{ code }`; response `{ token, record, deviceKey }` for the same account. The code is consumed atomically. Windows stores the device key and token in DPAPI, never Discord credentials.
+## Pairing and sign-in
 
-### Lasting pairing
+The dashboard's **Pair Windows app** dialog shows a connection link such as `https://your-backend.example/#odyle-pair=ABCDEFGH23456789` (from `POST /api/odyle/desktop-code`). The app takes the endpoint and the 16-character code from it; the fragment is never sent in an HTTP request. Base-path deployments are preserved; insecure remote HTTP, embedded credentials, query strings and room invite codes are refused. A code alone works with the endpoint from **Server address**.
 
-The link is used once; the pairing lasts. `deviceKey` is a 48-character secret for that one app; the server keeps only its SHA-256 digest (`desktop_devices`). Account tokens last seven days, so the app trades the key for a fresh token whenever it starts, every 24 hours while it runs, and whenever a request answers 401:
+Every pairing request names the PC: `name` is its Windows computer name, trimmed and cut to 40 characters. The dashboard lists paired PCs by that name (`devices` in `GET /api/odyle/account`) and can remove one. Backends that do not know `name` ignore it.
 
-| Method / route | Body | Result |
+| Method / route | Body | Answer and use |
 | --- | --- | --- |
-| POST `/api/odyle/desktop-sign-in` | `{ deviceKey }` | Public, 30 a minute per client: `{ token, record }` for the paired account and the key's `lastUsedAt` is updated. An unknown key answers 401 and the app asks to pair again |
-| POST `/api/odyle/desktop-device` | `{}` | Signed-in account: `{ deviceKey }` for a new pairing. Apps paired before device keys existed call it once with their still-valid token |
-| POST `/api/odyle/unpair` | `{ deviceKey }` | Public, 30 a minute per client: forgets that key (the app's **Disconnect**); unknown keys answer 200 too |
+| POST `/api/odyle/pair` | `{ code, name }` | Public, rate limited: `{ token, record, deviceKey }`; `record` is `{ id, displayName }`. The code is consumed. The app keeps endpoint, token and device key in `%LOCALAPPDATA%\Odyle\session.bin`, protected with DPAPI |
+| POST `/api/odyle/desktop-sign-in` | `{ deviceKey, name }` | Public: `{ token, record }`; 401 *This PC is no longer paired with an account.* for an unknown key. Called at start-up, every 24 hours while running and after a 401 |
+| POST `/api/odyle/desktop-device` | `{ name }` | Signed in: `{ deviceKey }`. Called once by an app paired before device keys existed; 404 on a backend without device keys, which then keeps refreshing the token |
+| POST `/api/odyle/unpair` | `{ deviceKey }` | Public: forgets the key and ends its reader sessions (**Disconnect**, and before pairing again) |
+| POST `/api/collections/users/auth-refresh` | `{}` | Refreshes a still-valid token; used only by apps without a device key |
 
-A pairing has no inactivity expiry: it ends when the app disconnects, the account signs out everywhere or is deleted. An account keeps its 10 most recently used pairings; pairing an eleventh PC drops the one unused longest. The data export lists them as `pairedWindowsApps` (`pairedAt`, `lastSignInAt`), without keys or digests.
+Every sign-in answer refreshes the account's display name shown in the app. Account tokens last seven days; the device key keeps the pairing until the app disconnects, the PC is removed on the dashboard (`POST /api/odyle/forget-device`), the account signs out everywhere or is deleted. An account keeps its 10 most recently used pairings.
 
-`POST /api/collections/users/auth-refresh` refreshes a valid token. Tokens last seven days; accounts/data persist independently of token expiry. A Windows app paired by a backend without device keys keeps its connection only by refreshing within those seven days.
+**A PC removed on the dashboard.** The backend deletes that PC's reader sessions, so the app's next heartbeat or reading answers 403 *Publisher session expired. Reconnect.*. The app then opens a new session with its device key, which answers 401 *This PC is no longer paired with an account.*; the one sign-in attempt with the key answers 401 too, and the app ends the pairing as above, within about a minute and without retrying.
 
-## Rooms
+## Reader sessions and readings
 
-| Method / route | Body | Result and authorization |
+| Method / route | Body | Answer and use |
 | --- | --- | --- |
-| POST `/api/odyle/create` | `{ name }` | Signed-in user creates owned room; returns `{ room, membership, invites }` |
-| POST `/api/odyle/join` | `{ code }` | Join as reporter/viewer; returns `{ room, membership }`; repeat join is idempotent |
-| GET `/api/odyle/rooms` | — | `{ rooms, odylePerCube, serverNow }`: all rooms of the current account |
-| GET `/api/odyle/snapshot/{id}` | — | Member-only `{ room, members, wishlist, serverNow }`; each member has `displayName` and `characters` |
-| POST `/api/odyle/sharing` | `{ roomId, characterId, enabled }` | Reporter/owner shares or hides one of their own characters in this room; returns `{ sharedCharacters }`. Without `characterId` (older clients) the choice applies to every character saved at that moment |
-| POST `/api/odyle/wishlist` | `{ roomId, dungeon, wanted, everyone? }` | Adds (`wanted: true`, reporter/owner) or removes (`false`, any member) the caller's own entry for a dungeon; `everyone: true` with `wanted: false` lets the owner clear that dungeon for all members. Returns `{ wishlist }` |
-| POST `/api/odyle/invites` | `{ roomId }` | Owner revokes old codes and receives reporter/viewer invites |
-| POST `/api/odyle/revoke` | `{ roomId, memberId }` | Owner removes another membership |
-| POST `/api/odyle/leave` | `{ roomId }` | Non-owner removes their membership; character data remains |
-| POST `/api/odyle/close` | `{ roomId }` | Owner deletes room and memberships; character data remains |
-
-Room codes are valid for 30 minutes; memberships and rooms have no automatic inactivity expiry. Sharing is per character: each membership lists the characters its owner linked to that room (`sharedCharacters` in `GET /api/odyle/rooms`). New characters start private everywhere. Room snapshots include only linked characters of other members; members always see all of their own characters, each with `shared: true|false`. Upgrading a backend keeps every character of a membership that shared everything shared. Viewer accounts can maintain private characters, but cannot share them in a viewer-only room. Display-name collisions are resolved by user/member IDs.
-
-### Dungeon wishlist
-
-Each room keeps a list of dungeons its members still need to run. Names are free text (1–60 characters); whitespace is collapsed and names are matched without regard to case, so `fire  temple` joins an existing `Fire Temple` entry, which keeps its first spelling. Repeating an add or removing an entry you are not on changes nothing. A member can be on up to 20 dungeons per room and a room lists up to 50. Entries belong to the membership: leaving, being removed or closing the room deletes them. Viewers see the list but cannot add to it.
-
-The snapshot's `wishlist` is grouped by dungeon, most wanted first, then oldest:
-
-```json
-[{ "key": "fire temple", "dungeon": "Fire Temple", "since": "2026-10-13 18:00:00.000Z", "users": ["user-id-1", "user-id-2"] }]
-```
-
-`users` are account ids in the order they added the dungeon; clients take display names from `members`. Every change sends the room's realtime refresh. The `room_wishes` collection has no API rules; use the routes above.
-
-## Daily and weekly tasks
-
-Each account keeps a private checklist of daily and weekly tasks, managed on the dashboard. While its checklist panel is open, the Windows app reads it with `GET /api/odyle/tasks` → `{ tasks, resets, serverNow }` and ticks tasks with `POST /api/odyle/task` `{ id, done }`, which stores the current time in `doneAt` (`false` clears it) and answers with the same `{ tasks, resets, serverNow }`. A task is shown as done while `doneAt` is on or after the start of the current period: daily periods begin at `resets.dailyResetHour` UTC, weekly periods on `resets.weeklyResetDay` at that hour (defaults 07:00 UTC and Wednesday). `Odyle.Core.Checklist` mirrors the dashboard's `src/tasks.js`. Adding (`{ title, cadence }`) and removing (`{ id, remove: true }`) stay on the dashboard. Tasks send no realtime events and are not part of room snapshots.
-
-## Persistent characters and publisher sessions
-
-Own characters can be read with the normal PocketBase `characters` collection API. Others' records and all direct character writes are locked. Shared readings are read via authorized room snapshots; the Windows app reads `GET /api/odyle/snapshot/{id}` for each room to list the party.
-
-### Character pictures
-
-Each character record carries `portrait`, a file name or empty. Clients load the image from `/api/files/characters/{id}/{portrait}` (the SDK's `pb.files.getURL(record, record.portrait)`); room snapshots include both fields for shared characters only, so other members never receive the link of a private character.
-
-`portrait` is always the character's **official AION 2 portrait**; players cannot set, upload or replace it, and no route writes it. A backend cron job looks up new characters within a minute through PLAYNC's public Global character search (`api-search.plaync.com/aion2global/search/v2/character`, by name, server id and region) and downloads the `profileImageUrl` it lists from `profileimg.plaync.com`. It retries characters without a portrait hourly and refreshes the others daily, rewriting the file only when the image changed. The search server id is rebuilt from the saved server name and region (the game protocol's race × 1000 + region × 100 + server number); NA East and West are both tried. Characters the search does not list, such as ones on servers the reader cannot name, keep their initials; a failed lookup keeps the last downloaded portrait.
-
-`POST /api/odyle/character` accepts only `{ characterName, server, region }` and returns `{ character }` for the signed-in account. It saves identity before any reading, with unknown Odyle (`confirmed: false`, `valid: false`, no reading timestamp or source). Repeating the same identity returns the existing record without changing its last value or confidence. Ownership always comes from authentication; extra fields such as `value`, `user`, `source`, `confirmed` and `characterId` are rejected. The Windows app uses this endpoint for automatic game identification and the explicit **Save character** fallback.
-
-`POST /api/odyle/session` with `{}` returns `{ sessionId, sequence: 0 }`. Optional `{ previousSessionId }` rotates that device's session and invalidates its last readings without clearing stored values or other devices' sessions.
-
-`POST /api/odyle/report`:
+| POST `/api/odyle/session` | `{ previousSessionId?, deviceKey? }` | `{ sessionId, sequence: 0 }`. `previousSessionId` rotates the app's own session and invalidates its last readings. A paired app sends its `deviceKey`, which ties the session to the PC; a key the server no longer knows answers 401. Absent fields are left out of the body |
+| POST `/api/odyle/character` | `{ characterName, server, region }` | `{ character }`: saves the character the game names (unknown Odyle until the first reading); repeating an identity returns the same record. Any other field is refused. Used for automatic game identification only: the app has no manual character entry |
+| POST `/api/odyle/report` | see below | `{ character, serverNow }` |
+| POST `/api/odyle/heartbeat` | `{ sessionId, characterId }` | Every 20 seconds: keeps the session's latest reading live; `characterId` is `null` without a live reading |
+| POST `/api/odyle/invalidate` | `{ characterId, sessionId }` | Marks the reading stale (reader stopped, character switched, 20 seconds without decodable game packets, disconnect, quit); value and timestamps are kept |
+| GET `/api/collections/characters/records?perPage=500&sort=created` | — | The account's own characters (`id`, `user`, `characterName`, `server`, `region`, `value`, `confirmed`, `valid`, `lastReadingAt`, `lastSeenAt`, `source`) |
 
 ```json
 {
   "sessionId": "publisher-session-id",
   "sequence": 1,
-  "characterId": null,
+  "characterId": "character-id",
   "characterName": "Your character",
-  "server": "Your server",
+  "server": "Lumiel",
   "region": "GLOBAL_EU",
-  "value": 0,
-  "source": "packet",
+  "value": 390,
   "parserVersion": "global-reference-v1",
+  "source": "packet",
   "confirmed": true
 }
 ```
 
-Returns `{ character, serverNow }`. Existing `characterId` must belong to the authenticated account and keeps its saved name, server and region: the identity fields in the body are validated but never rewrite an existing character. Without an ID, the identity tuple `(user, region, server, characterName)` finds or creates a character. Value is an integer 0–1,000,000; sequence increases per device session. Supported regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Only packet reports whose `parserVersion` is listed in the backend `lib/protocols.cjs` registry are accepted; it currently lists `global-reference-v1`, the Windows companion's Global stream decoder. Manual reports are always rejected. The Windows app sends a value the first time it reads a character and afterwards only when the value changes, so `lastReadingAt` is the time of the last change (a value re-sent unchanged, for example after the reader paused, keeps that timestamp); its 20-second heartbeat keeps an unchanged value live. Client metadata is not cryptographic proof of a game observation. The synthetic `test-fixture-v1` adapter is approved only in disposable integration-test hooks.
+An existing `characterId` must belong to the account and keeps its saved identity. `value` is an integer 0–1,000,000, `sequence` grows per session and `parserVersion` must be listed in the backend's adapter registry (`global-reference-v1`). The app sends a value the first time it reads a character and afterwards only when it changes; the heartbeat keeps an unchanged value live. Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Presence follows the dashboard's rule: live while the heartbeat is younger than 45 seconds, stale after that or once invalidated, offline after 90 seconds (`Odyle.Core.Readiness`).
 
-`POST /api/odyle/heartbeat` with `{ sessionId, characterId }` updates presence for the character only when that session owns its latest reading. It never changes the last reading timestamp. Empty `{}` only returns `serverNow`. Heartbeats never trigger realtime events: clients refresh presence on their own schedule (the dashboard refetches an open room every 15 seconds; `GET /api/odyle/rooms` and the snapshot carry `serverNow` for clock correction).
+## Rooms, party and planned runs
 
-`POST /api/odyle/invalidate` with `{ characterId, sessionId }` marks the latest reading invalid for current readiness if it belongs to that session. It **retains** value, identity and observation timestamp. Confirmed historical values are distinct from current confidence (`valid`). A valid reading is live while presence is newer than 45 seconds, however old the value is; 45 seconds without presence or an invalidated reading is stale, and 90 seconds without presence means offline.
+| Method / route | Answer and use |
+| --- | --- |
+| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, serverNow }`; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
+| GET `/api/odyle/snapshot/{id}` | `{ room, members, wishlist, runs, dungeons, serverNow }`; members have `id`, `user`, `role`, `displayName` and `characters`. The app lists other members' live and stale characters, corrects its clock with `serverNow` and reads `runs` for reminders; it ignores `wishlist` and `dungeons` |
 
-## Realtime
+The app reads the rooms and their snapshots every 15 seconds while its window is open and every minute while it waits in the tray. Sharing, rooms, invitations, the wishlist and planning are managed on the dashboard.
 
-Subscribe through the PocketBase SDK to `odyle.room.<roomId>`. The server checks room membership at subscription and before each delivery. Events contain only `{ refresh: true }` and follow room, membership, sharing, wishlist, reading, session and portrait changes, never heartbeats; fetch the authorized snapshot afterward and on reconnect. Removed members cannot fetch the snapshot or receive further notifications. User and provider tokens are never broadcast.
+A snapshot's `runs` list the room's planned runs until three hours after they started:
+
+```json
+[{ "id": "run-id", "dungeon": "Fire Temple", "startsAt": "2026-10-14 19:00:00.000Z", "note": "Bring potions", "planner": "user-id-1", "attendees": ["user-id-1", "user-id-2"] }]
+```
+
+`planner` and `attendees` are account ids. For each run whose `attendees` contain the signed-in account, the app shows one notification 15 minutes before `startsAt` (dungeon, room name, local start time, note), once per run id and start time, so a re-timed run is announced again (`Odyle.Core.Reminders`). Newer backends also offer `GET /api/odyle/upcoming`; the app reads the snapshots instead, which every backend version provides.
+
+## Daily and weekly tasks
+
+While the checklist panel is open (every 15 seconds), the app reads `GET /api/odyle/tasks` → `{ tasks, resets, serverNow }` and ticks a task with `POST /api/odyle/task` `{ id, done }`, which answers with the same object. A task has `id`, `user`, `title`, `cadence` (`daily`/`weekly`) and `doneAt`; `resets` is `{ dailyResetHour, weeklyResetDay }`. A task counts as done while `doneAt` is on or after the start of its current period (`Odyle.Core.Checklist`, mirroring the dashboard's `src/tasks.js`). Adding, renaming, ordering and removing tasks stay on the dashboard.
+
+## Routes only the dashboard uses
+
+Room management (`create`, `join`, `sharing`, `wishlist`, `plan`, `invites`, `revoke`, `leave`, `close`, `rename`, `role`, `transfer`, `discord-webhook`), Odyle history (`GET /api/odyle/history/{characterId}`), run reminders across rooms (`GET /api/odyle/upcoming`), the account page (`GET /api/odyle/account`, `profile`, `export`, `delete-character`, `forget-device`, `sign-out-everywhere`, `delete-account`), the Windows release lookup (`GET /api/odyle/windows-release`), the superuser monitor and settings (`/api/odyle/admin/...`) and realtime room topics (`odyle.room.<roomId>`) are described in the [dashboard's API document](https://github.com/oldbear24/odyle-dashboard/blob/main/docs/api.md). The Windows app does not subscribe to realtime events; it polls the snapshots as above.
+
+## Updates from GitHub
+
+The app's updater does not use the backend: it reads `https://api.github.com/repos/oldbear24/odyle-windows/releases/latest` and downloads only from `https://github.com/` release storage. Packages are named `odyle-<version>-<win-x64|win-arm64>[-self-contained].zip`, each with a `<name>.sha256` file (`<hash>  <name>`); a release also carries `odyle-<version>-win-x64-setup.exe` with its `.sha256`, which the updater never selects. Drafts, pre-releases and tags that are not versions are ignored (`Odyle.Core.ReleaseFeed`).
