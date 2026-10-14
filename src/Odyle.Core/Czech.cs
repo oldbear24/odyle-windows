@@ -27,8 +27,6 @@ public static class Czech
         ["Start the reader, then log into your character."] = "Spusť čtečku a pak se přihlas na postavu.",
         ["Last saved value · start the reader for live values."] = "Poslední uložená hodnota · pro živé hodnoty spusť čtečku.",
         ["No reading yet · start the reader before logging in."] = "Zatím bez hodnoty · spusť čtečku před přihlášením do hry.",
-        ["{0:N0} base + {1:N0} bonus · {2}"] = "{0:N0} základ + {1:N0} bonus · {2}", ["live update"] = "živá změna", ["game snapshot"] = "stav ze hry",
-        ["live update · base + bonus split after the next login"] = "živá změna · rozdělení na základ a bonus po dalším přihlášení",
         ["updated {0}"] = "aktualizováno {0}", ["saved {0}"] = "uloženo {0}",
         ["{0:N0} packets · {1:N0} KB from the game"] = "paketů: {0:N0} · ze hry {1:N0} KB",
         ["{0}s ago"] = "před {0} s", ["{0}m ago"] = "před {0} min", ["{0}h ago"] = "před {0} h", ["{0}d ago"] = "před {0} d",

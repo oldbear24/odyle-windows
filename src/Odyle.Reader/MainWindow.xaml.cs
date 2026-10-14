@@ -291,20 +291,18 @@ public partial class MainWindow : Window
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
         ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
             : reading is not null && !owned ? (gameCharacterKey.Length == 0 ? T("Relog or change channel once so the game names the character.") : T("Waiting for the game to name the character."))
-            : reading is not null ? Components(reading) + (publishFailure is null ? "" : " · " + publishFailure)
+            : reading is not null ? publishFailure ?? ""
             : capture is not null ? (character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
             : character is null ? T("Start the reader, then log into your character.")
             : character.Confirmed ? T("Last saved value · start the reader for live values.")
             : T("No reading yet · start the reader before logging in.");
+        // A saved live reading needs no caption: the card shows the total only.
+        ReadingLabel.Visibility = ReadingLabel.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         RenderClock();
         var name = character?.CharacterName ?? accountName;
         var tip = !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
     }
-    // A single-value live update carries the total only; the login snapshot shows both components.
-    private static string Components(PacketCandidate reading) => reading is { Primary: { } b, Bonus: { } x }
-        ? T("{0:N0} base + {1:N0} bonus · {2}", b, x, reading.Source == CandidateSource.Update ? T("live update") : T("game snapshot"))
-        : T("live update · base + bonus split after the next login");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character)
     {
