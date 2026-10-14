@@ -95,9 +95,18 @@ static class PacketChecks
         decoder.Reset(); candidates.Clear();
         decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3 }));
         Assert(candidates.Single().Primary == 0 && candidates.Single().Bonus == 390 && candidates.Single().ParserVersion == ExperimentalOdyleDecoder.Version, "single-component snapshot carries the adapter name");
-        decoder.Reset(); candidates.Clear();
-        decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
-        Assert(candidates.Count == 0, "ambiguous mixed snapshot is unknown");
+        // A teleport's snapshot can hold another counter of the same shape: the confirmed owner picks Odyle.
+        decoder.Reset(); candidates.Clear(); var snapshots = new List<OdyleSnapshotObservation>(); decoder.SnapshotObserved += snapshots.Add;
+        decoder.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 3, 1 }));
+        Assert(candidates.Single() is { EntityId: 7, Total: 390 } && snapshots.Single() is { ReadOwner: 7, Fields: [{ Id: 7, Total: 390 }, { Id: 9, Base: 3, Total: 4 }] }, "a known owner picks Odyle from a snapshot with two Odyle-shaped fields");
+        var unknown = new ExperimentalOdyleDecoder(); var unknownSeen = new List<PacketCandidate>(); var unknownSnapshots = new List<OdyleSnapshotObservation>();
+        unknown.Candidate += unknownSeen.Add; unknown.SnapshotObserved += unknownSnapshots.Add;
+        unknown.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
+        Assert(unknownSeen.Count == 0 && unknownSnapshots.Single() is { ReadOwner: null, Fields.Length: 2 }, "ambiguous mixed snapshot without a known owner is unknown");
+        var both = new KnownOwners(); both.Add(7); both.Add(9);
+        var twoKnown = new ExperimentalOdyleDecoder(owners: both); var twoKnownSeen = new List<PacketCandidate>(); twoKnown.Candidate += twoKnownSeen.Add;
+        twoKnown.Feed(Frame(new byte[] { 0x0b, 0x61, 0, 8, 1, 7, 0x86, 3, 0x0c, 1, 9, 20, 30 }));
+        Assert(twoKnownSeen.Count == 0, "a snapshot naming two known owners stays ambiguous");
         Streams();
         Console.WriteLine("Synthetic TCP, framing, LZ4, identity, owner, candidate and connection table checks passed.");
     }

@@ -32,6 +32,7 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
+    public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     private long receivedPackets, gameBytes;
     // Stat owner ids snapshots confirmed, shared by every stream so updates can be trusted before a snapshot.
     private readonly KnownOwners owners = new();
@@ -219,6 +220,7 @@ public sealed class PacketCapture : IAsyncDisposable
     {
         decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += () => CharacterChanged?.Invoke(); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
+        decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value);
     }
     private void Receive(string name, Worker worker, CancellationToken token)
     {

@@ -778,6 +778,7 @@ public partial class MainWindow : Window
         // identity, and each distinct stat frame layout once per run (not every frame).
         var layouts = new HashSet<OdyleFrameLayout>();
         next.UpdateObserved += u => Log.Info($"Decoder: Odyle update, mode {u.Mode}, direction {u.Direction}, values {u.First}{(u.Second is { } second ? " + " + second : "")}, {u.TrailerBytes} trailer bytes.");
+        next.SnapshotObserved += s => Log.Info($"Decoder: stat snapshot, {s.PayloadBytes} bytes, {(s.Fields.Length == 0 ? "no Odyle-shaped field" : string.Join("; ", s.Fields.Select(f => $"owner {f.Id} = {f.Base} + {f.Total - f.Base} at {f.Offset}")))}, {(s.ReadOwner is { } owner ? $"read owner {owner}" : "not read")}.");
         next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
         next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}).");
         try

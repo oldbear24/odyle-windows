@@ -27,7 +27,7 @@ The main window is a compact 280 px card with a dark title bar and its own icon:
 
 All of these choices (window, position, language, notifications) are remembered on this PC in `%LOCALAPPDATA%\Odyle\preferences.json`; nothing about them is sent to the server.
 
-**Log.** For troubleshooting, Odyle keeps a small log in `%LOCALAPPDATA%\Odyle\logs\odyle.log` (about 1 MB, plus the previous file as `odyle.previous.log`): start-up, connection and reader changes, errors, update actions and the decoder's diagnostics for Odyle updates, frame layouts and the own-character message. It never contains account tokens, device keys or pairing codes. **Settings → Updates → Open log folder** opens it. An unexpected error is logged and the app keeps running with a short note.
+**Log.** For troubleshooting, Odyle keeps a small log in `%LOCALAPPDATA%\Odyle\logs\odyle.log` (about 1 MB, plus the previous file as `odyle.previous.log`): start-up, connection and reader changes, errors, update actions and the decoder's diagnostics for Odyle updates, stat snapshots, frame layouts and the own-character message. It never contains account tokens, device keys or pairing codes. **Settings → Updates → Open log folder** opens it. An unexpected error is logged and the app keeps running with a short note.
 
 ![Compact app with an illustrative character](docs/compact-preview.png)
 

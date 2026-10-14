@@ -95,6 +95,9 @@ public sealed class KnownOwners
 
 // Diagnostic fields only; the reading itself is the candidate.
 public sealed record OdyleUpdateObservation(byte Mode, ulong First, ulong? Second, int TrailerBytes, byte Direction);
+// Every Odyle-shaped field of one stat snapshot and the owner read from it, if any.
+public sealed record OdyleSnapshotField(int Offset, ulong Id, int Base, int Total);
+public sealed record OdyleSnapshotObservation(int PayloadBytes, OdyleSnapshotField[] Fields, ulong? ReadOwner);
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
 /// <summary>
@@ -127,6 +130,7 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
+    public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     public void Reset() { start = end = 0; ForgetOwner(); ownCharacter = null; synchronized = startsAligned; }
     private void ForgetOwner() { entity = null; ownerConfirmed = false; }
     private void Push(ReadOnlySpan<byte> bytes)
@@ -213,7 +217,7 @@ public sealed class ExperimentalOdyleDecoder
             LayoutObserved?.Invoke(new(BinaryPrimitives.ReadUInt16BigEndian(frame), payload[0], payload[1], payload[2], payload.Length));
         if (frame[0] == 0x0b)
         {
-            var candidates = new List<(ulong Id, int Base, int Total)>();
+            var candidates = new List<OdyleSnapshotField>();
             for (var i = 0; i + 2 < payload.Length; i++)
             {
                 var twoValues = payload[i] == 0x0c && payload[i + 1] == 1;
@@ -224,14 +228,19 @@ public sealed class ExperimentalOdyleDecoder
                 {
                     // Servers omit the base component when it is zero.
                     if (TryVarint(payload, ref p, out var singleId) && TryVarint(payload, ref p, out var value) && singleId > 0 && value <= 1000000)
-                        candidates.Add((singleId, 0, (int)value));
+                        candidates.Add(new(i, singleId, 0, (int)value));
                     continue;
                 }
                 if (TryVarint(payload, ref p, out var id) && TryVarint(payload, ref p, out var left) && TryVarint(payload, ref p, out var right) && id > 0 && left <= 1000000 && right <= 1000000 && left + right <= 1000000)
-                    candidates.Add((id, (int)left, (int)(left + right)));
+                    candidates.Add(new(i, id, (int)left, (int)(left + right)));
             }
-            if (candidates.Count != 1) { ForgetOwner(); return; }
-            var c = candidates[0]; entity = c.Id; ownerConfirmed = true; owners.Add(c.Id);
+            // The snapshot after a teleport or zone change can hold another counter of the same
+            // shape. The owner an earlier snapshot confirmed (login, an earlier run) picks Odyle;
+            // without one, several fields stay ambiguous and nothing is read.
+            var read = candidates.Count > 1 ? candidates.Where(f => owners.Contains(f.Id)).ToList() : candidates;
+            SnapshotObserved?.Invoke(new(payload.Length, candidates.ToArray(), read.Count == 1 ? read[0].Id : null));
+            if (read.Count != 1) { ForgetOwner(); return; }
+            var c = read[0]; entity = c.Id; ownerConfirmed = true; owners.Add(c.Id);
             Candidate?.Invoke(new(c.Total, c.Id, Version) { Primary = c.Base, Bonus = c.Total - c.Base });
         }
         else if (frame[0] == 0x0c)
