@@ -36,29 +36,44 @@ public sealed class PartyApi : IDisposable
     // The pairing's lasting credential. Account tokens run out after seven days; the key
     // signs in again for a fresh one, so the app stays paired until it disconnects.
     public string? DeviceKey { get; private set; }
-    public PartyApi(string endpoint, string? token = null, string? deviceKey = null)
+    // Set once the server refused the pairing itself (a sign-in answered 401): every later
+    // request fails at once with 401 instead of signing in again and again.
+    public bool PairingEnded { get; private set; }
+    // After a 429 every request waits until then without reaching the server.
+    public DateTimeOffset BusyUntil { get; private set; }
+    // Every sign-in answer (pairing, start-up, the daily renewal, a renewal after a 401)
+    // names the account as it is now, for example a display name changed on the dashboard.
+    public event Action<AuthResponse>? SignedIn;
+    // The name the dashboard lists this PC under: its Windows computer name, at most 40 characters.
+    public static string DeviceName => NameOf(Environment.MachineName);
+    public static string NameOf(string? machine) { var name = (machine ?? "").Trim(); return name.Length == 0 ? "Windows PC" : name.Length > 40 ? name[..40].TrimEnd() : name; }
+    // The checks pass a handler that answers like the server; the app always uses the network.
+    public PartyApi(string endpoint, string? token = null, string? deviceKey = null, HttpMessageHandler? handler = null)
     {
         Endpoint = ConnectionDetails.NormalizeEndpoint(endpoint);
-        client = new HttpClient { BaseAddress = new Uri(Endpoint + "/"), Timeout = TimeSpan.FromSeconds(12) };
+        client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+        client.BaseAddress = new Uri(Endpoint + "/"); client.Timeout = TimeSpan.FromSeconds(12);
         Token = string.IsNullOrWhiteSpace(token) ? null : token; DeviceKey = string.IsNullOrWhiteSpace(deviceKey) ? null : deviceKey;
     }
     public async Task<AuthResponse> PairAsync(string code)
     {
-        var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code }, renew: false);
-        Token = result.Token; DeviceKey = result.DeviceKey; return result;
+        var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code, name = DeviceName }, renew: false);
+        Token = result.Token; DeviceKey = result.DeviceKey; SignedIn?.Invoke(result); return result;
     }
     public async Task<AuthResponse> RefreshAsync()
     {
-        var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { }, renew: false);
-        Token = result.Token; return result;
+        try { var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { }, renew: false); Token = result.Token; SignedIn?.Invoke(result); return result; }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
     }
     // A fresh account token: from the device key, or by refreshing the token of an app
     // paired before device keys existed. Requests running at once share one sign-in.
+    // A 401 here means the server no longer knows this PC: the pairing is over.
     public async Task<AuthResponse> SignInAsync()
     {
         if (DeviceKey is null) return await RefreshAsync();
-        var pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey }, renew: false);
-        try { var result = await pending; Token = result.Token; return result; }
+        var pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
+        try { var result = await pending; Token = result.Token; SignedIn?.Invoke(result); return result; }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
         finally { if (signingIn == pending) signingIn = null; }
     }
     // Gives an app paired before device keys existed its key, using the still-valid token.
@@ -66,7 +81,7 @@ public sealed class PartyApi : IDisposable
     public async Task<string?> EnsureDeviceKeyAsync()
     {
         if (DeviceKey is not null) return DeviceKey;
-        try { DeviceKey = (await PostAsync<DeviceKeyResponse>("api/odyle/desktop-device", new { })).DeviceKey; }
+        try { DeviceKey = (await PostAsync<DeviceKeyResponse>("api/odyle/desktop-device", new { name = DeviceName })).DeviceKey; }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound) { }
         return DeviceKey;
     }
@@ -78,14 +93,21 @@ public sealed class PartyApi : IDisposable
     }
     public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
-    public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null) => PostAsync<PublisherSession>("api/odyle/session", new { previousSessionId });
+    // A paired app names its device key, so a PC removed on the dashboard gets 401 here
+    // and ends its pairing like an unknown key at sign-in. Absent fields are left out.
+    public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null)
+    {
+        var body = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(previousSessionId)) body["previousSessionId"] = previousSessionId;
+        if (DeviceKey is { } key) body["deviceKey"] = key;
+        return PostAsync<PublisherSession>("api/odyle/session", body);
+    }
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));
     // The account's private daily and weekly checklist; a change answers with the whole list again.
     public Task<TasksResponse> GetTasksAsync() => GetAsync<TasksResponse>("api/odyle/tasks");
     public Task<TasksResponse> SetTaskDoneAsync(string id, bool done) => PostAsync<TasksResponse>("api/odyle/task", new { id, done });
     public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
-    public Task LeaveAsync(string roomId) => PostAsync<JsonElement>("api/odyle/leave", new { roomId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));
@@ -103,9 +125,11 @@ public sealed class PartyApi : IDisposable
     private Task<T> GetAsync<T>(string route) => SendAsync<T>(HttpMethod.Get, route, null, renew: true);
     private Task<T> PostAsync<T>(string route, object body, bool renew = true) => SendAsync<T>(HttpMethod.Post, route, body, renew);
     // A 401 means the account token expired or was replaced; a paired app signs in with
-    // its device key and repeats the request once. The server refused it before acting on it.
+    // its device key and repeats the request once. The server refused it before acting on
+    // it. A 401 from that sign-in ends the pairing, so nothing ever loops.
     private async Task<T> SendAsync<T>(HttpMethod method, string route, object? body, bool renew)
     {
+        if (PairingEnded) throw new HttpRequestException(Localizer.T("This PC is no longer paired with an account."), null, HttpStatusCode.Unauthorized);
         using (var response = await SendOnceAsync(method, route, body))
             if (response.StatusCode != HttpStatusCode.Unauthorized || !renew || DeviceKey is null) return await ReadAsync<T>(response);
         await SignInAsync();
@@ -114,20 +138,36 @@ public sealed class PartyApi : IDisposable
     }
     private async Task<HttpResponseMessage> SendOnceAsync(HttpMethod method, string route, object? body)
     {
+        if (DateTimeOffset.UtcNow < BusyUntil) throw new ServerBusyException(Localizer.T("Too Many Requests."), BusyUntil);
         using var request = new HttpRequestMessage(method, route);
         if (body is not null) request.Content = JsonContent.Create(body, options: Json);
         if (Token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
         return await client.SendAsync(request);
     }
-    private static async Task<T> ReadAsync<T>(HttpResponseMessage response)
+    // Whatever the server sends, a failure is an HttpRequestException with its status code:
+    // the server's message when the body has one, else "Server returned 502." An empty,
+    // null or unreadable success body is one too, never a JSON or null-reference error.
+    private async Task<T> ReadAsync<T>(HttpResponseMessage response)
     {
+        var status = response.StatusCode;
         if (!response.IsSuccessStatusCode)
         {
-            string message = Localizer.T("Server returned {0}.", (int)response.StatusCode);
-            try { using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); message = doc.RootElement.GetProperty("message").GetString() ?? message; } catch (JsonException) { }
-            throw new HttpRequestException(message, null, response.StatusCode);
+            var message = Localizer.T("Server returned {0}.", (int)status);
+            try
+            {
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(text.GetString())) message = text.GetString()!;
+            }
+            catch (Exception error) when (error is JsonException or IOException or HttpRequestException) { }
+            if (status != HttpStatusCode.TooManyRequests) throw new HttpRequestException(message, null, status);
+            var now = DateTimeOffset.UtcNow;
+            BusyUntil = now + Retry.After(response.Headers.TryGetValues("Retry-After", out var values) ? values.FirstOrDefault() : null, now);
+            throw new ServerBusyException(message, BusyUntil);
         }
-        return await response.Content.ReadFromJsonAsync<T>(Json) ?? throw new InvalidOperationException(Localizer.T("The server returned an empty response."));
+        var body = await response.Content.ReadAsStringAsync();
+        try { if (JsonSerializer.Deserialize<T>(body, Json) is { } value) return value; }
+        catch (JsonException) { throw new HttpRequestException(Localizer.T("The server sent an answer the app cannot read."), null, status); }
+        throw new HttpRequestException(Localizer.T("The server returned an empty response."), null, status);
     }
     public void Dispose() => client.Dispose();
 }

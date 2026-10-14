@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Odyle.Core;
 
 namespace Odyle.Reader;
 // Numeric stat-owner ids that game snapshots named as the Odyle counter, per account,
 // so a reader started after login can trust live updates. Nothing here leaves this PC.
 public static class OwnerStore
 {
-    private static readonly string FilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "stat-owners.json");
+    // Checks point this at a temporary file so they never touch the user's.
+    public static string FilePath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "stat-owners.json");
     private static Dictionary<string, ulong[]> Read()
     {
         try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<Dictionary<string, ulong[]>>(File.ReadAllText(FilePath)) ?? new() : new(); }
@@ -23,6 +25,6 @@ public static class OwnerStore
         var known = all.TryGetValue(accountId, out var ids) ? ids : Array.Empty<ulong>();
         if (known.Contains(id)) return;
         all[accountId] = known.Append(id).TakeLast(16).ToArray();
-        try { Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!); File.WriteAllText(FilePath, JsonSerializer.Serialize(all)); } catch { }
+        try { AtomicFile.WriteText(FilePath, JsonSerializer.Serialize(all)); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Error("Stat owners could not be saved", error); }
     }
 }

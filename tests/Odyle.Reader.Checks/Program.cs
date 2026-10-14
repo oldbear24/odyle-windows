@@ -18,6 +18,9 @@ static class ReaderChecks
         PreferencesStore.FilePath = Path.Combine(Path.GetTempPath(), "odyle-check-preferences-" + Guid.NewGuid().ToString("N") + ".json");
         // The checks read English texts whatever the language of the Windows running them.
         Localizer.Use("en");
+        // The pairing, stat owners and the log go to temporary files too.
+        var scratch = Directory.CreateTempSubdirectory("odyle-check-").FullName;
+        SessionStore.FilePath = Path.Combine(scratch, "session.bin"); OwnerStore.FilePath = Path.Combine(scratch, "stat-owners.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
         App.Headless = true; var app = new App(); app.InitializeComponent();
         var window = new MainWindow(false);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
@@ -41,6 +44,17 @@ static class ReaderChecks
                 Check(!Updater.IsReleaseBuild && ((TextBlock)settings.FindName("UpdateLabel")).Text.Contains("development build") && Control<Button>(window, "UpdateButton").Visibility == Visibility.Collapsed && ((Button)settings.FindName("InstallUpdateButton")).Visibility == Visibility.Collapsed, "an unstamped build shows no update and never replaces itself");
                 UpdateChecks();
                 Check(System.Text.Json.JsonSerializer.Deserialize<SavedSession>("""{"Endpoint":"https://party.example","Token":"t"}""") is { Token: "t", DeviceKey: null }, "a session saved before device keys still loads and is upgraded on connect");
+                SessionChecks();
+                // A saved pairing the server cannot confirm at start is kept and tried again by itself, later each time.
+                SessionStore.Save(new SavedSession("http://127.0.0.1:1", "token", "device-key"));
+                await (Task)Call(window, "RestoreAsync")!;
+                Check(Field("api").GetValue(window) is null && File.Exists(SessionStore.FilePath) && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible, "an unreachable server keeps the pairing and offers Reconnect saved account");
+                Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && ((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
+                await (Task)Call(window, "RestoreAsync")!;
+                Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s"), "the next retry waits longer");
+                await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
+                Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
+                Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
                 // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
@@ -180,9 +194,20 @@ static class ReaderChecks
                 Console.WriteLine("Windows UI compact window, separate settings, reading card, party list and narrow layout passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
-            finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
+            finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
         });
         Dispatcher.Run();
+    }
+    // The pairing is DPAPI-protected and written whole; a file this account cannot read
+    // counts as not paired, says so and is removed instead of failing the start.
+    static void SessionChecks()
+    {
+        SessionStore.Save(new SavedSession("https://party.example", "token", "key"));
+        Check(SessionStore.Load(out var unreadable) is { Endpoint: "https://party.example", Token: "token", DeviceKey: "key" } && !unreadable && !File.ReadAllText(SessionStore.FilePath).Contains("token"), "the pairing is saved encrypted and read back");
+        Check(Directory.GetFiles(Path.GetDirectoryName(SessionStore.FilePath)!, "*.tmp").Length == 0, "saving leaves no temporary file");
+        File.WriteAllBytes(SessionStore.FilePath, [1, 2, 3, 4, 5]);
+        Check(SessionStore.Load(out unreadable) is null && unreadable && !File.Exists(SessionStore.FilePath), "a damaged or foreign session.bin counts as not paired and is removed");
+        Check(SessionStore.Load(out unreadable) is null && !unreadable, "without a saved pairing nothing is unreadable");
     }
     // Installing copies the staged files the way Windows allows while the app runs: the
     // executable moves aside to .old and the rest is overwritten. A staged folder counts

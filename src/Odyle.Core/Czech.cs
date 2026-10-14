@@ -72,6 +72,16 @@ public static class Czech
         ["Use an HTTPS server address, or HTTP on localhost. Do not include credentials or query parameters."] = "Použij adresu serveru s HTTPS, nebo HTTP na localhostu, bez přihlašovacích údajů a parametrů.",
         ["Copy the connection link from Pair Windows app on the dashboard."] = "Zkopíruj odkaz pro připojení z dialogu Spárovat Windows aplikaci na dashboardu.",
         ["Paste the connection link or 16-character Windows pairing code. Room invites use a different code."] = "Vlož odkaz pro připojení nebo 16místný párovací kód pro Windows. Pozvánky do místností mají jiný kód.",
+        // Connection trouble: retried by itself, the pairing is kept
+        ["Server busy · retrying in {0}."] = "Server je vytížený · další pokus za {0}.", ["Server busy · retrying now."] = "Server je vytížený · zkouším to znovu.",
+        ["Server busy"] = "Server je vytížený", ["Server busy · the reading is sent again in {0}."] = "Server je vytížený · hodnota se znovu odešle za {0}.",
+        ["Server unavailable · retrying in {0}. Your pairing is kept."] = "Server je nedostupný · další pokus za {0}. Spárování zůstává.",
+        ["Cannot reach the server · check the internet connection."] = "Server je nedosažitelný · zkontroluj připojení k internetu.", ["The server did not answer in time."] = "Server neodpověděl včas.",
+        ["The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again."] = "Připojení uložené na tomto počítači nejde přečíst. Zkopíruj z dashboardu nový odkaz pro připojení a spáruj aplikaci znovu.",
+        ["Connected, but this PC could not save the connection: {0}"] = "Připojeno, ale tento počítač nedokázal připojení uložit: {0}",
+        ["Something went wrong, but Odyle keeps running. The details are in the log:\n{0}"] = "Něco se pokazilo, ale Odyle běží dál. Podrobnosti jsou v logu:\n{0}",
+        ["Open log folder ↗"] = "Otevřít složku s logem ↗", ["Odyle keeps a small log on this PC."] = "Odyle si na tomto počítači vede malý log.",
+        ["The log helps when something does not work · it holds no tokens, device keys or pairing codes"] = "Log pomůže, když něco nefunguje · neobsahuje tokeny, klíče zařízení ani párovací kódy",
         // Rooms
         ["ROOMS & SHARING"] = "MÍSTNOSTI A SDÍLENÍ",
         ["Rooms, invitations and which characters each room sees are set on the dashboard. Changes show up here on their own."] = "Místnosti, pozvánky i to, které postavy která místnost vidí, se nastavují na dashboardu. Změny se tu objeví samy.",
@@ -137,6 +147,7 @@ public static class Czech
         ["Asia"] = "Asie", ["Enter a character name (up to 40 characters)."] = "Zadej jméno postavy (nejvýš 40 znaků).", ["Enter a server (up to 40 characters)."] = "Zadej server (nejvýš 40 znaků).",
         ["A packet adapter name is required."] = "Je potřeba název adaptéru paketů.", ["Odyle must be between 0 and 1,000,000."] = "Odyle musí být mezi 0 a 1 000 000.",
         ["Character and server are required."] = "Postava i server jsou povinné.", ["Server returned {0}."] = "Server odpověděl kódem {0}.", ["The server returned an empty response."] = "Server poslal prázdnou odpověď.",
+        ["The server sent an answer the app cannot read."] = "Server poslal odpověď, které aplikace nerozumí.",
         // Backend and PocketBase messages (the server answers in English), as in the dashboard
         ["Request could not be completed."] = "Požadavek se nepodařilo dokončit.", ["Something went wrong."] = "Něco se pokazilo.",
         ["Something went wrong while processing your request."] = "Při zpracování požadavku se něco pokazilo.", ["The request requires valid record authorization token."] = "Požadavek vyžaduje platné přihlášení.",

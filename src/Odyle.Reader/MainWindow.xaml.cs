@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -87,7 +88,16 @@ public partial class MainWindow : Window
     private int publishedTotal = -1;
     private string? publishFailure;
     private ReaderState readerState = ReaderState.Stopped;
-    private bool exit, busy, needsReconnect;
+    private bool exit, busy, needsReconnect, busyShown;
+    // A saved pairing the server could not confirm at start (offline, 403, 5xx, 429) is
+    // tried again by itself: 15 s, 30 s, 1 min, 2 min, then every 5 minutes (Retry.Backoff).
+    private readonly DispatcherTimer restoreTimer = new();
+    private DateTimeOffset? retryAt;
+    private int restoreAttempt;
+    private string retryProblem = "";
+    // A detected character that could not be saved (offline, busy) is saved after the next heartbeat.
+    private (PacketCapture Capture, GameIdentity Identity)? pendingIdentity;
+    private string lastStatus = "", lastReaderLog = "";
     private readonly SemaphoreSlim operations = new(1, 1);
     private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -118,12 +128,19 @@ public partial class MainWindow : Window
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
+        settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
+        restoreTimer.Tick += async (_, _) =>
+        {
+            restoreTimer.Stop();
+            if (busy) { restoreTimer.Interval = TimeSpan.FromSeconds(2); restoreTimer.Start(); return; }
+            await ExecuteAsync(RestoreAsync);
+        };
         updateTimer.Tick += async (_, _) => { updateTimer.Interval = TimeSpan.FromHours(6); Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); };
         // Only while the window is open; showing it refreshes at once.
         partyTimer.Tick += async (_, _) => { if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync()); };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
-        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); };
+        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false);
@@ -170,7 +187,19 @@ public partial class MainWindow : Window
         settings.Show(); settings.WindowState = WindowState.Normal; settings.Activate();
     }
     private void Settings_Click(object sender, RoutedEventArgs e) => OpenSettings();
-    private void Status(string message) => StatusLabel.Text = message;
+    private void Status(string message)
+    {
+        StatusLabel.Text = message;
+        if (message != lastStatus) { lastStatus = message; Log.Info("Status: " + message); }
+    }
+    // What a failed request means for the person at the PC, in their language.
+    private static string Describe(Exception error) => error switch
+    {
+        ServerBusyException busy => T("Server busy · retrying in {0}.", Wait(busy.Until - DateTimeOffset.UtcNow)),
+        HttpRequestException { StatusCode: null } => T("Cannot reach the server · check the internet connection."),
+        TaskCanceledException => T("The server did not answer in time."),
+        _ => T(error.Message),
+    };
     private Brush Brush(string key) => (Brush)FindResource(key);
     private Character? CurrentCharacter => Array.Find(characters, c => c.Id == currentCharacterId);
     private void ShowConnected(bool connected)
@@ -201,6 +230,7 @@ public partial class MainWindow : Window
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text); PacketStateLabel.Text = message;
+        if (message != lastReaderLog) { lastReaderLog = message; Log.Info($"Reader {state}: {message}"); }
     }
     private void SetPill(string dot, string text, string background, string label)
     {
@@ -312,8 +342,10 @@ public partial class MainWindow : Window
         try { await action(); }
         catch (Exception error)
         {
-            if (api is not null && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
-            Status(T(error.Message));
+            // A 429 only pauses requests; it never rotates the publisher session.
+            if (api is not null && error is not ServerBusyException && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
+            if (error is not (HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException)) Log.Error("Operation failed", error);
+            Status(Describe(error));
         }
         finally { SetBusy(false); operations.Release(); RenderHero(); }
     }
@@ -328,21 +360,71 @@ public partial class MainWindow : Window
     private async void Retry_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(RestoreAsync);
     private async Task RestoreAsync()
     {
-        var saved = SessionStore.Load(); if (saved is null) return;
-        settings.EndpointInput.Text = saved.Endpoint; api = new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey); Status(T("Connecting to your account…"));
-        try { var auth = await api.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
-        catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        restoreTimer.Stop(); retryAt = null;
+        if (api is not null) return;
+        var saved = SessionStore.Load(out var unreadable);
+        if (saved is null)
         {
-            api.Dispose(); api = null; SessionStore.Clear(); settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
-            Status(Unpaired);
+            if (unreadable) { settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); }
+            return;
         }
-        catch
+        settings.EndpointInput.Text = saved.Endpoint; Status(T("Connecting to your account…"));
+        PartyApi next;
+        try { next = UseApi(new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
+        catch (ArgumentException error) { Log.Error("The saved server address is not usable", error); SessionStore.Clear(); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); return; }
+        try { var auth = await next.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
+        // Only 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the dashboard).
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         {
-            api.Dispose(); api = null; settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
-            Status(T("Server unavailable. Your connection is saved; reconnect in settings when it is back online."));
+            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
+            Log.Warn("The server no longer knows this PC's pairing; the saved connection was removed."); Status(Unpaired);
+        }
+        // Anything else (offline, 403, 5xx, 429, a timeout) keeps the pairing and tries again by itself.
+        catch (Exception error)
+        {
+            DropApi(); settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
+            ScheduleRestore(error);
         }
         // The login snapshot names the character, so read from the moment the account is connected.
         if (api is not null && capture is null) await StartReaderAsync();
+    }
+    private void ScheduleRestore(Exception error)
+    {
+        var now = DateTimeOffset.UtcNow; var wait = Retry.Backoff(restoreAttempt++);
+        if (error is ServerBusyException paused && paused.Until - now > wait) wait = paused.Until - now;
+        retryAt = now + wait; retryProblem = error is ServerBusyException ? "busy" : ""; restoreTimer.Interval = wait; restoreTimer.Start();
+        Log.Warn($"The saved pairing could not be confirmed ({(error is HttpRequestException { StatusCode: { } code } ? (int)code : error.GetType().Name)}: {error.Message}); attempt {restoreAttempt}, next in {wait.TotalSeconds:0} s.");
+        RenderRetry();
+    }
+    // Counts down to the next automatic try in the footer; Reconnect saved account tries at once.
+    private void RenderRetry()
+    {
+        if (retryAt is not { } at || api is not null) return;
+        var left = Wait(at - DateTimeOffset.UtcNow);
+        StatusLabel.Text = retryProblem == "busy" ? T("Server busy · retrying in {0}.", left) : T("Server unavailable · retrying in {0}. Your pairing is kept.", left);
+    }
+    // While the server asks the app to wait (429) the footer counts down; requests resume by themselves.
+    private void RenderBusy()
+    {
+        if (api is not { } current) return;
+        var left = current.BusyUntil - DateTimeOffset.UtcNow;
+        if (left > TimeSpan.Zero) { busyShown = true; StatusLabel.Text = T("Server busy · retrying in {0}.", Wait(left)); }
+        else if (busyShown) { busyShown = false; StatusLabel.Text = T("Server busy · retrying now."); }
+    }
+    // Every request client of this window reports the account names its sign-ins return.
+    private PartyApi UseApi(PartyApi next)
+    {
+        api = next;
+        next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
+        return next;
+    }
+    private void DropApi() { heartbeat.Stop(); partyTimer.Stop(); api?.Dispose(); api = null; }
+    private void ShowAccount(string displayName)
+    {
+        accountName = displayName;
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (ArgumentException) { host = T("server"); } catch (UriFormatException) { host = T("server"); }
+        settings.AccountDetail.Text = T("Signed in as {0} via Discord · {1}", accountName, host);
+        RenderHero();
     }
     private static string Unpaired => T("This PC is no longer paired with your account. Copy a new connection link from the dashboard.");
     // Saves the pairing on this PC. An app paired before device keys existed gets its key
@@ -351,14 +433,15 @@ public partial class MainWindow : Window
     {
         if (api is not { } current) return;
         try { await current.EnsureDeviceKeyAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
-        SessionStore.Save(new SavedSession(current.Endpoint, auth.Token, current.DeviceKey));
+        try { SessionStore.Save(new SavedSession(current.Endpoint, auth.Token, current.DeviceKey)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or Win32Exception) { Log.Error("The connection could not be saved", error); Status(T("Connected, but this PC could not save the connection: {0}", error.Message)); }
     }
     private async Task ConnectAsync(AuthResponse auth)
     {
         if (api is null) return;
-        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountName = auth.Record.DisplayName; accountId = auth.Record.Id;
-        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch { host = T("server"); }
-        settings.AccountDetail.Text = T("Signed in as {0} via Discord · {1}", accountName, host);
+        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
+        restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
+        Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
         Status(T("Connected to your account."));
@@ -396,7 +479,7 @@ public partial class MainWindow : Window
         var next = new PartyApi(connection.Endpoint); Status(T("Pairing with your account…"));
         try
         {
-            var auth = await next.PairAsync(connection.Code); var previous = api; api = next;
+            var auth = await next.PairAsync(connection.Code); var previous = api; UseApi(next);
             // Pairing again replaces this PC's previous pairing.
             if (previous is not null) { await UnpairQuietlyAsync(previous); previous.Dispose(); }
             settings.EndpointInput.Text = connection.Endpoint; await SavePairingAsync(auth); settings.CodeInput.Clear(); await ConnectAsync(auth);
@@ -593,6 +676,12 @@ public partial class MainWindow : Window
             finally { operations.Release(); }
         });
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
+        // Decoder diagnostics for a value that is wrong or missing: every Odyle update and
+        // identity, and each distinct stat frame layout once per run (not every frame).
+        var layouts = new HashSet<OdyleFrameLayout>();
+        next.UpdateObserved += u => Log.Info($"Decoder: Odyle update, mode {u.Mode}, direction {u.Direction}, values {u.First}{(u.Second is { } second ? " + " + second : "")}, {u.TrailerBytes} trailer bytes.");
+        next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
+        next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}).");
         try
         {
             next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
@@ -665,13 +754,19 @@ public partial class MainWindow : Window
             UpdateCharacterInList(saved);
             SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
         }
+        // The server asked to wait: the reading is sent again once it may.
+        catch (ServerBusyException error)
+        {
+            publishFailure = T("Server busy"); publishBlockedUntil = error.Until;
+            SetReaderState(ReaderState.Problem, T("Server busy · the reading is sent again in {0}.", Wait(error.Until - DateTimeOffset.UtcNow)));
+        }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
         {
             publishFailure = T(error.Message); publishBlockedUntil = DateTimeOffset.UtcNow.AddSeconds(60);
             if (error.StatusCode == HttpStatusCode.Forbidden) needsReconnect = true;
             SetReaderState(ReaderState.Problem, T("The server refused the reading: {0}", T(error.Message)));
         }
-        catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", T(error.Message))); }
+        catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
         RenderHero();
     }
     private async Task SaveDetectedCharacterAsync(PacketCapture next, GameIdentity identity)
@@ -709,7 +804,12 @@ public partial class MainWindow : Window
             if (latest is not null) await PublishCoreAsync();
             RenderHero();
         }
-        catch (Exception error) { Status(T("Could not save the detected character: {0}", T(error.Message))); }
+        catch (Exception error)
+        {
+            // Offline or busy: the game does not name the character again until the next login, so try after the next heartbeat.
+            if (error is HttpRequestException { StatusCode: null or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError } or TaskCanceledException) pendingIdentity = (next, identity);
+            Status(T("Could not save the detected character: {0}", Describe(error)));
+        }
         finally { operations.Release(); }
     }
 
@@ -737,15 +837,17 @@ public partial class MainWindow : Window
         try
         {
             var release = await Updater.CheckAsync(CancellationToken.None);
-            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); return; }
+            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
+            Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");
             updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
             var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
             staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
-            updateNote = "";
+            updateNote = ""; Log.Info($"Odyle {staged.Version} is downloaded, verified and waiting in {staged.Directory}.");
             Status(T("Odyle {0} is ready · restart to update, or it installs at the next start.", staged.Version));
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
         {
+            Log.Warn($"Update check failed: {error.Message}");
             updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
         }
         finally { updating = false; RenderUpdate(); }
@@ -756,9 +858,11 @@ public partial class MainWindow : Window
     private async Task InstallUpdateAsync()
     {
         if (staged is not { } update || busy) return;
+        Log.Info($"Installing Odyle {update.Version} and restarting.");
         try { Updater.Apply(update); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
+            Log.Error($"Odyle {update.Version} could not be installed", error);
             Status(T("Could not install the update: {0} Download it from the release page instead.", T(error.Message))); return;
         }
         await QuitAsync(restart: true);
@@ -769,21 +873,25 @@ public partial class MainWindow : Window
     {
         if (api is null) return;
         PublisherSession session;
+        // The previous session may be gone (expired, or deleted with a PC removed on the dashboard);
+        // a fresh one names the device key, and a removed PC answers 401 there.
         try { session = await api.StartSessionAsync(sessionId); }
-        catch (HttpRequestException error) when (error.StatusCode is not HttpStatusCode.Unauthorized) { session = await api.StartSessionAsync(); }
+        catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Status(T("Reconnected to your account."));
+        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account."));
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
     }
     private async Task PulseAsync()
     {
-        if (api is null || !await operations.WaitAsync(0)) return;
+        if (api is not { } current || !await operations.WaitAsync(0)) return;
         try
         {
             var now = DateTimeOffset.UtcNow;
+            // Paused by a 429: nothing is sent, and the quiet time does not count as a lost connection.
+            if (current.BusyUntil > now) { lastTick = current.BusyUntil; return; }
             // Account tokens last seven days: renew daily so a long-running app never holds an expired one.
-            if (now - tokenRenewedAt > TimeSpan.FromHours(24)) { await SavePairingAsync(await api.SignInAsync()); tokenRenewedAt = now; }
+            if (now - tokenRenewedAt > TimeSpan.FromHours(24)) { await SavePairingAsync(await current.SignInAsync()); tokenRenewedAt = now; }
             if (needsReconnect || now - lastTick > TimeSpan.FromSeconds(45)) await ReconnectAsync();
             if (api is null) return;
             if (capture is { } running && latest is not null)
@@ -794,16 +902,24 @@ public partial class MainWindow : Window
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
             await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
+            if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
-        // With a device key the request already signed in again; still 401 means the pairing ended.
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { await DisconnectAsync(Unpaired, clearSaved: true); }
-        catch (Exception error) { needsReconnect = true; Status(T(error.Message)); }
+        // With a device key the request already signed in again; still 401 means the pairing
+        // ended (Disconnect elsewhere, Sign out everywhere, the PC removed on the dashboard).
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            Log.Warn("The server no longer knows this PC's pairing (401)."); await DisconnectAsync(Unpaired, clearSaved: true);
+        }
+        catch (ServerBusyException error) { lastTick = error.Until; Log.Warn($"Server busy (429); requests pause until {error.Until.ToLocalTime():HH:mm:ss}."); RenderBusy(); }
+        catch (Exception error) { needsReconnect = true; Log.Warn($"Heartbeat failed: {error.Message}"); Status(Describe(error)); }
         finally { operations.Release(); }
     }
     private async Task DisconnectAsync(string message, bool clearSaved)
     {
         await StopReaderAsync();
-        heartbeat.Stop(); partyTimer.Stop(); api?.Dispose(); api = null; if (clearSaved) SessionStore.Clear();
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; if (clearSaved) SessionStore.Clear();
+        Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks();
         Status(message); RenderHero();

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using Odyle.Core;
 
 namespace Odyle.Reader;
 // How the window is shown on this PC: pinned above other windows, with the daily and
@@ -18,7 +19,7 @@ public static class PreferencesStore
     }
     public static void Save(Preferences preferences)
     {
-        try { Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!); File.WriteAllText(FilePath, JsonSerializer.Serialize(preferences)); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        try { AtomicFile.WriteText(FilePath, JsonSerializer.Serialize(preferences)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Error("Preferences could not be saved", error); }
     }
 }
