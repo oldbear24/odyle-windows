@@ -14,6 +14,8 @@ static class ReaderChecks
 {
     [STAThread] static void Main(string[] args)
     {
+        // Window preferences go to a temporary file so the checks never touch the user's.
+        PreferencesStore.FilePath = Path.Combine(Path.GetTempPath(), "odyle-check-preferences-" + Guid.NewGuid().ToString("N") + ".json");
         App.Headless = true; var app = new App(); app.InitializeComponent();
         var window = new MainWindow(false);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
@@ -59,6 +61,28 @@ static class ReaderChecks
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
                 Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
+                // Window preferences: pinned above other windows and the checklist beside the card, remembered on this PC.
+                Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && !File.Exists(PreferencesStore.FilePath), "the window starts unpinned and compact");
+                Call(window, "SetStayOnTop", true, true);
+                Check(window.Topmost && ((CheckBox)settings.FindName("StayOnTopToggle")).IsChecked == true && PreferencesStore.Load().StayOnTop, "pinning stays on top and is remembered");
+                Call(window, "SetTasksShown", true, true);
+                Check(Control<Border>(window, "TasksPanel").Visibility == Visibility.Visible && ((CheckBox)settings.FindName("TasksToggle")).IsChecked == true && PreferencesStore.Load() is { StayOnTop: true, ShowTasks: true }, "the checklist opens beside the card and is remembered");
+                Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource).Length == 0 && Control<TextBlock>(window, "TasksHint").Text.StartsWith("Pair"), "without an account the panel asks for pairing");
+                // Done follows the game's resets: a tick from before the current period no longer counts.
+                Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
+                string Stamp(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+                Field("tasks").SetValue(window, new[] { new UserTask("t1", "u", "Daily dungeon", "daily", Stamp(DateTimeOffset.UtcNow)), new UserTask("t2", "u", "Daily bounty", "daily"), new UserTask("t3", "u", "Weekly raid", "weekly", Stamp(Checklist.PeriodStart("weekly", DateTimeOffset.UtcNow).AddMinutes(-1))), new UserTask("t4", "u", "Weekly boss", "weekly", Stamp(DateTimeOffset.UtcNow)) });
+                Field("tasksLoaded").SetValue(window, true); Call(window, "RenderTasks");
+                var groups = (TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource;
+                Check(groups.Length == 2 && groups[0].Header == "DAILY" && groups[0].Tasks.Select(t => t.Done).SequenceEqual(new[] { true, false }) && groups[0].Progress.Trim() == "1 / 2", "daily tasks show done and open items with their count");
+                Check(groups[1].Header == "WEEKLY" && groups[1].Tasks.Select(t => t.Done).SequenceEqual(new[] { false, true }) && groups[1].Percent == 50, "a weekly tick from before the current period no longer counts");
+                Check(groups.All(g => g.Reset.StartsWith("resets in ")) && groups[0].Tasks[0].Hint.StartsWith("Done") && groups[0].Tasks[1].Hint == "Still to do today", "each list counts down to its reset");
+                var shell = (FrameworkElement)window.Content; shell.Width = 520; shell.Measure(new Size(520, double.PositiveInfinity)); shell.Arrange(new Rect(0, 0, 520, shell.DesiredSize.Height)); shell.UpdateLayout();
+                Check(Control<Grid>(window, "Card").ActualWidth == 280 && Control<Border>(window, "TasksPanel").ActualWidth == 240, "the card keeps its width and the checklist takes its own column");
+                shell.Width = double.NaN;
+                Call(window, "SetTasksShown", false, true); Call(window, "SetStayOnTop", false, true);
+                Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "unpinning and hiding the checklist are remembered too");
+                Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");
                 if (args.Length == 2)
                 {
                     var api = new PartyApi(args[0]); var auth = await api.PairAsync(args[1]);
@@ -111,6 +135,21 @@ static class ReaderChecks
                     Check(summary.Single(g => g.Title.StartsWith("SwitchedHero")).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero")).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
                     Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 2, "the room snapshot is read from the server");
                     Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource).Length == 0 && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters are not listed as party members");
+                    // The checklist kept on the dashboard is shown beside the card and ticked off from here.
+                    using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
+                    {
+                        http.DefaultRequestHeaders.Authorization = new("Bearer", auth.Token);
+                        (await http.PostAsJsonAsync("api/odyle/task", new { title = "Daily dungeon", cadence = "daily" })).EnsureSuccessStatusCode();
+                    }
+                    // Opening the panel reads the list by itself.
+                    Call(window, "SetTasksShown", true, false); await Until(() => (bool)Field("tasksLoaded").GetValue(window)!, 200);
+                    TaskItem[] Daily() => ((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource)[0].Tasks;
+                    Check(Daily().Single() is { Title: "Daily dungeon", Done: false }, "the account's tasks are read from the server");
+                    await (Task)Call(window, "ToggleTaskAsync", Daily()[0], true)!;
+                    Check(Daily().Single().Done && (await api.GetTasksAsync()).Tasks.Single().DoneAt.Length > 0, "ticking a task stores the time on the server");
+                    await (Task)Call(window, "ToggleTaskAsync", Daily()[0], false)!;
+                    Check(!Daily().Single().Done && (await api.GetTasksAsync()).Tasks.Single().DoneAt.Length == 0, "unticking clears it again");
+                    Call(window, "SetTasksShown", false, false);
                     // A character on an unmapped server is never saved under an assumed identity.
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(43, "UnmappedHero", 2360, null, "GLOBAL_EU"))!;
                     Check((await api.GetCharactersAsync()).Length == 2, "unmapped server creates no character");
@@ -122,7 +161,7 @@ static class ReaderChecks
                 Console.WriteLine("Windows UI compact window, separate settings, reading card, party list and narrow layout passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
-            finally { try { await (Task)Call(window, "QuitAsync")!; } finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
+            finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
         });
         Dispatcher.Run();
     }
@@ -199,6 +238,16 @@ static class ReaderChecks
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
+        // Pinned, with the checklist beside the card; ticks are dated within the current periods.
+        Call(window, "SetStayOnTop", true, false); Call(window, "SetTasksShown", true, false);
+        var now = DateTimeOffset.UtcNow; var dayStart = Checklist.PeriodStart("daily", now); var weekStart = Checklist.PeriodStart("weekly", now);
+        string Stamp(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+        DateTimeOffset Later(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
+        Field("tasks").SetValue(window, new[] { new UserTask("t1", "u", "Daily dungeon run", "daily", Stamp(Later(dayStart, now.AddHours(-2)))), new UserTask("t2", "u", "Odyle bounty", "daily", Stamp(Later(dayStart, now.AddMinutes(-40)))), new UserTask("t3", "u", "Transformation contract", "daily"),
+            new UserTask("t4", "u", "Weekly raid", "weekly", Stamp(Later(weekStart, now.AddDays(-1)))), new UserTask("t5", "u", "Guild boss", "weekly"), new UserTask("t6", "u", "Legion quests", "weekly") });
+        Field("tasksLoaded").SetValue(window, true); Call(window, "RenderTasks");
+        Snapshot(window, Path.Combine(directory, "tasks-preview.png"), 520);
+        Call(window, "SetTasksShown", false, false); Call(window, "SetStayOnTop", false, false);
         Field("latest").SetValue(window, null); Call(window, "RenderHero");
         Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));

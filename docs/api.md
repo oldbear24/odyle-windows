@@ -43,6 +43,10 @@ The snapshot's `wishlist` is grouped by dungeon, most wanted first, then oldest:
 
 `users` are account ids in the order they added the dungeon; clients take display names from `members`. Every change sends the room's realtime refresh. The `room_wishes` collection has no API rules; use the routes above.
 
+## Daily and weekly tasks
+
+Each account keeps a private checklist of daily and weekly tasks, managed on the dashboard. While its checklist panel is open, the Windows app reads it with `GET /api/odyle/tasks` → `{ tasks, resets, serverNow }` and ticks tasks with `POST /api/odyle/task` `{ id, done }`, which stores the current time in `doneAt` (`false` clears it) and answers with the same `{ tasks, resets, serverNow }`. A task is shown as done while `doneAt` is on or after the start of the current period: daily periods begin at `resets.dailyResetHour` UTC, weekly periods on `resets.weeklyResetDay` at that hour (defaults 07:00 UTC and Wednesday). `Odyle.Core.Checklist` mirrors the dashboard's `src/tasks.js`. Adding (`{ title, cadence }`) and removing (`{ id, remove: true }`) stay on the dashboard. Tasks send no realtime events and are not part of room snapshots.
+
 ## Persistent characters and publisher sessions
 
 Own characters can be read with the normal PocketBase `characters` collection API. Others' records and all direct character writes are locked. Shared readings are read via authorized room snapshots; the Windows app reads `GET /api/odyle/snapshot/{id}` for each room to list the party.

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Odyle.Core;
 PacketChecks.Run();
 IdentityChecks.Run();
+ChecklistChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;
 if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player") throw new Exception("Account pairing contract failed.");

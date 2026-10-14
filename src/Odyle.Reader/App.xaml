@@ -43,6 +43,8 @@
 <Style x:Key="Secondary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="{StaticResource Raised}"/><Setter Property="Foreground" Value="#D5E7DB"/><Setter Property="BorderBrush" Value="{StaticResource LineStrong}"/><Setter Property="BorderThickness" Value="1"/></Style>
 <Style x:Key="Ghost" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Padding" Value="6,3"/><Setter Property="MinHeight" Value="0"/><Setter Property="FontWeight" Value="Normal"/><Setter Property="FontSize" Value="11"/></Style>
 <Style x:Key="GhostDanger" TargetType="Button" BasedOn="{StaticResource Ghost}"><Setter Property="Foreground" Value="{StaticResource Rose}"/></Style>
+<!-- Header toggles drawn with Windows' own icon font; mint while active -->
+<Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource Ghost}"><Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="12"/><Setter Property="Padding" Value="6,3"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
 <Style x:Key="Danger" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="#2E1F21"/><Setter Property="Foreground" Value="{StaticResource Rose}"/><Setter Property="BorderBrush" Value="#5A3437"/><Setter Property="BorderThickness" Value="1"/></Style>
 
 <!-- Inputs -->
@@ -65,6 +67,27 @@
  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
   <DockPanel Background="Transparent"><Grid DockPanel.Dock="Left" Width="28" Height="16" VerticalAlignment="Center" Margin="0,0,8,0"><Border x:Name="Track" CornerRadius="8" Background="#2A3A30" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"/><Ellipse x:Name="Knob" Width="10" Height="10" Fill="{StaticResource Muted}" HorizontalAlignment="Left" Margin="3,0,0,0"/></Grid><ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/></DockPanel>
   <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Track" Property="Background" Value="{StaticResource Mint}"/><Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource Mint}"/><Setter TargetName="Knob" Property="Fill" Value="{StaticResource MintInk}"/><Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/><Setter TargetName="Knob" Property="Margin" Value="0,0,3,0"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
+
+<!-- Checklist tick: a small box that fills mint once the task is done -->
+<Style x:Key="Tick" TargetType="CheckBox">
+ <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="FontSize" Value="11.5"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="4,3"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+ <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+  <Border x:Name="Row" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+   <DockPanel>
+    <Border x:Name="Box" DockPanel.Dock="Left" Width="15" Height="15" CornerRadius="4" Background="{StaticResource Field}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,8,0">
+     <Path x:Name="Mark" Data="M3,7 L5.8,9.8 L11,4" Stroke="{StaticResource MintInk}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Opacity="0"/>
+    </Border>
+    <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
+   </DockPanel>
+  </Border>
+  <ControlTemplate.Triggers>
+   <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource Panel}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
+   <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{StaticResource Mint}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/><Setter TargetName="Mark" Property="Opacity" Value="1"/></Trigger>
+   <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
+   <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+  </ControlTemplate.Triggers>
  </ControlTemplate></Setter.Value></Setter>
 </Style>
 

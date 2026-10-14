@@ -25,6 +25,28 @@ public sealed record PartyRoom(string Name, PartyMate[] Mates)
     public string Header => Name.ToUpperInvariant();
     public string Online => $"{Mates.Length} online";
 }
+// One checklist task as the panel shows it: done within the current reset period or not.
+public sealed record TaskItem(UserTask Task, bool Done, string Hint)
+{
+    public string Id => Task.Id;
+    public string Title => Task.Title;
+}
+// The daily or weekly list; Reset counts down while the window is open.
+public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropertyChanged
+{
+    private string reset = "", resetAt = "";
+    public string Cadence => cadence;
+    public TaskItem[] Tasks => tasks;
+    public string Header => cadence == "daily" ? "DAILY" : "WEEKLY";
+    public string Progress => $"  {tasks.Count(t => t.Done)} / {tasks.Length}";
+    public double Percent => tasks.Length == 0 ? 0 : tasks.Count(t => t.Done) * 100.0 / tasks.Length;
+    public string Empty => cadence == "daily" ? "No daily tasks yet · add them on the dashboard." : "No weekly tasks yet · add them on the dashboard.";
+    public Visibility EmptyVisibility => tasks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    public string Reset { get => reset; set => Set(ref reset, value, nameof(Reset)); }
+    public string ResetAt { get => resetAt; set => Set(ref resetAt, value, nameof(ResetAt)); }
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Set(ref string field, string value, string name) { if (field == value) return; field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
+}
 public partial class MainWindow : Window
 {
     private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem }
@@ -48,6 +70,15 @@ public partial class MainWindow : Window
     private RoomSnapshot[] snapshots = [];
     private TimeSpan serverOffset;
     private bool refreshingParty;
+    // The account's own daily and weekly checklist, read while the panel beside the card is open.
+    private UserTask[] tasks = [];
+    private TaskResets resets = new();
+    private bool tasksLoaded, refreshingTasks;
+    private string? tasksProblem;
+    private DateTimeOffset renderedDaily, renderedWeekly;
+    // Pinned above other windows and the checklist beside the card: remembered on this PC.
+    private Preferences preferences = new();
+    private readonly Forms.ToolStripMenuItem pinItem = new("Stay on top") { CheckOnClick = true };
     private long sequence, lastGameBytes;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince;
     private PacketCandidate? latest;
@@ -74,6 +105,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = "Odyle · Not connected", Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add("Open Odyle", null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
         menu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
         menu.Items.Add("Quit", null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
@@ -82,14 +114,17 @@ public partial class MainWindow : Window
         settings.NpcapButton.Click += (_, _) => OpenLink("https://npcap.com/#download"); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
         settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
+        settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
+        settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         updateTimer.Tick += async (_, _) => { updateTimer.Interval = TimeSpan.FromHours(6); Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); };
         // Only while the window is open; showing it refreshes at once.
-        partyTimer.Tick += async (_, _) => { if (IsVisible) await RefreshPartyAsync(); };
+        partyTimer.Tick += async (_, _) => { if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync()); };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
-        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); };
+        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
+        preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false);
     }
     private static System.Drawing.Icon LoadTrayIcon()
     {
@@ -115,7 +150,7 @@ public partial class MainWindow : Window
         }
         catch { }
     }
-    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); }
+    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     private void OpenSettings()
     {
         if (settings.Owner is null && IsVisible) settings.Owner = this;
@@ -306,7 +341,7 @@ public partial class MainWindow : Window
         await ReloadAsync();
         Status("Connected to your account.");
         lastTick = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
-        await RefreshPartyAsync(); partyTimer.Start();
+        await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start();
     }
     private async Task ReloadAsync()
     {
@@ -371,6 +406,100 @@ public partial class MainWindow : Window
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception error) { Status(error.Message); }
+    }
+
+    // ----- Window -----
+    // Pinned above other windows, for the game in windowed or borderless mode. The
+    // header pin, the tray menu and settings toggle the same remembered choice.
+    private void SetStayOnTop(bool on, bool persist)
+    {
+        Topmost = on; pinItem.Checked = on; settings.StayOnTopToggle.IsChecked = on;
+        PinButton.Foreground = Brush(on ? "Mint" : "Muted");
+        PinButton.ToolTip = on ? "Pinned above other windows · click to unpin" : "Stay on top of other windows, for example the game in windowed mode";
+        if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
+    }
+    private void Pin_Click(object sender, RoutedEventArgs e) => SetStayOnTop(!Topmost, persist: true);
+    // The checklist opens beside the card; the window grows to the right.
+    private void SetTasksShown(bool on, bool persist)
+    {
+        TasksPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed; settings.TasksToggle.IsChecked = on;
+        TasksButton.Foreground = Brush(on ? "Mint" : "Muted");
+        TasksButton.ToolTip = on ? "Hide the daily & weekly tasks" : "Show your daily & weekly tasks beside the card";
+        if (persist) PreferencesStore.Save(preferences = preferences with { ShowTasks = on });
+        RenderTasks(); if (on) _ = RefreshTasksAsync();
+    }
+    private void Tasks_Click(object sender, RoutedEventArgs e) => SetTasksShown(TasksPanel.Visibility != Visibility.Visible, persist: true);
+    private void ManageTasks_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/tasks");
+    // Growing (the checklist opened, a longer party list) must not push the window off its screen.
+    private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!IsVisible || PresentationSource.FromVisual(this) is not { CompositionTarget: { } target }) return;
+        var area = Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
+        var corner = target.TransformFromDevice.Transform(new Point(area.Left, area.Top)); var far = target.TransformFromDevice.Transform(new Point(area.Right, area.Bottom));
+        if (Left + ActualWidth > far.X) Left = Math.Max(corner.X, far.X - ActualWidth);
+        if (Top + ActualHeight > far.Y) Top = Math.Max(corner.Y, far.Y - ActualHeight);
+    }
+
+    // ----- Daily & weekly tasks -----
+    // The account's private checklist from the dashboard, read while the panel is open
+    // (every 15 seconds with the party). Tasks are added and removed on the dashboard;
+    // ticking them off happens here. Read-only against the reader's lock, like the party.
+    private async Task RefreshTasksAsync()
+    {
+        if (api is not { } current || TasksPanel.Visibility != Visibility.Visible || refreshingTasks) return;
+        refreshingTasks = true;
+        try { var listed = await current.GetTasksAsync(); if (api == current) ApplyTasks(listed); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { if (api == current) { tasksProblem = error.Message; RenderTasks(); } }
+        finally { refreshingTasks = false; }
+    }
+    private void ApplyTasks(TasksResponse listed)
+    {
+        tasks = listed.Tasks; resets = listed.Resets ?? new(); tasksLoaded = true; tasksProblem = null;
+        if (Readiness.Parse(listed.ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
+        RenderTasks();
+    }
+    // The server stores the time a task was ticked and answers with the whole list.
+    private async Task ToggleTaskAsync(TaskItem item, bool done)
+    {
+        if (api is not { } current) return;
+        try { var listed = await current.SetTaskDoneAsync(item.Id, done); if (api == current) ApplyTasks(listed); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Status("Could not update the task: " + error.Message); RenderTasks(); }
+    }
+    private async void Task_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: TaskItem item } box) return;
+        box.IsEnabled = false;
+        try { await ToggleTaskAsync(item, box.IsChecked == true); } finally { box.IsEnabled = true; }
+    }
+    private void RenderTasks()
+    {
+        var now = DateTimeOffset.UtcNow + serverOffset; var connected = api is not null;
+        renderedDaily = Checklist.PeriodStart("daily", now, resets); renderedWeekly = Checklist.PeriodStart("weekly", now, resets);
+        TaskGroups.ItemsSource = !connected ? Array.Empty<TaskGroup>() : new[] { "daily", "weekly" }.Select(cadence =>
+        {
+            var items = tasks.Where(t => t.Cadence == cadence).Select(t =>
+            {
+                var done = Checklist.IsDone(t, now, resets);
+                var hint = done ? $"Done {Age(Readiness.Parse(t.DoneAt) ?? now)} · unchecks itself at the {cadence} reset" : cadence == "daily" ? "Still to do today" : "Still to do this week";
+                return new TaskItem(t, done, hint);
+            }).ToArray();
+            return new TaskGroup(cadence, items) { Reset = ResetIn(cadence, now), ResetAt = ResetAt(cadence, now) };
+        }).ToArray();
+        TasksHint.Text = !connected ? "Pair the app in settings to see your daily and weekly tasks."
+            : tasksProblem is { } problem ? "Could not load the tasks: " + problem
+            : !tasksLoaded ? "Loading your checklist…"
+            : tasks.Length == 0 ? "Add tasks on the dashboard under Daily & weekly; they show up here."
+            : "Tick a task when it is done · it unchecks itself at the game's reset.";
+    }
+    private string ResetIn(string cadence, DateTimeOffset now) => "resets in " + Checklist.Remaining(Checklist.NextReset(cadence, now, resets) - now);
+    private string ResetAt(string cadence, DateTimeOffset now) => $"{(cadence == "daily" ? "Daily" : "Weekly")} reset {Checklist.NextReset(cadence, now, resets).ToLocalTime().ToString("ddd d MMM HH:mm", System.Globalization.CultureInfo.InvariantCulture)} local time";
+    // Every second while the panel is open: the countdowns tick and a reset clears the ticks.
+    private void TickTasks()
+    {
+        if (TasksPanel.Visibility != Visibility.Visible || api is null || TaskGroups.ItemsSource is not TaskGroup[] groups) return;
+        var now = DateTimeOffset.UtcNow + serverOffset;
+        if (Checklist.PeriodStart("daily", now, resets) != renderedDaily || Checklist.PeriodStart("weekly", now, resets) != renderedWeekly) { RenderTasks(); return; }
+        foreach (var group in groups) group.Reset = ResetIn(group.Cadence, now);
     }
 
     // ----- Packet reader -----
@@ -639,8 +768,8 @@ public partial class MainWindow : Window
     {
         await StopReaderAsync();
         heartbeat.Stop(); partyTimer.Stop(); api?.Dispose(); api = null; if (clearSaved) SessionStore.Clear();
-        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = [];
-        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty();
+        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
+        settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks();
         Status(message); RenderHero();
     }
     private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(() => DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true));

@@ -41,6 +41,12 @@
    <TextBlock Style="{StaticResource Section}" Text="PACKET READER"/>
    <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><TextBlock Style="{StaticResource Hint}" Text="Reads the game's own packets. Nothing is injected." VerticalAlignment="Center" Margin="2,0,0,0"/></DockPanel>
 
+   <!-- Window: how the card is shown on this PC; the header buttons toggle the same -->
+   <TextBlock Style="{StaticResource Section}" Text="WINDOW"/>
+   <CheckBox x:Name="StayOnTopToggle" Content="Stay on top of other windows" ToolTip="Keeps the card above the game in windowed or borderless mode"/>
+   <CheckBox x:Name="TasksToggle" Content="Show daily &amp; weekly tasks beside the card" Margin="0,8,0,0" ToolTip="Your checklist from the dashboard; tick tasks off here"/>
+   <TextBlock Style="{StaticResource Hint}" Text="Both are remembered on this PC. Tasks themselves are added and removed on the dashboard." Margin="2,6,0,0"/>
+
    <!-- Updates: released builds download new GitHub releases and install them on restart -->
    <TextBlock Style="{StaticResource Section}" Text="UPDATES"/>
    <TextBlock x:Name="UpdateLabel" Style="{StaticResource Hint}" Margin="2,0,0,4"/>
