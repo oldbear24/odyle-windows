@@ -4,7 +4,9 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace Odyle.Reader;
-public sealed record SavedSession(string Endpoint, string Token);
+// DeviceKey keeps the pairing across restarts and expired tokens; sessions saved by
+// older versions have none until the app fetches one (PartyApi.EnsureDeviceKeyAsync).
+public sealed record SavedSession(string Endpoint, string Token, string? DeviceKey = null);
 public static class SessionStore
 {
     private static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle");

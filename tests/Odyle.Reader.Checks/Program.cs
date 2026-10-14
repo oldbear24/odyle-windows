@@ -38,6 +38,7 @@ static class ReaderChecks
                 // Updates: nothing is offered before a verified package exists, and an unstamped build never replaces itself.
                 Check(!Updater.IsReleaseBuild && ((TextBlock)settings.FindName("UpdateLabel")).Text.Contains("development build") && Control<Button>(window, "UpdateButton").Visibility == Visibility.Collapsed && ((Button)settings.FindName("InstallUpdateButton")).Visibility == Visibility.Collapsed, "an unstamped build shows no update and never replaces itself");
                 UpdateChecks();
+                Check(System.Text.Json.JsonSerializer.Deserialize<SavedSession>("""{"Endpoint":"https://party.example","Token":"t"}""") is { Token: "t", DeviceKey: null }, "a session saved before device keys still loads and is upgraded on connect");
                 // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);

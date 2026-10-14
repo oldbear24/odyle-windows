@@ -10,7 +10,7 @@
    <TextBlock Style="{StaticResource Section}" Text="ACCOUNT"/>
    <StackPanel x:Name="JoinPanel">
     <Button x:Name="PasteButton" Content="Paste link &amp; connect"/>
-    <TextBlock Style="{StaticResource Hint}" Text="On the dashboard choose Pair Windows app and copy the connection link, or paste it below." Margin="2,6,0,8"/>
+    <TextBlock Style="{StaticResource Hint}" Text="On the dashboard choose Pair Windows app and copy the connection link, or paste it below. You pair once: the app stays connected until you disconnect it." Margin="2,6,0,8"/>
     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="CodeInput" ToolTip="Connection link or 16-character pairing code"/><Button x:Name="JoinButton" Grid.Column="2" Style="{StaticResource Secondary}" Content="Connect"/></Grid>
     <Expander x:Name="ServerOptions" Header="Server address" Margin="0,4,0,0">
      <StackPanel Margin="0,6,0,0"><TextBox x:Name="EndpointInput" Text="http://127.0.0.1:8090" ToolTip="PocketBase server address"/><Button x:Name="RetryButton" Style="{StaticResource Secondary}" Content="Reconnect saved account" Visibility="Collapsed" Margin="0,6,0,0"/></StackPanel>

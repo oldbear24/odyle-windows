@@ -10,9 +10,21 @@ The browser calls `pb.collection('users').authWithOAuth2({ provider: 'discord', 
 
 The dashboard presents a connection link such as `https://your-backend.example/#odyle-pair=ABCDEFGH23456789`. The Windows app extracts the endpoint and code when the user clicks **Paste link & connect** or presses Enter in the pairing input. The fragment is never sent as part of an HTTP request. This link contains the short-lived pairing code, not the account token; only the intended Windows companion should receive it. Base-path deployments are preserved, insecure remote HTTP and embedded URL credentials are rejected. Older apps can still use the raw code with a separate endpoint.
 
-`POST /api/odyle/pair` is public and rate limited. Body `{ code }`; response `{ token, record }` for the same account. The code is consumed atomically. Windows stores the application token in DPAPI, never Discord credentials.
+`POST /api/odyle/pair` is public and rate limited. Body `{ code }`; response `{ token, record, deviceKey }` for the same account. The code is consumed atomically. Windows stores the device key and token in DPAPI, never Discord credentials.
 
-`POST /api/collections/users/auth-refresh` refreshes a valid token. Tokens last seven days; accounts/data persist independently of token expiry.
+### Lasting pairing
+
+The link is used once; the pairing lasts. `deviceKey` is a 48-character secret for that one app; the server keeps only its SHA-256 digest (`desktop_devices`). Account tokens last seven days, so the app trades the key for a fresh token whenever it starts, every 24 hours while it runs, and whenever a request answers 401:
+
+| Method / route | Body | Result |
+| --- | --- | --- |
+| POST `/api/odyle/desktop-sign-in` | `{ deviceKey }` | Public, 30 a minute per client: `{ token, record }` for the paired account and the key's `lastUsedAt` is updated. An unknown key answers 401 and the app asks to pair again |
+| POST `/api/odyle/desktop-device` | `{}` | Signed-in account: `{ deviceKey }` for a new pairing. Apps paired before device keys existed call it once with their still-valid token |
+| POST `/api/odyle/unpair` | `{ deviceKey }` | Public, 30 a minute per client: forgets that key (the app's **Disconnect**); unknown keys answer 200 too |
+
+A pairing has no inactivity expiry: it ends when the app disconnects, the account signs out everywhere or is deleted. An account keeps its 10 most recently used pairings; pairing an eleventh PC drops the one unused longest. The data export lists them as `pairedWindowsApps` (`pairedAt`, `lastSignInAt`), without keys or digests.
+
+`POST /api/collections/users/auth-refresh` refreshes a valid token. Tokens last seven days; accounts/data persist independently of token expiry. A Windows app paired by a backend without device keys keeps its connection only by refreshing within those seven days.
 
 ## Rooms
 

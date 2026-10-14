@@ -1,10 +1,13 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Odyle.Core;
 public sealed record User(string Id, string DisplayName);
-public sealed record AuthResponse(string Token, User Record);
+// Pairing also answers with the app's device key; backends from before device keys omit it.
+public sealed record AuthResponse(string Token, User Record, string? DeviceKey = null);
+public sealed record DeviceKeyResponse(string DeviceKey);
 public sealed record Room(string Id, string Name, int Cost, string Role, bool Sharing, string[]? SharedCharacters = null)
 {
     public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
@@ -27,22 +30,51 @@ public sealed class PartyApi : IDisposable
 {
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    public PartyApi(string endpoint, string? token = null)
+    private Task<AuthResponse>? signingIn;
+    public string Endpoint { get; }
+    public string? Token { get; private set; }
+    // The pairing's lasting credential. Account tokens run out after seven days; the key
+    // signs in again for a fresh one, so the app stays paired until it disconnects.
+    public string? DeviceKey { get; private set; }
+    public PartyApi(string endpoint, string? token = null, string? deviceKey = null)
     {
-        var uri = new Uri(ConnectionDetails.NormalizeEndpoint(endpoint) + "/");
-        client = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(12) };
-        if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        Endpoint = ConnectionDetails.NormalizeEndpoint(endpoint);
+        client = new HttpClient { BaseAddress = new Uri(Endpoint + "/"), Timeout = TimeSpan.FromSeconds(12) };
+        Token = string.IsNullOrWhiteSpace(token) ? null : token; DeviceKey = string.IsNullOrWhiteSpace(deviceKey) ? null : deviceKey;
     }
     public async Task<AuthResponse> PairAsync(string code)
     {
-        var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code });
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", result.Token); return result;
+        var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code }, renew: false);
+        Token = result.Token; DeviceKey = result.DeviceKey; return result;
     }
     public async Task<AuthResponse> RefreshAsync()
     {
-        var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { });
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", result.Token);
-        return result;
+        var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { }, renew: false);
+        Token = result.Token; return result;
+    }
+    // A fresh account token: from the device key, or by refreshing the token of an app
+    // paired before device keys existed. Requests running at once share one sign-in.
+    public async Task<AuthResponse> SignInAsync()
+    {
+        if (DeviceKey is null) return await RefreshAsync();
+        var pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey }, renew: false);
+        try { var result = await pending; Token = result.Token; return result; }
+        finally { if (signingIn == pending) signingIn = null; }
+    }
+    // Gives an app paired before device keys existed its key, using the still-valid token.
+    // A backend without device keys answers 404; the app then keeps refreshing its token.
+    public async Task<string?> EnsureDeviceKeyAsync()
+    {
+        if (DeviceKey is not null) return DeviceKey;
+        try { DeviceKey = (await PostAsync<DeviceKeyResponse>("api/odyle/desktop-device", new { })).DeviceKey; }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound) { }
+        return DeviceKey;
+    }
+    // Disconnecting forgets the key on the server too, so it can never sign in again.
+    public async Task UnpairAsync()
+    {
+        if (DeviceKey is not { } key) return;
+        DeviceKey = null; await PostAsync<JsonElement>("api/odyle/unpair", new { deviceKey = key }, renew: false);
     }
     public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
@@ -68,8 +100,25 @@ public sealed class PartyApi : IDisposable
         if (string.IsNullOrWhiteSpace(reading.CharacterName) || string.IsNullOrWhiteSpace(reading.Server)) throw new ArgumentException("Character and server are required.");
         return (await PostAsync<ReportResponse>("api/odyle/report", reading)).Character;
     }
-    private async Task<T> GetAsync<T>(string route) { using var response = await client.GetAsync(route); return await ReadAsync<T>(response); }
-    private async Task<T> PostAsync<T>(string route, object body) { using var response = await client.PostAsJsonAsync(route, body, Json); return await ReadAsync<T>(response); }
+    private Task<T> GetAsync<T>(string route) => SendAsync<T>(HttpMethod.Get, route, null, renew: true);
+    private Task<T> PostAsync<T>(string route, object body, bool renew = true) => SendAsync<T>(HttpMethod.Post, route, body, renew);
+    // A 401 means the account token expired or was replaced; a paired app signs in with
+    // its device key and repeats the request once. The server refused it before acting on it.
+    private async Task<T> SendAsync<T>(HttpMethod method, string route, object? body, bool renew)
+    {
+        using (var response = await SendOnceAsync(method, route, body))
+            if (response.StatusCode != HttpStatusCode.Unauthorized || !renew || DeviceKey is null) return await ReadAsync<T>(response);
+        await SignInAsync();
+        using var again = await SendOnceAsync(method, route, body);
+        return await ReadAsync<T>(again);
+    }
+    private async Task<HttpResponseMessage> SendOnceAsync(HttpMethod method, string route, object? body)
+    {
+        using var request = new HttpRequestMessage(method, route);
+        if (body is not null) request.Content = JsonContent.Create(body, options: Json);
+        if (Token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        return await client.SendAsync(request);
+    }
     private static async Task<T> ReadAsync<T>(HttpResponseMessage response)
     {
         if (!response.IsSuccessStatusCode)

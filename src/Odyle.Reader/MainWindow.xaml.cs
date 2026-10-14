@@ -80,7 +80,7 @@ public partial class MainWindow : Window
     private Preferences preferences = new();
     private readonly Forms.ToolStripMenuItem pinItem = new("Stay on top") { CheckOnClick = true };
     private long sequence, lastGameBytes;
-    private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince;
+    private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
     private PacketCandidate? latest;
     private int publishedTotal = -1;
     private string? publishFailure;
@@ -316,12 +316,12 @@ public partial class MainWindow : Window
     private async Task RestoreAsync()
     {
         var saved = SessionStore.Load(); if (saved is null) return;
-        settings.EndpointInput.Text = saved.Endpoint; api = new PartyApi(saved.Endpoint, saved.Token); Status("Connecting to your account…");
-        try { var auth = await api.RefreshAsync(); SessionStore.Save(new SavedSession(saved.Endpoint, auth.Token)); await ConnectAsync(auth); }
+        settings.EndpointInput.Text = saved.Endpoint; api = new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey); Status("Connecting to your account…");
+        try { var auth = await api.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
             api.Dispose(); api = null; SessionStore.Clear(); settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
-            Status("Connection expired. Copy a new connection link from the dashboard.");
+            Status(Unpaired);
         }
         catch
         {
@@ -330,6 +330,15 @@ public partial class MainWindow : Window
         }
         // The login snapshot names the character, so read from the moment the account is connected.
         if (api is not null && capture is null) await StartReaderAsync();
+    }
+    private const string Unpaired = "This PC is no longer paired with your account. Copy a new connection link from the dashboard.";
+    // Saves the pairing on this PC. An app paired before device keys existed gets its key
+    // here, so from now on it stays paired however long it is closed.
+    private async Task SavePairingAsync(AuthResponse auth)
+    {
+        if (api is not { } current) return;
+        try { await current.EnsureDeviceKeyAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
+        SessionStore.Save(new SavedSession(current.Endpoint, auth.Token, current.DeviceKey));
     }
     private async Task ConnectAsync(AuthResponse auth)
     {
@@ -340,7 +349,7 @@ public partial class MainWindow : Window
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
         Status("Connected to your account.");
-        lastTick = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
+        lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start();
     }
     private async Task ReloadAsync()
@@ -372,7 +381,13 @@ public partial class MainWindow : Window
     {
         var connection = ConnectionDetails.Parse(settings.CodeInput.Password, settings.EndpointInput.Text);
         var next = new PartyApi(connection.Endpoint); Status("Pairing with your account…");
-        try { var auth = await next.PairAsync(connection.Code); api?.Dispose(); api = next; settings.EndpointInput.Text = connection.Endpoint; SessionStore.Save(new SavedSession(connection.Endpoint, auth.Token)); settings.CodeInput.Clear(); await ConnectAsync(auth); }
+        try
+        {
+            var auth = await next.PairAsync(connection.Code); var previous = api; api = next;
+            // Pairing again replaces this PC's previous pairing.
+            if (previous is not null) { await UnpairQuietlyAsync(previous); previous.Dispose(); }
+            settings.EndpointInput.Text = connection.Endpoint; await SavePairingAsync(auth); settings.CodeInput.Clear(); await ConnectAsync(auth);
+        }
         catch { if (api != next) next.Dispose(); throw; }
         if (capture is null) await StartReaderAsync();
     }
@@ -749,6 +764,8 @@ public partial class MainWindow : Window
         try
         {
             var now = DateTimeOffset.UtcNow;
+            // Account tokens last seven days: renew daily so a long-running app never holds an expired one.
+            if (now - tokenRenewedAt > TimeSpan.FromHours(24)) { await SavePairingAsync(await api.SignInAsync()); tokenRenewedAt = now; }
             if (needsReconnect || now - lastTick > TimeSpan.FromSeconds(45)) await ReconnectAsync();
             if (api is null) return;
             if (capture is { } running && latest is not null)
@@ -760,7 +777,8 @@ public partial class MainWindow : Window
             }
             await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
         }
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { await DisconnectAsync("Connection expired. Copy a new connection link from the dashboard.", clearSaved: true); }
+        // With a device key the request already signed in again; still 401 means the pairing ended.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { await DisconnectAsync(Unpaired, clearSaved: true); }
         catch (Exception error) { needsReconnect = true; Status(error.Message); }
         finally { operations.Release(); }
     }
@@ -772,7 +790,16 @@ public partial class MainWindow : Window
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks();
         Status(message); RenderHero();
     }
-    private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(() => DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true));
+    private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    {
+        if (api is { } current) await UnpairQuietlyAsync(current);
+        await DisconnectAsync("Disconnected · your characters stay saved on your account.", clearSaved: true);
+    });
+    // Best effort: offline, the key is still deleted from this PC with the saved session.
+    private static async Task UnpairQuietlyAsync(PartyApi paired)
+    {
+        try { await paired.UnpairAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
+    }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     private async Task QuitAsync(bool restart = false)

@@ -5,7 +5,8 @@ IdentityChecks.Run();
 ChecklistChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;
-if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player") throw new Exception("Account pairing contract failed.");
+if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player" || auth.DeviceKey is not null) throw new Exception("Account pairing contract failed.");
+if (JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"},"deviceKey":"key"}""", options)!.DeviceKey != "key") throw new Exception("Pairing must keep the device key.");
 var c = JsonSerializer.Deserialize<Character>("""{"id":"c","user":"discord-user","characterName":"Main","server":"EU","region":"GLOBAL_EU","value":0,"confirmed":true,"valid":false,"lastReadingAt":"2026-10-12 12:00:00.000Z"}""", options)!;
 if (c.Value != 0 || !c.Confirmed || c.Valid || !c.Label.Contains("0 Odyle")) throw new Exception("Stored stale zero contract failed.");
 // Room snapshot as the backend sends it: PocketBase record dates, extra fields, ISO server time.
@@ -61,5 +62,18 @@ if (args.Length is 1 or 2)
     await api.HeartbeatAsync(session.SessionId, character.Id); await api.InvalidateAsync(character.Id, session.SessionId);
     if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
     await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");
+    if (paired.DeviceKey is { } key)
+    {
+        // The pairing outlives its token: a request with an expired token signs in with the key and is repeated.
+        using var later = new PartyApi(pairing.Endpoint, "expired-token", key);
+        await later.GetRoomsAsync();
+        if (later.Token is null or "expired-token" || (await later.GetCharactersAsync()).All(c => c.Id != character.Id)) throw new Exception("An expired token did not sign in again with the device key.");
+        if ((await later.SignInAsync()).Record.Id != paired.Record.Id) throw new Exception("Device sign-in changed account identity.");
+        await later.UnpairAsync();
+        using var forgotten = new PartyApi(pairing.Endpoint, null, key);
+        try { await forgotten.SignInAsync(); throw new Exception("An unpaired device key still signed in."); }
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized) { }
+        Console.WriteLine("Windows lasting pairing check passed.");
+    }
 }
 Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract, release feed and URL/value protection passed.");
