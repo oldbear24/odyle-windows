@@ -546,7 +546,8 @@ public partial class MainWindow : Window
     private void Notify(string title, string text)
     {
         LastNotice = (title, text); Log.Info("Notification: " + title);
-        if (tray.Visible) tray.ShowBalloonTip(10000, title, text, Forms.ToolTipIcon.Info);
+        // Windows keeps 63 characters of a notification title and 255 of its text.
+        if (tray.Visible) tray.ShowBalloonTip(10000, title.Length > 63 ? title[..62] + "…" : title, text.Length > 255 ? text[..254] + "…" : text, Forms.ToolTipIcon.Info);
     }
     // Planned runs the account joined on the dashboard: one notification 15 minutes before
     // each start, with the dungeon, room, local time and note. Reminded runs are kept in

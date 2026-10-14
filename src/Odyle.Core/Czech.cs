@@ -36,7 +36,7 @@ public static class Czech
         ["Reads the game's own packets with Npcap. Nothing is injected."] = "Čte vlastní pakety hry přes Npcap. Nic se do hry nevkládá.",
         ["Stop"] = "Zastavit", ["Start"] = "Spustit", ["Connect"] = "Připojit",
         ["Quit"] = "Ukončit", ["Quit Odyle completely · closing the window keeps it in the tray"] = "Úplně ukončit Odyle · po zavření okna zůstane v oznamovací oblasti",
-        ["Restart to update"] = "Restartovat a aktualizovat", ["Your connection is remembered on this PC."] = "Připojení si tento počítač pamatuje.",
+        ["Restart to update"] = "Aktualizovat", ["Your connection is remembered on this PC."] = "Připojení si tento počítač pamatuje.",
         // Tray
         ["Odyle · Not connected"] = "Odyle · Nepřipojeno", ["Open Odyle"] = "Otevřít Odyle", ["Settings"] = "Nastavení",
         // Party

@@ -125,9 +125,9 @@ static class ReaderChecks
                 var area = System.Windows.SystemParameters.WorkArea;
                 Field("preferences").SetValue(window, new Preferences(Left: area.Left + 40, Top: area.Top + 30)); Call(window, "RestorePosition");
                 Check(window.WindowStartupLocation == WindowStartupLocation.Manual && window.Left == area.Left + 40 && window.Top == area.Top + 30, "a remembered position on a connected screen is restored");
-                window.WindowStartupLocation = WindowStartupLocation.CenterScreen; window.Left = double.NaN; window.Top = double.NaN;
+                window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
                 Field("preferences").SetValue(window, new Preferences(Left: -40000, Top: -40000)); Call(window, "RestorePosition");
-                Check(window.WindowStartupLocation == WindowStartupLocation.CenterScreen && double.IsNaN(window.Left), "a position on a screen that is gone opens centred instead");
+                Check(window.WindowStartupLocation == WindowStartupLocation.CenterScreen && window.Left == area.Left + 40, "a position on a screen that is gone opens centred instead");
                 Field("preferences").SetValue(window, kept);
                 // The XAML is written in English and translated once per window.
                 Localizer.Use("cs");

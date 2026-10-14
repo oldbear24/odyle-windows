@@ -40,7 +40,7 @@
    <!-- Reader -->
    <TextBlock Style="{StaticResource Section}" Text="PACKET READER"/>
    <!-- Npcap is checked each time settings open -->
-   <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="2,0,0,0"><Ellipse x:Name="NpcapDot" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="0,1,7,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="11.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></StackPanel></DockPanel>
+   <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><Ellipse x:Name="NpcapDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,1,7,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="11.5" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
    <TextBlock Style="{StaticResource Hint}" Text="Reads the game's own packets. Nothing is injected." Margin="2,4,0,0"/>
 
    <!-- Window: how the card is shown on this PC; the header buttons toggle the same -->
