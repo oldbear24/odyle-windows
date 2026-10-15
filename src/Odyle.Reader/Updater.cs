@@ -119,10 +119,10 @@ public static class Updater
             throw;
         }
     }
-    public static void Relaunch()
+    public static void Relaunch(bool tray)
     {
         var exe = Executable ?? throw new InvalidOperationException(T("The application path is unknown."));
-        Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) });
+        Process.Start(new ProcessStartInfo(exe, tray ? StartupCommand.TrayArgument : "") { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) });
     }
     // Removes the executable an update moved aside and packages that are no longer newer than this build.
     public static void CleanUp()
