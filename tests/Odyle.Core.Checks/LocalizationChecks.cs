@@ -9,7 +9,7 @@ using Odyle.Core;
 // checks for the web app.
 static class LocalizationChecks
 {
-    // English messages of the backend (odyle-dashboard backend/pb_hooks) and PocketBase that
+    // English messages of the backend (odyle-dashboard backend/odyle) and PocketBase that
     // reach the app's status lines through T(error.Message).
     static readonly string[] ServerMessages = [
         "Request could not be completed.", "Something went wrong.", "Something went wrong while processing your request.", "The request requires valid record authorization token.",
