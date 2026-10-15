@@ -115,6 +115,17 @@ public sealed class PartyApi : IDisposable
         return PostAsync<PublisherSession>("api/odyle/session", body);
     }
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));
+    // Subscribes a realtime connection (RealtimeClient) to its topics; the server answers 204.
+    public async Task SubscribeAsync(string clientId, IReadOnlyCollection<string> topics)
+    {
+        if (PairingEnded) throw new HttpRequestException(Localizer.T("This PC is no longer paired with an account."), null, HttpStatusCode.Unauthorized);
+        var body = new { clientId, subscriptions = topics };
+        using (var response = await SendOnceAsync(HttpMethod.Post, "api/realtime", body))
+            if (response.StatusCode != HttpStatusCode.Unauthorized || DeviceKey is null) { await FailUnlessSuccessAsync(response); return; }
+        await SignInAsync();
+        using var again = await SendOnceAsync(HttpMethod.Post, "api/realtime", body);
+        await FailUnlessSuccessAsync(again);
+    }
     // The account's private daily and weekly checklist; a change answers with the whole list again.
     public Task<TasksResponse> GetTasksAsync() => GetAsync<TasksResponse>("api/odyle/tasks");
     public Task<TasksResponse> SetTaskDoneAsync(string id, bool done) => PostAsync<TasksResponse>("api/odyle/task", new { id, done });
@@ -162,24 +173,27 @@ public sealed class PartyApi : IDisposable
     private async Task<T> ReadAsync<T>(HttpResponseMessage response)
     {
         var status = response.StatusCode;
-        if (!response.IsSuccessStatusCode)
-        {
-            var message = Localizer.T("Server returned {0}.", (int)status);
-            try
-            {
-                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-                if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(text.GetString())) message = text.GetString()!;
-            }
-            catch (Exception error) when (error is JsonException or IOException or HttpRequestException) { }
-            if (status != HttpStatusCode.TooManyRequests) throw new HttpRequestException(message, null, status);
-            var now = DateTimeOffset.UtcNow;
-            BusyUntil = now + Retry.After(response.Headers.TryGetValues("Retry-After", out var values) ? values.FirstOrDefault() : null, now);
-            throw new ServerBusyException(message, BusyUntil);
-        }
+        await FailUnlessSuccessAsync(response);
         var body = await response.Content.ReadAsStringAsync();
         try { if (JsonSerializer.Deserialize<T>(body, Json) is { } value) return value; }
         catch (JsonException) { throw new HttpRequestException(Localizer.T("The server sent an answer the app cannot read."), null, status); }
         throw new HttpRequestException(Localizer.T("The server returned an empty response."), null, status);
+    }
+    private async Task FailUnlessSuccessAsync(HttpResponseMessage response)
+    {
+        var status = response.StatusCode;
+        if (response.IsSuccessStatusCode) return;
+        var message = Localizer.T("Server returned {0}.", (int)status);
+        try
+        {
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(text.GetString())) message = text.GetString()!;
+        }
+        catch (Exception error) when (error is JsonException or IOException or HttpRequestException) { }
+        if (status != HttpStatusCode.TooManyRequests) throw new HttpRequestException(message, null, status);
+        var now = DateTimeOffset.UtcNow;
+        BusyUntil = now + Retry.After(response.Headers.TryGetValues("Retry-After", out var values) ? values.FirstOrDefault() : null, now);
+        throw new ServerBusyException(message, BusyUntil);
     }
     public void Dispose() => client.Dispose();
 }

@@ -78,7 +78,14 @@ public partial class MainWindow : Window
     // Room snapshots for the party list; serverOffset corrects this PC's clock for presence.
     private RoomSnapshot[] snapshots = [];
     private TimeSpan serverOffset;
-    private bool refreshingParty;
+    private Task? partyRefresh;
+    private bool partyAgain;
+    // Realtime news of the account and its rooms: the party, the rooms and the checklist
+    // follow changes and heartbeats as they happen, and are fetched again when the
+    // connection comes back and every five minutes in case news was missed. Without it they
+    // are fetched every 15 seconds, as before.
+    private RealtimeClient? realtime;
+    private int partyTicks;
     // The account's own daily and weekly checklist, read while the panel beside the card is open.
     private UserTask[] tasks = [];
     private TaskResets resets = new();
@@ -159,11 +166,18 @@ public partial class MainWindow : Window
             if (quitting) return;
             updateTimer.Interval = updateSchedule.Next; updateTimer.Start();
         };
-        // Open, the party and the checklist refresh every 15 seconds (showing the window refreshes
-        // at once); in the tray the rooms refresh every minute, for the run reminders.
+        // With realtime the party and the checklist follow the news, and every 20th tick (five
+        // minutes) fetches them in case some was missed; run reminders are checked every tick.
+        // Without it, open, they refresh every 15 seconds (showing the window refreshes at once)
+        // and in the tray the rooms every minute, for the run reminders.
         partyTimer.Tick += async (_, _) =>
         {
-            if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
+            if (realtime?.IsConnected == true)
+            {
+                if (++partyTicks % 20 == 0) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
+                else CheckReminders();
+            }
+            else if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
             else if (preferences.RemindRuns && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         };
         heartbeat.Tick += async (_, _) => await PulseAsync();
@@ -462,7 +476,7 @@ public partial class MainWindow : Window
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
-    private void DropApi() { heartbeat.Stop(); partyTimer.Stop(); api?.Dispose(); api = null; }
+    private void DropApi() { heartbeat.Stop(); partyTimer.Stop(); realtime?.Dispose(); realtime = null; api?.Dispose(); api = null; }
     private void ShowAccount(string displayName)
     {
         accountName = displayName;
@@ -490,7 +504,57 @@ public partial class MainWindow : Window
         await ReloadAsync();
         Status(T("Connected to your account."));
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
-        await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start();
+        await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start(); StartRealtime();
+    }
+    // Listens to the account's topic and its rooms'; rooms joined or left later change the
+    // topics (RefreshPartyAsync).
+    private void StartRealtime()
+    {
+        realtime?.Dispose(); realtime = null;
+        if (api is not { } current || accountId.Length == 0) return;
+        var next = new RealtimeClient(current); realtime = next;
+        next.Connected += again => Dispatcher.BeginInvoke(async () =>
+        {
+            if (realtime != next) return;
+            if (!again) Log.Info("Realtime connected; the party follows changes as they happen.");
+            else await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
+        });
+        next.Message += (topic, data) => Dispatcher.BeginInvoke(async () => { if (realtime == next) await OnNewsAsync(topic, RealtimeNews.Parse(data)); });
+        next.Start(RealtimeTopics.For(accountId, rooms));
+    }
+    // A room's changed characters and heartbeats are applied to the party in place, anything
+    // else fetches the party again; the account's own news fetches its characters, rooms and
+    // checklist again, or applies its changed characters.
+    private async Task OnNewsAsync(string topic, RealtimeNews news)
+    {
+        if (topic.StartsWith(RealtimeTopics.Presence, StringComparison.Ordinal))
+        {
+            snapshots = PartyNews.WithSeen(snapshots, topic[RealtimeTopics.Presence.Length..], news.Seen); RenderParty();
+            return;
+        }
+        if (topic.StartsWith(RealtimeTopics.Room, StringComparison.Ordinal))
+        {
+            if (!news.Removed && news.Characters.Length > 0)
+            {
+                var applied = PartyNews.WithCharacters(snapshots, topic[RealtimeTopics.Room.Length..], news.Characters, out var complete);
+                if (complete) { snapshots = applied; RenderParty(); return; }
+            }
+            await RefreshPartyAsync();
+            return;
+        }
+        if (!news.Refresh && news.Characters.Length > 0)
+        {
+            var mine = PartyNews.WithCharacters(characters, news.Characters, out var complete);
+            if (complete) { characters = mine; RenderRooms(); RenderHero(); return; }
+        }
+        if (news.Refresh || news.Characters.Length > 0) await ReloadOwnAsync();
+    }
+    private async Task ReloadOwnAsync()
+    {
+        if (api is not { } current) return;
+        try { var mine = await current.GetCharactersAsync(); if (api != current) return; characters = mine; }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { return; }
+        await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync()); RenderHero();
     }
     private async Task ReloadAsync()
     {
@@ -540,22 +604,32 @@ public partial class MainWindow : Window
     // ----- Rooms -----
     // Read-only, so it runs beside reader operations without their lock. Rooms are
     // reloaded too: sharing changed on the dashboard shows up here.
+    // A refresh asked for while one runs makes it run once more (partyAgain); the caller
+    // waits for that, so it always sees the party as the server has it now.
     private async Task RefreshPartyAsync()
     {
-        if (api is not { } current || refreshingParty) return;
-        refreshingParty = true;
+        if (partyRefresh is { IsCompleted: false } running) { partyAgain = true; await running; return; }
+        await (partyRefresh = RefreshPartyNowAsync());
+    }
+    private async Task RefreshPartyNowAsync()
+    {
+        if (api is not { } current) return;
         try
         {
-            var listed = await current.GetRoomsAsync();
-            var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
-            if (api != current) return;
-            rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); ShowAnnouncement(listed.Announcement);
-            if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
-            RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
+            do
+            {
+                partyAgain = false;
+                var listed = await current.GetRoomsAsync();
+                var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
+                if (api != current) return;
+                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); ShowAnnouncement(listed.Announcement);
+                if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
+                RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
+                if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
+            } while (partyAgain);
         }
         // Connection problems are reported by the heartbeat; keep the last list.
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
-        finally { refreshingParty = false; }
     }
     // The server's announcement above the reading card, as plain text. Hiding it lasts
     // until the text changes; a new message also shows up when the window is hidden.
@@ -1131,7 +1205,7 @@ public partial class MainWindow : Window
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }
-        try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); api?.Dispose(); }
+        try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); realtime?.Dispose(); api?.Dispose(); }
         finally
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();

@@ -6,6 +6,7 @@ ChecklistChecks.Run();
 LocalizationChecks.Run();
 await ConnectionChecks.Run();
 DesktopChecks.Run();
+RealtimeChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;
 if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player" || auth.DeviceKey is not null) throw new Exception("Account pairing contract failed.");
@@ -84,6 +85,7 @@ if (args.Length is 1 or 2)
     await api.HeartbeatAsync(session.SessionId, character.Id); await api.InvalidateAsync(character.Id, session.SessionId);
     if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
     await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");
+    await RealtimeChecks.RunLive(api, paired.Record.Id, session.SessionId, character.Id);
     if (paired.DeviceKey is { } key)
     {
         // The pairing outlives its token: a request with an expired token signs in with the key and is repeated.
