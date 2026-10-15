@@ -1,6 +1,6 @@
 # Packet reader
 
-The Windows companion reads Odyle from the game's own network traffic and publishes it to the paired account. It never accepts typed values. Readings carry the adapter name `global-reference-v1`; the backend stores a reading only when its registry (`backend/pb_hooks/lib/protocols.cjs` in the dashboard repository) lists that name, so an outdated or unknown client cannot write totals.
+The Windows companion reads Odyle from the game's own network traffic and publishes it to the paired account. It never accepts typed values. Readings carry the adapter name `global-reference-v1`; the backend stores a reading only when its registry (`backend/odyle/protocols.go` in the dashboard repository) lists that name, so an outdated or unknown client cannot write totals.
 
 ## Local operation
 
