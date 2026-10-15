@@ -42,7 +42,7 @@ public partial class App : System.Windows.Application
         Log.Info($"Odyle {Updater.Current} starts{(tray ? " in the tray" : "")}: {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")} package, {Environment.OSVersion}, language {Localizer.Language} ({Localizer.Culture.Name}).");
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
-        if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged)) return;
+        if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
         Updater.CleanUp(); Autostart.Repair();
         var window = new MainWindow(); MainWindow = window;
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
@@ -74,19 +74,20 @@ public partial class App : System.Windows.Application
         lastNotice = now;
         MessageBox.Show(Localizer.T("Something went wrong, but Odyle keeps running. The details are in the log:\n{0}", Log.FilePath), "Odyle", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
-    private bool TryInstall(StagedUpdate staged)
+    private bool TryInstall(StagedUpdate staged, bool tray)
     {
         Log.Info($"Installing the downloaded Odyle {staged.Version}.");
         try { Updater.Apply(staged); }
         catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException or InvalidOperationException) { Updater.LastFailure = error.Message; Log.Error($"Odyle {staged.Version} could not be installed", error); return false; }
-        Restart(); return true;
+        Restart(tray); return true;
     }
     // Starts the executable in the application folder and ends this process. The
     // single-instance guard is released first so the new instance is not turned away.
-    public void Restart()
+    // A start in the tray (with Windows) restarts in the tray.
+    public void Restart(bool tray)
     {
         Release();
-        try { Updater.Relaunch(); } catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { Updater.LastFailure = error.Message; Log.Error("Odyle could not start again", error); }
+        try { Updater.Relaunch(tray); } catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { Updater.LastFailure = error.Message; Log.Error("Odyle could not start again", error); }
         Shutdown();
     }
     private void Release() { showWait?.Unregister(null); showWait = null; showSignal?.Dispose(); showSignal = null; instance?.Dispose(); instance = null; }

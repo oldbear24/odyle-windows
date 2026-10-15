@@ -59,6 +59,18 @@ string[] published = ["odyle-0.6.0.3-win-x64-setup.exe", "odyle-0.6.0.3-win-x64-
 var full = ReleaseFeed.Parse($$"""{"tag_name":"v0.6.0.3","html_url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.6.0.3","assets":[{{string.Join(",", published.Select(Asset))}}]}""") ?? throw new Exception("Release with ARM64 packages not parsed.");
 if (full.Package("win-arm64", false)?.Name != "odyle-0.6.0.3-win-arm64.zip" || full.Package("win-arm64", true)?.Name != "odyle-0.6.0.3-win-arm64-self-contained.zip" || full.Checksum(full.Package("win-arm64", true)!)?.Name != "odyle-0.6.0.3-win-arm64-self-contained.zip.sha256") throw new Exception("ARM64 package selection failed.");
 if (full.Package("win-x64", true)?.Name != "odyle-0.6.0.3-win-x64-self-contained.zip" || full.Package("win-x64", false)?.Name != "odyle-0.6.0.3-win-x64.zip" || ReleaseFeed.Describe("odyle-0.6.0.3-win-x64-setup.exe") is not null || full.Assets.Any(a => ReleaseFeed.Describe(a.Name) is not null && !a.Name.EndsWith(".zip"))) throw new Exception("The installer must never be picked as an update package.");
+// The check at start is tried again soon until it reaches GitHub, and what it finds installs at once;
+// afterwards the timer looks hourly and checks once a day after GitHub last said this build is current.
+var schedule = new UpdateSchedule(); var started = DateTimeOffset.Parse("2026-10-15T08:00:00Z");
+if (!schedule.AtStart || !schedule.Due(started) || UpdateSchedule.First != TimeSpan.FromSeconds(5)) throw new Exception("The first update check must run soon after start.");
+var retries = new List<TimeSpan>(); for (var i = 0; i < 6; i++) { schedule.Failed(); retries.Add(schedule.Next); }
+if (!schedule.AtStart || !retries.Select(r => r.TotalSeconds).SequenceEqual([15, 30, 60, 120, 300, 300])) throw new Exception("A start check without network must be retried soon.");
+schedule.Reached(started.AddMinutes(9), upToDate: true);
+if (schedule.AtStart || schedule.Next != TimeSpan.FromHours(1) || schedule.Due(started.AddHours(20)) || !schedule.Due(started.AddMinutes(9).AddDays(1))) throw new Exception("After the start check, updates are checked once a day.");
+schedule.Failed();
+if (schedule.AtStart || schedule.Next != TimeSpan.FromHours(1)) throw new Exception("A later failed check must wait for the hourly tick.");
+var found = new UpdateSchedule(); found.Reached(started, upToDate: false);
+if (found.AtStart || !found.Due(started.AddHours(1))) throw new Exception("A release found but not installed must be looked for again.");
 if (args.Length is 1 or 2)
 {
     var pairing = ConnectionDetails.Parse(args[^1], args.Length == 2 ? args[0] : "http://127.0.0.1:8090");
@@ -86,4 +98,4 @@ if (args.Length is 1 or 2)
         Console.WriteLine("Windows lasting pairing check passed.");
     }
 }
-Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract, release feed and URL/value protection passed.");
+Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract, release feed, update schedule and URL/value protection passed.");

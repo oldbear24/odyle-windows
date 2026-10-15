@@ -76,3 +76,21 @@ public static class ReleaseFeed
     private static string Text(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
     private static bool Flag(JsonElement element, string name) => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
 }
+// When a released build looks for a newer release. The first check runs a few seconds after
+// start; while it cannot reach GitHub (no network yet when Windows starts) it is tried again
+// after 15 s, 30 s, 1 min, 2 min and then every 5 minutes (Retry.Backoff). What the start
+// check finds is installed right away. Afterwards the timer looks every hour and checks once
+// a day, and a release found then waits for a restart or the next start.
+public sealed class UpdateSchedule
+{
+    public static readonly TimeSpan First = TimeSpan.FromSeconds(5), Tick = TimeSpan.FromHours(1), Daily = TimeSpan.FromDays(1);
+    private DateTimeOffset upToDateAt = DateTimeOffset.MinValue;
+    private int failures;
+    // True until a check of this start reaches GitHub.
+    public bool AtStart { get; private set; } = true;
+    public bool Due(DateTimeOffset now) => now - upToDateAt >= Daily;
+    // GitHub answered: nothing newer for this PC, or a release to download.
+    public void Reached(DateTimeOffset now, bool upToDate) { AtStart = false; if (upToDate) upToDateAt = now; }
+    public void Failed() => failures++;
+    public TimeSpan Next => AtStart ? Retry.Backoff(failures - 1) : Tick;
+}

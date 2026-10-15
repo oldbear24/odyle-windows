@@ -94,7 +94,7 @@ public partial class MainWindow : Window
     private int publishedTotal = -1;
     private string? publishFailure;
     private ReaderState readerState = ReaderState.Stopped;
-    private bool exit, busy, needsReconnect, busyShown;
+    private bool exit, quitting, busy, needsReconnect, busyShown;
     // A saved pairing the server could not confirm at start (offline, 403, 5xx, 429) is
     // tried again by itself: 15 s, 30 s, 1 min, 2 min, then every 5 minutes (Retry.Backoff).
     private readonly DispatcherTimer restoreTimer = new();
@@ -109,11 +109,11 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
-    // An update check a few seconds after every start, then once a day while the app runs.
-    // The timer looks every hour, so a check that failed (no network yet when Windows
-    // starts) or a day spent asleep catches up within the hour.
-    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromSeconds(5) };
-    private DateTimeOffset updatesCheckedAt = DateTimeOffset.MinValue;
+    // An update check a few seconds after every start that installs what it finds, then once a
+    // day while the app runs (UpdateSchedule). The timer looks every hour, so a day spent asleep
+    // catches up within the hour.
+    private readonly DispatcherTimer updateTimer = new() { Interval = UpdateSchedule.First };
+    private readonly UpdateSchedule updateSchedule = new();
     // The window's position is remembered a second after it last moved.
     private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private StagedUpdate? staged;
@@ -154,9 +154,10 @@ public partial class MainWindow : Window
         };
         updateTimer.Tick += async (_, _) =>
         {
-            updateTimer.Interval = TimeSpan.FromHours(1);
-            if (staged is not null || DateTimeOffset.UtcNow - updatesCheckedAt < TimeSpan.FromDays(1)) return;
-            Updater.CleanUp(); await CheckForUpdatesAsync(manual: false);
+            updateTimer.Stop();
+            if (staged is null && updateSchedule.Due(DateTimeOffset.UtcNow)) { Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); }
+            if (quitting) return;
+            updateTimer.Interval = updateSchedule.Next; updateTimer.Start();
         };
         // Open, the party and the checklist refresh every 15 seconds (showing the window refreshes
         // at once); in the tray the rooms refresh every minute, for the run reminders.
@@ -978,9 +979,9 @@ public partial class MainWindow : Window
     }
 
     // ----- Updates -----
-    // A released build looks for a newer GitHub release at every start and once a day,
-    // downloads and verifies it in the background and offers a restart. A package left
-    // waiting installs by itself the next time the app starts.
+    // A released build looks for a newer GitHub release at every start and once a day and
+    // downloads and verifies it in the background. The check at start installs it right away
+    // and restarts; one found later offers a restart and otherwise installs at the next start.
     private void RenderUpdate()
     {
         var build = Updater.SelfContained ? T("Odyle {0} · self-contained", Updater.Current) : T("Odyle {0}", Updater.Current);
@@ -988,7 +989,7 @@ public partial class MainWindow : Window
             : staged is not null ? T("{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start.", build, staged.Version)
             : updateNote.Length > 0 ? $"{build} · {updateNote}"
             : Updater.LastFailure is { } failure ? T("{0} · the downloaded update could not be installed: {1}", build, T(failure))
-            : T("{0} · looks for new releases at every start and once a day and installs them on restart.", build);
+            : T("{0} · installs new releases at every start and looks for them once a day.", build);
         settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = staged is not null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.Visibility = Updater.IsReleaseBuild && staged is null ? Visibility.Visible : Visibility.Collapsed;
         settings.CheckUpdateButton.IsEnabled = !updating;
@@ -998,15 +999,24 @@ public partial class MainWindow : Window
     {
         if (updating || staged is not null || !Updater.IsReleaseBuild) return;
         updating = true; updateNote = T("checking GitHub for a newer release…"); RenderUpdate();
+        var install = false;
         try
         {
             var release = await Updater.CheckAsync(CancellationToken.None);
-            if (release is null) { updatesCheckedAt = DateTimeOffset.UtcNow; updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
-            Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");
-            updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
-            var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
-            staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
+            // What the first automatic check of this start to reach GitHub finds is installed right away.
+            install = updateSchedule.AtStart && !manual; updateSchedule.Reached(DateTimeOffset.UtcNow, upToDate: release is null);
+            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
+            // A package an earlier start downloaded but could not install is not fetched again.
+            if (Updater.Staged() is { } ready && ready.Version >= release.Version) staged = ready;
+            else
+            {
+                Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");
+                updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
+                var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
+                staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
+            }
             updateNote = ""; Log.Info($"Odyle {staged.Version} is downloaded, verified and waiting in {staged.Directory}.");
+            if (install) return;
             // Once per version, also from the tray.
             if (preferences.NotifiedUpdate != staged.Version.ToString())
             {
@@ -1017,24 +1027,27 @@ public partial class MainWindow : Window
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
         {
-            Log.Warn($"Update check failed: {error.Message}");
+            updateSchedule.Failed(); Log.Warn($"Update check failed: {error.Message}");
             updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
         }
         finally { updating = false; RenderUpdate(); }
+        if (install && staged is not null) await InstallUpdateAsync(automatic: true);
     }
-    private async void Install_Click(object sender, RoutedEventArgs e) => await InstallUpdateAsync();
+    private async void Install_Click(object sender, RoutedEventArgs e) => await InstallUpdateAsync(automatic: false);
     // The files are swapped while this build still runs; only then does it stop and
-    // start the new one. A swap that fails leaves everything as it was.
-    private async Task InstallUpdateAsync()
+    // start the new one. A swap that fails leaves everything as it was. An installation
+    // at start does not wait for a running operation to finish: quitting waits for it.
+    private async Task InstallUpdateAsync(bool automatic)
     {
-        if (staged is not { } update || busy) return;
-        Log.Info($"Installing Odyle {update.Version} and restarting.");
+        if (staged is not { } update || quitting || (busy && !automatic)) return;
+        Log.Info($"Installing Odyle {update.Version}{(automatic ? " found at start" : "")} and restarting.");
         try { Updater.Apply(update); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Log.Error($"Odyle {update.Version} could not be installed", error);
             Status(T("Could not install the update: {0} Download it from the release page instead.", T(error.Message))); return;
         }
+        Status(T("Installing Odyle {0} · restarting…", update.Version));
         await QuitAsync(restart: true);
     }
 
@@ -1109,6 +1122,11 @@ public partial class MainWindow : Window
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     private async Task QuitAsync(bool restart = false)
     {
+        // Quitting already (an update found at start while the user quits) is not repeated.
+        if (quitting) return;
+        quitting = true;
+        // A restart from the tray (an update at start with Windows) stays in the tray.
+        var hidden = !IsVisible;
         SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
@@ -1117,7 +1135,7 @@ public partial class MainWindow : Window
         finally
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();
-            if (restart && System.Windows.Application.Current is App app) app.Restart(); else System.Windows.Application.Current.Shutdown();
+            if (restart && System.Windows.Application.Current is App app) app.Restart(tray: hidden); else System.Windows.Application.Current.Shutdown();
         }
     }
 }
