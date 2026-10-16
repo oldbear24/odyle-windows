@@ -4,14 +4,41 @@
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
  <!-- The compact 280 px card; the checklist opens beside it and the window grows to the right -->
  <Grid>
-  <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+  <Grid.ColumnDefinitions><ColumnDefinition x:Name="CardColumn" Width="280"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+  <!-- Compact mode: in place of the card, in the same window and place, your Odyle and your party's, one tight row each.
+       The header's compact button, the tray or the shortcut switch it; a double-click or ⤢ brings the card back. -->
+  <Border x:Name="CompactPanel" Visibility="Collapsed" Padding="10,6,6,7" Background="Transparent" MouseLeftButtonDown="CompactPanel_MouseLeftButtonDown" ToolTip="Double-click for the full card">
+   <StackPanel Grid.IsSharedSizeScope="True">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
+     <Ellipse x:Name="CompactDot" Width="6" Height="6" Fill="{StaticResource Faint}" VerticalAlignment="Center" Margin="0,1,6,0"/>
+     <TextBlock x:Name="CompactName" Grid.Column="1" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+     <TextBlock x:Name="CompactValue" Grid.Column="2" Text="—" FontSize="16" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
+     <TextBlock x:Name="CompactCubes" Grid.Column="3" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
+     <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE740;" FontSize="10" Padding="5,2" Margin="3,0,0,0" Click="Expand_Click" ToolTip="Full card"/>
+    </Grid>
+    <Border x:Name="CompactDivider" Height="1" Background="{StaticResource Line}" Margin="0,4,0,2"/>
+    <ItemsControl x:Name="CompactMates" Focusable="False">
+     <ItemsControl.ItemTemplate><DataTemplate>
+      <Grid Margin="0,1,0,0" Background="Transparent" ToolTip="{Binding Hint}">
+       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
+       <Ellipse Width="5" Height="5" Fill="{Binding Dot}" VerticalAlignment="Center" Margin="0,1,7,0"/>
+       <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="#D5E7DB" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+       <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
+       <TextBlock Grid.Column="3" Text="{Binding Cubes}" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
+      </Grid>
+     </DataTemplate></ItemsControl.ItemTemplate>
+    </ItemsControl>
+    <TextBlock x:Name="CompactNote" FontSize="10.5" Foreground="{StaticResource Faint}" TextWrapping="Wrap" Margin="13,2,0,0"/>
+   </StackPanel>
+  </Border>
   <Grid x:Name="Card">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
    <!-- Header: pin above other windows, open the checklist, settings -->
    <DockPanel Margin="12,7,6,2">
     <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="⚙" FontSize="14" Padding="7,1" Click="Settings_Click" VerticalAlignment="Center" ToolTip="Settings · account, rooms and reader setup"/>
-    <Button x:Name="CompactButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73F;" Click="Compact_Click" ToolTip="Super compact · a small strip above the game"/>
+    <Button x:Name="CompactButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73F;" Click="Compact_Click" ToolTip="Compact mode · your Odyle and your party's, nothing else"/>
     <Button x:Name="TasksButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73A;" Click="Tasks_Click" ToolTip="Show your daily &amp; weekly tasks beside the card"/>
     <Button x:Name="PinButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE718;" Click="Pin_Click" ToolTip="Stay on top of other windows"/>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

@@ -34,7 +34,7 @@ static class ReaderChecks
             {
                 if (args.Length == 2 && args[0] == "--screenshots") { Screenshots(window, args[1]); return; }
                 if (args is ["--update-probe"]) { await UpdateProbe(); return; }
-                if (args is ["--strip-probe"]) { StripProbe(window); return; }
+                if (args is ["--compact-probe"]) { CompactProbe(window); return; }
                 var settings = Settings(window);
                 Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
                 Check(settings.FindName("CodeInput") is PasswordBox && window.FindName("CodeInput") is null, "pairing lives in the settings window");
@@ -257,25 +257,31 @@ static class ReaderChecks
                 shell.Width = double.NaN;
                 Call(window, "SetTasksShown", false, true); Call(window, "SetStayOnTop", false, true);
                 Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "unpinning and hiding the checklist are remembered too");
-                // The super compact strip replaces the card, shows its value, cubes and next step, and is remembered.
-                Check(!PreferencesStore.Load().CompactMode && Field("compact").GetValue(window) is null && (string)Control<Button>(window, "CompactButton").ToolTip == "Super compact · a small strip above the game (Ctrl+Alt+O)", "the card starts without the strip, which names its shortcut");
-                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 130, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5))) }); Field("currentCharacterId").SetValue(window, "c1");
+                // Compact mode cuts the window down to your Odyle and your party's, in the same window and place, and is remembered.
+                Check(!PreferencesStore.Load().CompactMode && Control<Border>(window, "CompactPanel").Visibility == Visibility.Collapsed && (string)Control<Button>(window, "CompactButton").ToolTip == "Compact mode · your Odyle and your party's, nothing else (Ctrl+Alt+O)", "the window starts with the full card, and the compact button names its shortcut");
+                var mateSeen = Stamp(DateTimeOffset.UtcNow);
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 130, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5))) }); Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u");
+                Field("snapshots").SetValue(window, new[] { new RoomSnapshot(new Room("r1", "Evening", 40, "reporter", true), [new RoomMember("m1", "l", "reporter", "Lumina", [new Character("l1", "l", "Lumina", "Lumiel", "GLOBAL_EU", 180, true, true, mateSeen, mateSeen, "packet")])], mateSeen) });
+                window.Left = 300; window.Top = 200; Call(window, "SetTasksShown", true, false);
                 Call(window, "SetCompact", true, true); Call(window, "RenderHero");
-                var strip = (CompactWindow)Field("compact").GetValue(window)!;
-                Check(PreferencesStore.Load().CompactMode && (bool)Field("compactMode").GetValue(window)! && !window.IsVisible, "the strip replaces the card and is remembered");
-                Check(((System.Windows.Documents.Run)strip.FindName("ValueText")).Text == "130" && ((TextBlock)strip.FindName("CubesText")).Text == "3 cubes" && ((TextBlock)strip.FindName("LineText")).Text == "Last saved value · start the reader for live values."
-                    && (string)((Border)strip.FindName("Strip")).ToolTip == "TestHero · Lumiel · Saved · double-click for the full card", "the strip shows the card's value, cubes and next step");
+                Check(PreferencesStore.Load().CompactMode && Control<Border>(window, "CompactPanel").Visibility == Visibility.Visible && Control<Grid>(window, "Card").Visibility == Visibility.Collapsed && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && window.Left == 300 && window.Top == 200,
+                    "compact mode replaces the card and the checklist in the same window and place, and is remembered");
+                Check(Control<TextBlock>(window, "CompactName").Text == "TestHero" && Control<TextBlock>(window, "CompactValue").Text == "130" && Control<TextBlock>(window, "CompactCubes").Text == "3 cubes", "your row shows your character, its Odyle and cubes");
+                Check(Control<ItemsControl>(window, "CompactMates").ItemsSource is CompactMate[] and [{ Name: "Lumina", Value: "180", Cubes: "4 cubes", Hint: "Lumina · live from the game" }] && Control<TextBlock>(window, "CompactNote").Visibility == Visibility.Collapsed, "your party's rows follow, with their Odyle and cubes");
+                var compactShell = (FrameworkElement)window.Content; compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
+                Check(Math.Abs(compactShell.ActualWidth - CompactStrip.Width) < 1 && compactShell.ActualHeight < 90, "compact mode is 220 px wide and only as tall as its rows");
                 Field("readerPaused").SetValue(window, true); Call(window, "RenderHero");
-                Check(((TextBlock)strip.FindName("LineText")).Text == "Paused by the server", "a server pause comes first on the strip");
+                Check(Control<TextBlock>(window, "CompactNote").Text == "Paused by the server", "a server pause shows under the rows");
                 Field("readerPaused").SetValue(window, false);
-                Call(window, "SetClickThrough", true);
-                Check(strip.ClickThrough && ((CheckBox)settings.FindName("ClickThroughToggle")).IsChecked == true && PreferencesStore.Load().CompactClickThrough, "click-through is switched for the strip and remembered");
                 var hotkey = (ComboBox)settings.FindName("CompactHotkeyInput");
-                Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the strip's shortcuts, Ctrl+Alt+O first");
+                Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the compact mode shortcuts, Ctrl+Alt+O first");
                 hotkey.SelectedValue = "";
-                Check(PreferencesStore.Load().CompactHotkey == "" && (string)Control<Button>(window, "CompactButton").ToolTip == "Super compact · a small strip above the game", "the shortcut can be turned off, and that is remembered");
-                hotkey.SelectedValue = CompactStrip.DefaultHotkey; Call(window, "SetClickThrough", false); Call(window, "SetCompact", false, true);
-                Check(!PreferencesStore.Load().CompactMode && !(bool)Field("compactMode").GetValue(window)! && PreferencesStore.Load() is { CompactClickThrough: false, CompactHotkey: "Ctrl+Alt+O" }, "the card comes back and that is remembered");
+                Check(PreferencesStore.Load().CompactHotkey == "" && (string)Control<Button>(window, "CompactButton").ToolTip == "Compact mode · your Odyle and your party's, nothing else", "the shortcut can be turned off, and that is remembered");
+                hotkey.SelectedValue = CompactStrip.DefaultHotkey; Call(window, "SetCompact", false, true);
+                Check(!PreferencesStore.Load().CompactMode && Control<Grid>(window, "Card").Visibility == Visibility.Visible && Control<Border>(window, "TasksPanel").Visibility == Visibility.Visible && window.Left == 300 && window.Top == 200 && PreferencesStore.Load().CompactHotkey == "Ctrl+Alt+O",
+                    "the full card and the checklist come back in the same place, and that is remembered");
+                compactShell.Width = double.NaN; Call(window, "SetTasksShown", false, false);
+                Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("accountId").SetValue(window, "");
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Call(window, "RenderHero");
                 // Language: automatic by default; a choice is remembered and applies after a restart.
                 var language = (ComboBox)settings.FindName("LanguageInput");
@@ -526,7 +532,7 @@ static class ReaderChecks
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
-                Console.WriteLine("Windows UI compact window, super compact strip, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
+                Console.WriteLine("Windows UI compact window, compact mode, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -574,25 +580,22 @@ static class ReaderChecks
     }
     // Opt-in and online: fetches the newest GitHub release and stages this machine's package
     // in a temporary folder, exercising download, checksum verification and extraction.
-    // On a desktop (not in CI): the strip shown for real, on top, out of Alt+Tab, never taking
-    // the focus and passing clicks through when asked, and a shortcut registered and released.
-    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
-    static void StripProbe(MainWindow window)
+    // On a desktop (not in CI): the real window switched to compact mode and back stays where it
+    // is and only changes size, and a shortcut is registered and released.
+    static void CompactProbe(MainWindow window)
     {
         App.Headless = false;
         Call(window, "UseHotkey", "Ctrl+Alt+F12");
         var taken = (string)Field("hotkeyProblem").GetValue(window)!;
-        Call(window, "SetCompact", true, false);
-        var strip = (CompactWindow)Field("compact").GetValue(window)!;
-        long Style() => GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(strip).Handle, -20).ToInt64();
-        Check(strip.IsVisible && strip.Topmost && !strip.IsActive && (Style() & 0x80) != 0 && (Style() & 0x08000000) != 0 && (Style() & 0x20) == 0, "the strip shows on top, out of Alt+Tab and without the focus");
-        Check(Math.Abs(strip.ActualWidth - CompactStrip.Width) < 1 && Math.Abs(strip.ActualHeight - CompactStrip.Height) < 1, "the strip has its size");
-        strip.ClickThrough = true; Check((Style() & 0x20) != 0, "click-through passes the mouse through");
-        strip.ClickThrough = false; Check((Style() & 0x20) == 0, "and stops again");
-        Call(window, "SetCompact", false, false);
-        Check(!strip.IsVisible, "the strip hides when the card comes back");
-        Call(window, "UseHotkey", "");
-        Console.WriteLine("Strip probe passed; the shortcut Ctrl+Alt+F12 " + (taken.Length == 0 ? "was registered and released." : "is taken here: " + taken));
+        static void Settle() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+        window.Show(); window.Left = 300; window.Top = 200; Settle();
+        var width = window.ActualWidth; var height = window.ActualHeight;
+        Call(window, "SetCompact", true, false); Settle();
+        Check(window.IsVisible && window.Left == 300 && window.Top == 200 && window.ActualWidth < width && window.ActualHeight < height, "compact mode keeps the window where it is and only makes it smaller");
+        Call(window, "SetCompact", false, false); Settle();
+        Check(window.Left == 300 && window.Top == 200 && Math.Abs(window.ActualWidth - width) < 1, "the full card comes back in the same place");
+        window.Hide(); Call(window, "UseHotkey", "");
+        Console.WriteLine("Compact probe passed; the shortcut Ctrl+Alt+F12 " + (taken.Length == 0 ? "was registered and released." : "is taken here: " + taken));
     }
     static async Task UpdateProbe()
     {
@@ -637,9 +640,9 @@ static class ReaderChecks
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
-        // The same moment as the super compact strip.
+        // The same moment in compact mode.
         Call(window, "SetCompact", true, false);
-        Snapshot((Window)Field("compact").GetValue(window)!, Path.Combine(directory, "strip-preview.png"), (int)CompactStrip.Width);
+        Snapshot(window, Path.Combine(directory, "compact-mode-preview.png"), (int)CompactStrip.Width);
         Call(window, "SetCompact", false, false);
         // Pinned, with the checklist beside the card; ticks are dated within the current periods.
         Call(window, "SetStayOnTop", true, false); Call(window, "SetTasksShown", true, false);
