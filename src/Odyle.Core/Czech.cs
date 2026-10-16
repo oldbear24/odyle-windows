@@ -121,6 +121,7 @@ public static class Czech
         ["Started after login · the value appears at the next Odyle change; the game names your character within a few minutes, or at once after a relog or channel change."] = "Spuštěno po přihlášení · hodnota se objeví při další změně Odyle; hra tvou postavu pojmenuje během několika minut, nebo hned po novém přihlášení či změně kanálu.",
         ["Listening to AION2 · {0} has no Odyle yet."] = "Poslouchám AION2 · {0} zatím nemá Odyle.",
         ["Unsupported or incomplete packets · reconnect the game before retrying."] = "Nepodporované nebo neúplné pakety · před dalším pokusem připoj hru znovu.",
+        ["Two game clients are running · Odyle reads one at a time. Close one to read again."] = "Běží dva herní klienti · Odyle čte jen jeden. Jeden zavři a čtení pokračuje.",
         ["Install Npcap from npcap.com before starting the packet reader."] = "Před spuštěním čtečky paketů nainstaluj Npcap z npcap.com.",
         ["Npcap could not load. Check its installation and CPU architecture."] = "Npcap se nepodařilo načíst. Zkontroluj jeho instalaci a architekturu procesoru.",
         ["Npcap device discovery failed. Check capture permissions."] = "Npcap nenašel síťová rozhraní. Zkontroluj oprávnění k zachytávání.",

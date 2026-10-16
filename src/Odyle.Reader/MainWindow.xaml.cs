@@ -1001,6 +1001,9 @@ public partial class MainWindow : Window
         next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
         {
             if (capture != next) return;
+            if (kind == CaptureStatus.TwoClients) OnTwoClients();
+            // One of two game clients closed: start over like a new connection, the next identity names the character.
+            else if (twoClients) { twoClients = false; latest = null; publishDelay.Stop(); ResetAttribution(); Log.Info("One game client is left; reading again."); }
             // A reading the game never attributed belongs to its connection; a new connection starts over.
             if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
             if (kind == CaptureStatus.Resyncing) OnResync();
@@ -1008,7 +1011,7 @@ public partial class MainWindow : Window
             // A new game connection while a reading is live keeps the live line, and so do joining
             // one midstream while the character is known (taken over after a restart) and a resync.
             if (kind is CaptureStatus.Listening or CaptureStatus.Midstream or CaptureStatus.Resyncing or CaptureStatus.Resumed && readerState == ReaderState.Live) { Log.Info("Reader stays live: " + message); return; }
-            SetReaderState(kind switch { CaptureStatus.Listening or CaptureStatus.Resumed => ReaderState.Listening, CaptureStatus.Midstream or CaptureStatus.Resyncing => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
+            SetReaderState(kind switch { CaptureStatus.Listening or CaptureStatus.Resumed => ReaderState.Listening, CaptureStatus.Midstream or CaptureStatus.Resyncing => ReaderState.Midstream, CaptureStatus.Problem or CaptureStatus.TwoClients => ReaderState.Problem, _ => ReaderState.Waiting }, message);
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
         next.SnapshotWithoutOdyle += () => Dispatcher.BeginInvoke(() => OnSnapshotWithoutOdyle(next));
@@ -1045,7 +1048,7 @@ public partial class MainWindow : Window
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
-        if (capture != source) return;
+        if (capture != source || twoClients) return;
         // The same frame can arrive on two capture interfaces within milliseconds.
         var duplicate = latest is not null && latest.Total == observation.Total && DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(2);
         if (duplicate && readingOwnerKey.Length > 0) { latestAt = DateTimeOffset.UtcNow; return; }
@@ -1067,7 +1070,7 @@ public partial class MainWindow : Window
     // a name belonged to the character the game left.
     private void OnSnapshotWithoutOdyle(PacketCapture source)
     {
-        if (capture != source) return;
+        if (capture != source || twoClients) return;
         odyleMissingDue = true;
         if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
         RenderHero();
@@ -1077,6 +1080,16 @@ public partial class MainWindow : Window
     // and an unnamed snapshot no longer goes to the named one after 30 seconds. The reading on the
     // card stays where it is.
     private void OnResync() { identityDue = true; namedHasReading = false; }
+    // Two game clients run on this PC: their characters' messages would mix, so one character's
+    // Odyle could be saved under the other. Nothing is read or published until one closes, and
+    // the live reading turns stale meanwhile.
+    private bool twoClients;
+    private void OnTwoClients()
+    {
+        if (twoClients) return;
+        twoClients = true; latest = null; publishDelay.Stop(); ResetAttribution();
+        _ = InvalidateActiveAsync(); RenderHero();
+    }
     // Runs when a reading has had no owner for the publish delay. Without any named character
     // the reading keeps waiting for the identity message.
     private void AttributePending()
@@ -1176,7 +1189,7 @@ public partial class MainWindow : Window
     }
     private async Task CharacterChangedAsync(PacketCapture source, ulong character)
     {
-        if (capture != source) return;
+        if (capture != source || twoClients) return;
         await operations.WaitAsync();
         try
         {
@@ -1196,7 +1209,7 @@ public partial class MainWindow : Window
         await operations.WaitAsync();
         try
         {
-            if (capture != next || api is null) return;
+            if (capture != next || api is null || twoClients) return;
             var key = identity.CharacterName + "|" + identity.ServerId;
             if (key != gameCharacterKey)
             {

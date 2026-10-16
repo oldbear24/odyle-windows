@@ -144,7 +144,7 @@ public sealed class PacketCapture : IAsyncDisposable
         foreach (var worker in workers.Values) worker.Stop?.Cancel();
         await Task.WhenAll(workers.Values.Select(w => w.Task));
         foreach (var worker in workers.Values) worker.Stop?.Dispose();
-        workers.Clear(); reportedCapturing = -1; reportedConnected = null;
+        workers.Clear(); reportedCapturing = -1; reportedConnected = null; reportedTwoClients = false;
     }
     // A VPN or Bluetooth adapter that cannot be opened is normal: Problem only while no
     // interface captures at all once every one has tried. Otherwise one line says whether
@@ -164,6 +164,20 @@ public sealed class PacketCapture : IAsyncDisposable
         if (reportedCapturing == 0) Log.Info($"Capturing again on {capturing} interface(s).");
         reportedCapturing = capturing;
         var connected = CurrentFlows(immediate: false).Length > 0; var now = DateTimeOffset.UtcNow;
+        // Two game clients on this PC: their characters' messages would mix, so nothing is read
+        // until one of them closes; the next report then starts over like a new connection.
+        int clients; lock (flowsLock) clients = knownClients;
+        if (clients > 1 != reportedTwoClients)
+        {
+            reportedTwoClients = clients > 1; reportedConnected = null;
+            if (reportedTwoClients)
+            {
+                Log.Warn($"{clients} game clients are connected; reading pauses until one closes.");
+                Status?.Invoke(CaptureStatus.TwoClients, T("Two game clients are running · Odyle reads one at a time. Close one to read again."));
+                return;
+            }
+        }
+        if (reportedTwoClients) return;
         if (connected != reportedConnected)
         {
             reportedConnected = connected; explainAt = now + ExplainAfter; explained = null;
@@ -201,6 +215,9 @@ public sealed class PacketCapture : IAsyncDisposable
     // times a second), instead of each worker enumerating processes on its own.
     private readonly object flowsLock = new();
     private TcpFlow[] knownFlows = Array.Empty<TcpFlow>();
+    // How many game processes own those connections: more than one is two clients on this PC.
+    private int knownClients;
+    private bool reportedTwoClients;
     private DateTimeOffset knownFlowsAt = DateTimeOffset.MinValue;
     private void ForgetFlows() { lock (flowsLock) knownFlowsAt = DateTimeOffset.MinValue; }
     private TcpFlow[] CurrentFlows(bool immediate)
@@ -208,7 +225,7 @@ public sealed class PacketCapture : IAsyncDisposable
         lock (flowsLock)
         {
             if (DateTimeOffset.UtcNow - knownFlowsAt < (immediate ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(2))) return knownFlows;
-            knownFlows = GameFlows(); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
+            knownFlows = GameFlows(out knownClients); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
         }
     }
     private static string ProcessName(int pid, Dictionary<int, string> cache)
@@ -236,27 +253,31 @@ public sealed class PacketCapture : IAsyncDisposable
     }
     private static byte[] Address(IntPtr row, int offset) { var bytes = new byte[16]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, 16); return bytes; }
     private static ushort PortAt(IntPtr row, int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
-    private static TcpFlow[] GameFlows()
+    private static TcpFlow[] GameFlows(out int clients)
     {
-        var result = new List<TcpFlow>(); var processes = new Dictionary<int, string>();
+        var result = new List<TcpFlow>(); var processes = new Dictionary<int, string>(); var owners = new HashSet<int>();
         ReadTcpTable(2, 24, row =>
         {
             // Only live connections to the game port are checked against their owning
             // process; the game's HTTPS/login connections and every other program need
             // no process lookup at all.
-            if (result.Count >= 32 || PortAt(row, 16) != GameConnection.Port || Marshal.ReadInt32(row) is not (3 or 4 or 5) || !GameConnection.IsGameProcess(ProcessName(Marshal.ReadInt32(row, 20), processes))) return;
+            if (result.Count >= 32 || PortAt(row, 16) != GameConnection.Port || Marshal.ReadInt32(row) is not (3 or 4 or 5)) return;
+            var owner = Marshal.ReadInt32(row, 20);
+            if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
             var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
             var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
-            result.Add(new(local, PortAt(row, 8), remote, PortAt(row, 16)));
+            result.Add(new(local, PortAt(row, 8), remote, PortAt(row, 16))); owners.Add(owner);
         });
         // A dual-mode socket to an IPv4 server is listed in the IPv6 table with IPv4-mapped
         // addresses; its packets are IPv4 and are read like the rows above.
         ReadTcpTable(23, 56, row =>
         {
             if (result.Count >= 32 || PortAt(row, 44) != GameConnection.Port || Marshal.ReadInt32(row, 48) is not (3 or 4 or 5)) return;
-            if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(Marshal.ReadInt32(row, 52), processes))) return;
-            result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44)));
+            var owner = Marshal.ReadInt32(row, 52);
+            if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
+            result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44))); owners.Add(owner);
         });
+        clients = owners.Count;
         return result.ToArray();
     }
     // What GameConnection.Explain needs: the live connections of the game's processes and every

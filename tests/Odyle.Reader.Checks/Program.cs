@@ -89,6 +89,13 @@ static class ReaderChecks
                 Call(window, "OnCandidate", inert, new PacketCandidate(205, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
                 Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
                 Check(Owner() == "", "and so do the updates after it");
+                // Two game clients on this PC would mix their characters' messages: nothing is read or named until one closes.
+                Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
+                Call(window, "OnTwoClients");
+                Call(window, "OnCandidate", inert, new PacketCandidate(999, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
+                Call(window, "OnSnapshotWithoutOdyle", inert);
+                Check(Field("latest").GetValue(window) is null && Owner() == "" && (string)Field("gameCharacterKey").GetValue(window)! == "" && !(bool)Field("odyleMissingDue").GetValue(window)!, "with two game clients nothing is read, attributed or named");
+                Field("twoClients").SetValue(window, false);
                 // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
                 Call(window, "ResetAttribution");
                 Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
