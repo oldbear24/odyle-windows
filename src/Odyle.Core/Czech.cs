@@ -17,6 +17,12 @@ public static class Czech
         ["Hide the daily & weekly tasks"] = "Skrýt denní a týdenní úkoly", ["Show your daily & weekly tasks beside the card"] = "Ukázat denní a týdenní úkoly vedle karty",
         ["Hide until the message changes"] = "Skrýt, dokud se zpráva nezmění",
         ["Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard."] = "Přirozená zásoba měla {0:N0}, víc než {1:N0}: začalo členství? Odpověz na dashboardu.",
+        // Offline: paired, the server not reachable yet
+        ["OFFLINE"] = "OFFLINE", ["{0} · offline"] = "{0} · offline", ["Odyle · Offline"] = "Odyle · Offline",
+        ["Offline · {0:N0} Odyle read here, sent when the server is back."] = "Offline · {0:N0} Odyle přečteno tady, odešle se, až bude server zpět.",
+        ["Offline · the reader reads locally and sends what it reads when the server is back."] = "Offline · čtečka čte tady a pošle, co přečetla, až bude server zpět.",
+        ["live updates"] = "živé změny", ["refreshed every 15 s"] = "obnovuje se každých 15 s", ["The party follows changes as they happen."] = "Parta sleduje změny, jak se dějí.",
+        ["Live updates are off: {0}"] = "Živé změny nejdou: {0}", ["Live updates are not connected; the party is fetched every 15 seconds."] = "Živé změny nejsou připojené; parta se načítá každých 15 sekund.",
         // What's new
         ["What's new"] = "Co je nového", ["What's new in Odyle"] = "Co je nového v Odyle", ["Updated to {0}."] = "Aktualizováno na {0}.", ["this version"] = "tato verze",
         ["New"] = "Nové", ["Changed"] = "Změny", ["Fixed"] = "Opravy", ["No changes listed in this build."] = "Tato verze nemá seznam změn.",
@@ -116,7 +122,6 @@ public static class Czech
         ["Npcap lets only administrators capture · reinstall it without “Restrict Npcap driver's access to Administrators only”."] = "Npcap dovoluje zachytávat jen správcům · přeinstaluj ho bez volby „Restrict Npcap driver's access to Administrators only“.",
         ["Npcap shows this Windows account no network interface · if it was installed for administrators only, reinstall it without that option."] = "Npcap tomuto účtu Windows neukazuje žádné síťové rozhraní · pokud byl nainstalovaný jen pro správce, přeinstaluj ho bez této volby.",
         ["Npcap is installed · pair Odyle in settings to read the game."] = "Npcap je nainstalovaný · spáruj Odyle v nastavení a může číst hru.",
-        ["Npcap is installed · the reader starts once the server is reached."] = "Npcap je nainstalovaný · čtečka se spustí, jakmile se podaří spojit se serverem.",
         ["AION2 connects to the game server over IPv6, which the reader cannot read yet."] = "AION2 se k hernímu serveru připojuje přes IPv6, které čtečka zatím neumí číst.",
         ["The game connection runs through {0}, not AION2 · an accelerator or proxy hides it from the reader."] = "Herní spojení vede přes {0}, ne přes AION2 · akcelerátor nebo proxy ho před čtečkou skrývá.",
         ["AION2 is connected, but not on the game port 13328 (ports {0}) · the reader only reads 13328."] = "AION2 je připojené, ale ne na herním portu 13328 (porty {0}) · čtečka čte jen 13328.",

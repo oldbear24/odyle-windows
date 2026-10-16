@@ -52,11 +52,26 @@ static class ReaderChecks
                 SessionChecks();
                 // A saved pairing the server cannot confirm at start is kept and tried again by itself, later each time.
                 SessionStore.Save(new SavedSession("http://127.0.0.1:1", "token", "device-key"));
+                // Npcap is stubbed out: the reader is tried at once but no real capture starts in the checks.
+                var probeNpcap = Npcap.Probe; Npcap.Probe = () => false;
                 await (Task)Call(window, "RestoreAsync")!;
+                Check((bool)Field("readerWanted").GetValue(window)! && ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).IsEnabled, "while the server cannot confirm the pairing the reader starts anyway (here it waits for Npcap)");
+                Check(Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · the reader reads locally and sends what it reads when the server is back.", "the card says it is offline, not that the PC is unpaired");
+                ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
                 Check(Field("api").GetValue(window) is null && File.Exists(SessionStore.FilePath) && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible, "an unreachable server keeps the pairing and offers Reconnect saved account");
                 Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && ((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
                 await (Task)Call(window, "RestoreAsync")!;
                 Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s"), "the next retry waits longer");
+                // Offline the character the game names is followed as online and its reading shown; both wait for the server.
+                var offlineCapture = new PacketCapture(); Field("capture").SetValue(window, offlineCapture);
+                Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
+                await (Task)Call(window, "SaveDetectedCharacterAsync", offlineCapture, new GameIdentity(7, "OfflineHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                Check(Field("pendingIdentity").GetValue(window) is not null && (string)Field("readingOwnerKey").GetValue(window)! == "OfflineHero|2304", "the named character is followed and kept for the server");
+                Check(Control<TextBlock>(window, "HeroTitle").Text == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");
+                // A switch while offline drops the reading of the character left, as online.
+                await (Task)Call(window, "CharacterChangedAsync", offlineCapture, 99UL)!;
+                Check(Field("latest").GetValue(window) is null && (string)Field("readingOwnerKey").GetValue(window)! == "", "a switch offline never moves the reading to the next character");
+                Field("capture").SetValue(window, null); Field("pendingIdentity").SetValue(window, null); Call(window, "ResetAttribution");
                 await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
                 Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
                 Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
@@ -346,7 +361,7 @@ static class ReaderChecks
                 // A saved pairing that is still being retried does not ask to pair again.
                 Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15)); Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
                 Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
-                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is installed · the reader starts once the server is reached.", "an installed Npcap tells a paired app that is still retrying the server that the reader starts by itself");
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Stopped · start the reader before logging in." && (string)Control<Button>(window, "ReportButton").Content == "Start", "a paired app still retrying the server can start its reader: it reads locally until the server answers");
                 Field("retryAt").SetValue(window, null);
                 // Copy diagnostics: version, Npcap, interfaces, the reader's last states and the end of the log,
                 // with the account and this PC's name masked (built here without touching the clipboard).
@@ -546,6 +561,18 @@ static class ReaderChecks
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Value: 120, Valid: false }, "leaving for an unsupported character ends the previous reading's freshness");
                     await (Task)Call(window, "StopReaderAsync")!;
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
+                    // The server unreachable (as at a start during an outage): the character the game names and its
+                    // reading wait on this PC, and both reach the server once it answers again.
+                    var offlineRun = new PacketCapture(); Field("api").SetValue(window, null); Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15));
+                    Field("capture").SetValue(window, offlineRun); Call(window, "ResetAttribution");
+                    Call(window, "OnCandidate", offlineRun, new PacketCandidate(512, "test-fixture-v1") { Base = 12, Bonus = 500 });
+                    await (Task)Call(window, "SaveDetectedCharacterAsync", offlineRun, new GameIdentity(46, "ReturnHero", 2304, "Lumiel", "GLOBAL_EU"))!;
+                    Check(!(await api.GetCharactersAsync()).Any(c => c.CharacterName == "ReturnHero"), "offline nothing reaches the server");
+                    Field("api").SetValue(window, api); Field("retryAt").SetValue(window, null); await (Task)Call(window, "ConnectAsync", auth)!;
+                    await (Task)Call(window, "PulseAsync")!;
+                    for (var i = 0; i < 50 && !(await api.GetCharactersAsync()).Any(c => c.CharacterName == "ReturnHero" && c.Confirmed && c.Value == 512); i++) await Task.Delay(100);
+                    Check((await api.GetCharactersAsync()).Single(c => c.CharacterName == "ReturnHero") is { Confirmed: true, Value: 512 }, "the character named offline is saved and its reading sent once the server answers");
+                    await (Task)Call(window, "StopReaderAsync")!;
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
                 Console.WriteLine("Windows UI compact window, compact mode, What's new, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");

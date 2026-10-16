@@ -123,6 +123,8 @@
 
     <!-- Party: other members' characters that are online in your rooms, one header per room -->
     <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">
+     <!-- Whether the party follows the server's live news or is fetched every 15 seconds -->
+     <TextBlock x:Name="PartyModeLabel" HorizontalAlignment="Right" FontSize="9.5" Margin="0,2,2,-4"/>
      <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
       <ItemsControl x:Name="PartyList" Focusable="False">
        <ItemsControl.ItemTemplate><DataTemplate>
