@@ -49,9 +49,8 @@
    <CheckBox x:Name="StayOnTopToggle" Content="Stay on top of other windows" ToolTip="Keeps the card above the game in windowed or borderless mode"/>
    <CheckBox x:Name="TasksToggle" Content="Show daily &amp; weekly tasks beside the card" Margin="0,8,0,0" ToolTip="Your checklist from the dashboard; tick tasks off here"/>
    <CheckBox x:Name="AutostartToggle" Content="Start with Windows" Margin="0,8,0,0" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
-   <!-- The super compact strip: clicks through to the game, and the shortcut that switches it -->
-   <CheckBox x:Name="ClickThroughToggle" Content="Let clicks pass through the compact strip" Margin="0,8,0,0" ToolTip="The strip ignores the mouse, so it can sit over the game. The tray menu and the shortcut still switch it off."/>
-   <DockPanel Margin="0,8,0,0"><TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Compact strip shortcut" VerticalAlignment="Center" Margin="2,0,8,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the card and the compact strip from anywhere"/></DockPanel>
+   <!-- Compact mode: the shortcut that switches it -->
+   <DockPanel Margin="0,8,0,0"><TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Compact mode shortcut" VerticalAlignment="Center" Margin="2,0,8,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the full card and compact mode from anywhere"/></DockPanel>
    <TextBlock x:Name="HotkeyProblemLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,4,0,0"/>
    <TextBlock Style="{StaticResource Hint}" Text="Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard." Margin="2,6,0,0"/>
 
