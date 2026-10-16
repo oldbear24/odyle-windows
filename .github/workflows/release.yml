@@ -22,15 +22,16 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the release tags, for scripts/version.ps1
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
-      # Project version plus the run number, e.g. 0.5.0.12; bump <Version> in the project for a new line.
+      # The project's semantic version, bumped by each change (AGENTS.md, Versioning). Nothing is
+      # released when nothing that ships changed since the latest release; shipped code without a
+      # higher version fails here.
       - id: version
-        run: |
-          $base = (Select-Xml -Path src/Odyle.Reader/Odyle.Reader.csproj -XPath '/Project/PropertyGroup/Version' | Select-Object -First 1).Node.InnerText
-          if (!$base) { throw 'Odyle.Reader.csproj has no <Version>.' }
-          "version=$base.$env:GITHUB_RUN_NUMBER" >> $env:GITHUB_OUTPUT
+        run: ./scripts/version.ps1 release
       - run: dotnet build src/Odyle.Reader/Odyle.Reader.csproj -c Release
       - run: dotnet run --project tests/Odyle.Core.Checks -c Release
       - run: dotnet run --project tests/Odyle.Reader.Checks -c Release
@@ -48,7 +49,7 @@ jobs:
             artifacts/*.sha256
       # Only a push to main publishes, and that release becomes the latest one installed apps update to.
       - name: Create release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
