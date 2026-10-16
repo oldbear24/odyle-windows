@@ -237,7 +237,18 @@ static class ReaderChecks
                 Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("accountId").SetValue(window, ""); Call(window, "RenderHero");
                 // Window preferences: pinned above other windows and the checklist beside the card, remembered on this PC.
-                Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && !File.Exists(PreferencesStore.FilePath), "the window starts unpinned and compact");
+                Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "the window starts unpinned and compact");
+                // What's new: a first start begins at this version and says nothing; after an update the card says so once.
+                var current = $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}";
+                Check(PreferencesStore.Load().SeenVersion == current && Control<Border>(window, "UpdatedBar").Visibility == Visibility.Collapsed && settings.FindName("WhatsNewButton") is Button, "a first start says nothing of an update; Settings offers What's new");
+                Field("preferences").SetValue(window, PreferencesStore.Load() with { SeenVersion = "0.0.1" }); Call(window, "RenderUpdated");
+                Check(Control<Border>(window, "UpdatedBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "UpdatedText").Text == $"Updated to {current}.", "after an update the card names the version");
+                Call(window, "OpenWhatsNew");
+                var news = (Window)Field("whatsNew").GetValue(window)!; var listed = ((StackPanel)news.FindName("Entries")).Children;
+                Check(PreferencesStore.Load().SeenVersion == current && Control<Border>(window, "UpdatedBar").Visibility == Visibility.Collapsed, "opening What's new is remembered and the line goes");
+                Check(listed.Count > 3 && listed[0] is DockPanel head && string.Concat(head.Children.OfType<TextBlock>().Last().Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)) == current + "  this version", "What's new lists the changelog built into the app, this version first and marked");
+                news.Close();
+
                 Call(window, "SetStayOnTop", true, true);
                 Check(window.Topmost && ((CheckBox)settings.FindName("StayOnTopToggle")).IsChecked == true && PreferencesStore.Load().StayOnTop, "pinning stays on top and is remembered");
                 Call(window, "SetTasksShown", true, true);
@@ -537,7 +548,7 @@ static class ReaderChecks
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
-                Console.WriteLine("Windows UI compact window, compact mode, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
+                Console.WriteLine("Windows UI compact window, compact mode, What's new, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -649,6 +660,9 @@ static class ReaderChecks
         Call(window, "SetCompact", true, false);
         Snapshot(window, Path.Combine(directory, "compact-mode-preview.png"), (int)CompactStrip.Width);
         Call(window, "SetCompact", false, false);
+        // What's new, from the changelog built into the app.
+        var news = new WhatsNewWindow(Changelog.Parse(WhatsNewWindow.Embedded()), $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}");
+        Snapshot(news, Path.Combine(directory, "whats-new-preview.png"), 380); news.Close();
         // Pinned, with the checklist beside the card; ticks are dated within the current periods.
         Call(window, "SetStayOnTop", true, false); Call(window, "SetTasksShown", true, false);
         var now = DateTimeOffset.UtcNow; var dayStart = Checklist.PeriodStart("daily", now); var weekStart = Checklist.PeriodStart("weekly", now);

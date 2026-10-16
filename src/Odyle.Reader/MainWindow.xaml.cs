@@ -123,6 +123,9 @@ public partial class MainWindow : Window
     private string hotkeyProblem = "";
     // The value and cube cost the card shows, for the strip.
     private int? heroValue;
+    // What's new (WhatsNewWindow), open or not.
+    private WhatsNewWindow? whatsNew;
+    private static string VersionText => $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}";
     private int heroCost = 40;
     private long sequence, lastGameBytes;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
@@ -186,6 +189,7 @@ public partial class MainWindow : Window
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
+        settings.WhatsNewButton.Click += (_, _) => OpenWhatsNew();
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
@@ -227,6 +231,10 @@ public partial class MainWindow : Window
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
+        // After an update the card says so once. A first start begins at this version; a PC that ran
+        // Odyle before (it is paired) hears of this one.
+        if (preferences.SeenVersion.Length == 0) PreferencesStore.Save(preferences = preferences with { SeenVersion = File.Exists(SessionStore.FilePath) ? "earlier" : VersionText });
+        RenderUpdated();
         settings.CompactHotkeyInput.ItemsSource = CompactStrip.Hotkeys.Select(h => new LanguageChoice(h, h.Length > 0 ? h : T("Off"))).ToArray();
         settings.CompactHotkeyInput.SelectedValue = CompactStrip.Hotkeys.Contains(preferences.CompactHotkey) ? preferences.CompactHotkey : CompactStrip.DefaultHotkey;
         settings.CompactHotkeyInput.SelectionChanged += (_, _) => ChooseHotkey(settings.CompactHotkeyInput.SelectedValue as string ?? "");
@@ -866,6 +874,26 @@ public partial class MainWindow : Window
         RenderCompact(); Log.Info(on ? "Switched to compact mode." : "Switched back to the full card.");
     }
     private void Compact_Click(object sender, RoutedEventArgs e) => SetCompact(true, persist: true);
+    // What's new: the line on the card after an update, until opened or hidden, and the window.
+    private void RenderUpdated()
+    {
+        var updated = preferences.SeenVersion.Length > 0 && preferences.SeenVersion != VersionText;
+        UpdatedText.Text = T("Updated to {0}.", VersionText); UpdatedBar.Visibility = updated ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void SeenVersion() { if (preferences.SeenVersion != VersionText) PreferencesStore.Save(preferences = preferences with { SeenVersion = VersionText }); RenderUpdated(); }
+    private void HideUpdated_Click(object sender, RoutedEventArgs e) => SeenVersion();
+    private void WhatsNew_Click(object sender, RoutedEventArgs e) => OpenWhatsNew();
+    private void OpenWhatsNew()
+    {
+        SeenVersion();
+        if (whatsNew is null)
+        {
+            whatsNew = new WhatsNewWindow(Changelog.Parse(WhatsNewWindow.Embedded()), VersionText);
+            whatsNew.SourceInitialized += (_, _) => DarkFrame(whatsNew); whatsNew.Closed += (_, _) => whatsNew = null;
+            if (IsVisible) whatsNew.Owner = this;
+        }
+        if (!App.Headless) { whatsNew.Show(); whatsNew.WindowState = WindowState.Normal; whatsNew.Activate(); }
+    }
     private void Expand_Click(object sender, RoutedEventArgs e) => SetCompact(false, persist: true);
     private void CompactPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) SetCompact(false, persist: true); }
     private void ToggleCompact() { SetCompact(!compactMode, persist: true); if (!IsVisible) ShowWindow(); }
@@ -1680,7 +1708,7 @@ public partial class MainWindow : Window
         try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); realtime?.Dispose(); api?.Dispose(); }
         finally
         {
-            operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();
+            operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); whatsNew?.Close();
             if (hotkeyWindow is not null) { UnregisterHotKey(hotkeyWindow.Handle, HotkeyId); hotkeyWindow.Dispose(); }
             if (restart && System.Windows.Application.Current is App app) app.Restart(tray: hidden); else System.Windows.Application.Current.Shutdown();
         }

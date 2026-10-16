@@ -56,6 +56,14 @@
       <TextBlock x:Name="AnnouncementText" TextWrapping="Wrap" FontSize="11" VerticalAlignment="Center"/>
      </DockPanel>
     </Border>
+    <!-- After an update, once: the version and What's new -->
+    <Border x:Name="UpdatedBar" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,3,3,3" Margin="0,0,0,6">
+     <DockPanel>
+      <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="✕" FontSize="10" Padding="5,0" VerticalAlignment="Center" Click="HideUpdated_Click" ToolTip="Hide until the next update"/>
+      <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" Foreground="{StaticResource Mint}" Padding="6,1" VerticalAlignment="Center" Click="WhatsNew_Click" ToolTip="What changed in this version"/>
+      <TextBlock x:Name="UpdatedText" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+     </DockPanel>
+    </Border>
     <!-- Reading card: the character the game reports -->
     <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,8,12,8">
      <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>

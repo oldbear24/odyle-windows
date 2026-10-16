@@ -3,7 +3,8 @@
 #
 #   ./scripts/version.ps1 check [-Base <ref>]   a pull request or branch: when it changes what ships,
 #                                               its version must be higher than the base's (default:
-#                                               where it left origin/main)
+#                                               where it left origin/main), and CHANGELOG.md must
+#                                               describe it
 #   ./scripts/version.ps1 release               the release workflow: writes version= and release= to
 #                                               $GITHUB_OUTPUT. No release when nothing that ships changed
 #                                               since the latest release; a failure when shipped code
@@ -18,7 +19,7 @@ function Parts([string]$text) { $p = @($text.TrimStart('v').Split('.') | ForEach
 function Compare-Version([string]$a, [string]$b) { $x = Parts $a; $y = Parts $b; for ($i = 0; $i -lt 4; $i++) { if ($x[$i] -ne $y[$i]) { return $x[$i] - $y[$i] } }; 0 }
 function SortKey([string]$tag) { $p = Parts $tag; '{0:D6}{1:D6}{2:D6}{3:D6}' -f $p[0], $p[1], $p[2], $p[3] }
 # What does not ship: documentation, tests, CI and this script (packaging scripts do ship).
-function Shipped([string[]]$files) { , @($files | Where-Object { $_ -and $_ -notmatch '^(docs/|tests/|\.github/|\.vscode/)|\.md$|^scripts/version\.ps1$|^(LICENSE|\.gitignore|\.gitattributes|\.editorconfig)$' }) }
+function Shipped([string[]]$files) { , @($files | Where-Object { $_ -and $_ -notmatch '^(docs/|tests/|\.github/|\.vscode/)|\.md$|^scripts/(version|changelog)\.ps1$|^(LICENSE|\.gitignore|\.gitattributes|\.editorconfig)$' }) }
 function List([string[]]$files) { (($files | Select-Object -First 5) -join ', ') + $(if ($files.Count -gt 5) { ', …' } else { '' }) }
 
 $version = VersionOf ([xml](Get-Content -Raw $project))
@@ -29,7 +30,10 @@ if ($Mode -eq 'check') {
     $changed = Shipped @(git diff --name-only $Base HEAD)
     if ($changed.Count -eq 0) { Write-Host "Nothing that ships changed; the version stays $version."; exit 0 }
     if ((Compare-Version $version $before) -le 0) { Fail "$($changed.Count) shipped file(s) changed ($(List $changed)) but the version is still $version. Bump <Version> in $project by what changed: MAJOR for a breaking change, MINOR for a feature, PATCH for a fix (AGENTS.md, Versioning)." }
-    Write-Host "Version $before -> $version for $($changed.Count) shipped file(s)."
+    # A new version says what it changed, for players (CHANGELOG.md).
+    & (Join-Path $PSScriptRoot 'changelog.ps1') check -Version $version
+    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    Write-Host "Version $before -> $version for $($changed.Count) shipped file(s), described in CHANGELOG.md."
     exit 0
 }
 $tags = @(git tag --list 'v*' | Where-Object { $_ -match '^v\d+(\.\d+){1,3}$' } | Sort-Object { SortKey $_ })

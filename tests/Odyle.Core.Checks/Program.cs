@@ -10,6 +10,7 @@ SetupChecks.Run();
 RealtimeChecks.Run();
 ClockChecks.Run();
 PartyChecks.Run();
+ChangelogChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;
 if (auth.Record.Id != "discord-user" || auth.Record.DisplayName != "Player" || auth.DeviceKey is not null) throw new Exception("Account pairing contract failed.");
