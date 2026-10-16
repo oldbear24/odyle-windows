@@ -15,6 +15,13 @@ static class DesktopChecks
         Check(Placement.OnScreen(100, 100, screens) && Placement.OnScreen(2000, 700, screens) && Placement.OnScreen(-30, 0, screens), "a position whose caption is on a screen is restored");
         Check(!Placement.OnScreen(2000, 900, screens) && !Placement.OnScreen(5000, 100, screens) && !Placement.OnScreen(-2000, 100, screens) && !Placement.OnScreen(100, -100, screens), "a position on a disconnected screen is not");
         Check(Placement.Clamp(1800, 900, 280, 300, screens[0]) == (1640, 740) && Placement.Clamp(100, 100, 280, 300, screens[0]) == (100, 100) && Placement.Clamp(-30, -5, 280, 300, screens[0]) == (0, 0) && Placement.Clamp(10, 10, 2500, 1200, screens[0]) == (0, 0), "a window is kept on its screen");
+        // The super compact strip: the line that matters most, its shortcuts and where it first opens.
+        Check(CompactStrip.Line(true, "Fire Temple in 12 min", "Party · 2 cubes", "Start the reader") == "Paused by the server" && CompactStrip.Line(false, "Fire Temple in 12 min", "Party · 2 cubes", "x") == "Fire Temple in 12 min"
+            && CompactStrip.Line(false, "", "Party · 2 cubes", "x") == "Party · 2 cubes" && CompactStrip.Line(false, "", "", "Start the reader") == "Start the reader" && CompactStrip.Line(false, "", "", "") == "", "the strip's line: pause, next run, party, then the card's hint");
+        Check(CompactStrip.Parse("Ctrl+Alt+O") == (0x4003u, 'O') && CompactStrip.Parse("Ctrl+Shift+O") == (0x4006u, 'O') && CompactStrip.Parse("Ctrl+Alt+F12") == (0x4003u, 0x7Bu) && CompactStrip.Parse("") is null && CompactStrip.Parse("Ctrl+Alt+Delete") is null && CompactStrip.Parse("Alt+F4") is null,
+            "the strip's shortcuts map to RegisterHotKey, never repeating, and only offered ones");
+        Check(CompactStrip.Hotkeys[0] == CompactStrip.DefaultHotkey && CompactStrip.Hotkeys.All(h => h.Length == 0 || CompactStrip.Parse(h) is not null), "every offered shortcut can be registered");
+        Check(CompactStrip.Corner(screens[0]) == (1920 - CompactStrip.Width - 16, 16) && Placement.OnScreen(1920 - CompactStrip.Width - 16, 16, screens), "the strip first opens in the top right corner, on the screen");
         // Planned runs as the room snapshot lists them; the account "u" goes to two of them.
         var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
         var snapshot = System.Text.Json.JsonSerializer.Deserialize<RoomSnapshot>("""{"room":{"id":"r","name":"Evening","cost":40},"members":[],"wishlist":[],"dungeons":[],"serverNow":"2026-10-14T18:40:00.000Z","runs":[{"id":"a","dungeon":"Fire Temple","startsAt":"2026-10-14 19:00:00.000Z","note":"Bring potions","planner":"u","attendees":["u","l"]},{"id":"b","dungeon":"Ice Cave","startsAt":"2026-10-14 18:50:00.000Z","note":"","planner":"l","attendees":["l"]},{"id":"c","dungeon":"Sky Tower","startsAt":"2026-10-14 18:55:00.000Z","note":"","planner":"","attendees":["u"]}]}""", options)!;
@@ -45,7 +52,7 @@ static class DesktopChecks
         var listed = System.Text.Json.JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[],"notifications":{"channels":{"tray":false,"browser":true,"push":true},"leadMinutes":[120,15],"kinds":{"runs":true,"cap":false},"quiet":{"from":"","to":"","timeZone":""},"saved":true}}""", options)!;
         Check(listed.Notifications is { Saved: true, RunsInTray: false } n && n.Leads.SequenceEqual([120, 15]), "the rooms answer carries the account's notification settings");
         Check(System.Text.Json.JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.Notifications is null && NotificationSettings.Default is { RunsInTray: true } && NotificationSettings.Default.Leads.SequenceEqual([15]), "older backends send none, and the defaults remind 15 minutes ahead");
-        Console.WriteLine("Start with Windows command, tray start, saved window position, keep-on-screen and planned-run reminders at the account's times and quiet hours passed.");
+        Console.WriteLine("Start with Windows command, tray start, saved window position, keep-on-screen, the compact strip and planned-run reminders at the account's times and quiet hours passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Desktop check failed: " + message); }
 }

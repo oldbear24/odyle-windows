@@ -34,6 +34,7 @@ static class ReaderChecks
             {
                 if (args.Length == 2 && args[0] == "--screenshots") { Screenshots(window, args[1]); return; }
                 if (args is ["--update-probe"]) { await UpdateProbe(); return; }
+                if (args is ["--strip-probe"]) { StripProbe(window); return; }
                 var settings = Settings(window);
                 Check(window.FindName("CharactersInput") is null && window.FindName("CharacterInput") is null, "the main window offers no way to pick or type a character");
                 Check(settings.FindName("CodeInput") is PasswordBox && window.FindName("CodeInput") is null, "pairing lives in the settings window");
@@ -256,6 +257,26 @@ static class ReaderChecks
                 shell.Width = double.NaN;
                 Call(window, "SetTasksShown", false, true); Call(window, "SetStayOnTop", false, true);
                 Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "unpinning and hiding the checklist are remembered too");
+                // The super compact strip replaces the card, shows its value, cubes and next step, and is remembered.
+                Check(!PreferencesStore.Load().CompactMode && Field("compact").GetValue(window) is null && (string)Control<Button>(window, "CompactButton").ToolTip == "Super compact · a small strip above the game (Ctrl+Alt+O)", "the card starts without the strip, which names its shortcut");
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 130, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5))) }); Field("currentCharacterId").SetValue(window, "c1");
+                Call(window, "SetCompact", true, true); Call(window, "RenderHero");
+                var strip = (CompactWindow)Field("compact").GetValue(window)!;
+                Check(PreferencesStore.Load().CompactMode && (bool)Field("compactMode").GetValue(window)! && !window.IsVisible, "the strip replaces the card and is remembered");
+                Check(((System.Windows.Documents.Run)strip.FindName("ValueText")).Text == "130" && ((TextBlock)strip.FindName("CubesText")).Text == "3 cubes" && ((TextBlock)strip.FindName("LineText")).Text == "Last saved value · start the reader for live values."
+                    && (string)((Border)strip.FindName("Strip")).ToolTip == "TestHero · Lumiel · Saved · double-click for the full card", "the strip shows the card's value, cubes and next step");
+                Field("readerPaused").SetValue(window, true); Call(window, "RenderHero");
+                Check(((TextBlock)strip.FindName("LineText")).Text == "Paused by the server", "a server pause comes first on the strip");
+                Field("readerPaused").SetValue(window, false);
+                Call(window, "SetClickThrough", true);
+                Check(strip.ClickThrough && ((CheckBox)settings.FindName("ClickThroughToggle")).IsChecked == true && PreferencesStore.Load().CompactClickThrough, "click-through is switched for the strip and remembered");
+                var hotkey = (ComboBox)settings.FindName("CompactHotkeyInput");
+                Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the strip's shortcuts, Ctrl+Alt+O first");
+                hotkey.SelectedValue = "";
+                Check(PreferencesStore.Load().CompactHotkey == "" && (string)Control<Button>(window, "CompactButton").ToolTip == "Super compact · a small strip above the game", "the shortcut can be turned off, and that is remembered");
+                hotkey.SelectedValue = CompactStrip.DefaultHotkey; Call(window, "SetClickThrough", false); Call(window, "SetCompact", false, true);
+                Check(!PreferencesStore.Load().CompactMode && !(bool)Field("compactMode").GetValue(window)! && PreferencesStore.Load() is { CompactClickThrough: false, CompactHotkey: "Ctrl+Alt+O" }, "the card comes back and that is remembered");
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Call(window, "RenderHero");
                 // Language: automatic by default; a choice is remembered and applies after a restart.
                 var language = (ComboBox)settings.FindName("LanguageInput");
                 Check((string)language.SelectedValue == Localizer.Automatic && language.Items.Count == 3, "the language follows Windows until one is chosen");
@@ -505,7 +526,7 @@ static class ReaderChecks
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
-                Console.WriteLine("Windows UI compact window, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
+                Console.WriteLine("Windows UI compact window, super compact strip, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -553,6 +574,26 @@ static class ReaderChecks
     }
     // Opt-in and online: fetches the newest GitHub release and stages this machine's package
     // in a temporary folder, exercising download, checksum verification and extraction.
+    // On a desktop (not in CI): the strip shown for real, on top, out of Alt+Tab, never taking
+    // the focus and passing clicks through when asked, and a shortcut registered and released.
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+    static void StripProbe(MainWindow window)
+    {
+        App.Headless = false;
+        Call(window, "UseHotkey", "Ctrl+Alt+F12");
+        var taken = (string)Field("hotkeyProblem").GetValue(window)!;
+        Call(window, "SetCompact", true, false);
+        var strip = (CompactWindow)Field("compact").GetValue(window)!;
+        long Style() => GetWindowLongPtr(new System.Windows.Interop.WindowInteropHelper(strip).Handle, -20).ToInt64();
+        Check(strip.IsVisible && strip.Topmost && !strip.IsActive && (Style() & 0x80) != 0 && (Style() & 0x08000000) != 0 && (Style() & 0x20) == 0, "the strip shows on top, out of Alt+Tab and without the focus");
+        Check(Math.Abs(strip.ActualWidth - CompactStrip.Width) < 1 && Math.Abs(strip.ActualHeight - CompactStrip.Height) < 1, "the strip has its size");
+        strip.ClickThrough = true; Check((Style() & 0x20) != 0, "click-through passes the mouse through");
+        strip.ClickThrough = false; Check((Style() & 0x20) == 0, "and stops again");
+        Call(window, "SetCompact", false, false);
+        Check(!strip.IsVisible, "the strip hides when the card comes back");
+        Call(window, "UseHotkey", "");
+        Console.WriteLine("Strip probe passed; the shortcut Ctrl+Alt+F12 " + (taken.Length == 0 ? "was registered and released." : "is taken here: " + taken));
+    }
     static async Task UpdateProbe()
     {
         var root = Directory.CreateTempSubdirectory("odyle-update-probe-").FullName; Updater.Staging = root;
@@ -596,6 +637,10 @@ static class ReaderChecks
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
+        // The same moment as the super compact strip.
+        Call(window, "SetCompact", true, false);
+        Snapshot((Window)Field("compact").GetValue(window)!, Path.Combine(directory, "strip-preview.png"), (int)CompactStrip.Width);
+        Call(window, "SetCompact", false, false);
         // Pinned, with the checklist beside the card; ticks are dated within the current periods.
         Call(window, "SetStayOnTop", true, false); Call(window, "SetTasksShown", true, false);
         var now = DateTimeOffset.UtcNow; var dayStart = Checklist.PeriodStart("daily", now); var weekStart = Checklist.PeriodStart("weekly", now);
