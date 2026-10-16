@@ -27,6 +27,12 @@ static class ClockChecks
             var full = OdyleClock.Of(840, 0, read, now, rules, 20, 840)!;
             Check(full is { Full: true, Settled: true, Total: 840, Tick: 20, Projected: false } && OdyleClock.Line(full, now, true) == "natural pool full · each tick of 20 is lost", "a full pool loses each tick of the character's own size");
             Check(OdyleClock.Of(500, 300, read, now, rules with { Paused = true }) is null && OdyleClock.Line(null, now, false) == "", "the operators can hide the clock");
+            // A membership answer settles the cap whatever the readings showed; readings above it are pointed out.
+            Check(OdyleClock.Caps(null, rules, 560).SequenceEqual([560]) && OdyleClock.Caps(300, rules, 840).SequenceEqual([840]) && OdyleClock.Caps(300, rules, 0).SequenceEqual([560, 840]), "the answered cap wins over the readings");
+            var answeredNo = OdyleClock.Of(500, 0, now, now, rules, null, 500, 560);
+            Check(answeredNo is { Cap: 560, Settled: true } && answeredNo.Fills.Select(f => f.Cap).SequenceEqual([560]) && !OdyleClock.Line(answeredNo, now, true).Contains(" at 560"), "without the membership the pool is full at 560, said without hedging");
+            Check(OdyleClock.Of(500, 0, now, now, rules, null, 500, 840) is { Cap: 840, Settled: true }, "with it a pool that never passed 560 counts up to 840");
+            Check(OdyleClock.Mismatch(700, 560) == "Natural pool held 700, more than 560: has the membership started? Answer on the dashboard." && OdyleClock.Mismatch(560, 560) == "" && OdyleClock.Mismatch(700, null) == "" && OdyleClock.Mismatch(300, 840) == "", "readings above the answered cap are pointed out");
             Localizer.Use("cs");
             Check(OdyleClock.Line(full, now, true) == "přirozená zásoba plná · každých 20 propadá", "the clock in Czech");
         }
@@ -37,8 +43,9 @@ static class ClockChecks
         Check(listed.Clock is { Tick: 10, Paused: true } && listed.Clock.TickHours.SequenceEqual([2, 5]) && listed.Clock.Caps.SequenceEqual([500]), "the rooms answer carries the clock's rules");
         Check(JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.Clock is null, "an older backend sends no rules");
         var character = JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":905,"confirmed":true,"valid":true,"lastReadingAt":"2026-10-15 05:00:00.000Z","parts":{"base":15,"bonus":890},"regenTick":15,"naturalMax":600,"naturalMaxAt":"2026-10-15 05:00:00.000Z"}""", options)!;
-        Check(character is { RegenTick: 15, NaturalMax: 600 }, "a character carries its tick and fullest natural pool");
-        Console.WriteLine("Odyle clock ticks, caps, projection, card line and rules passed.");
+        Check(character is { RegenTick: 15, NaturalMax: 600, AnsweredCap: null }, "a character carries its tick and fullest natural pool, and no answered cap from older backends");
+        Check(JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":905,"confirmed":true,"valid":true,"lastReadingAt":"","answeredCap":560}""", options) is { AnsweredCap: 560 }, "a character carries the cap its account's membership answer settled");
+        Console.WriteLine("Odyle clock ticks, caps, the membership answer, projection, card line and rules passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Odyle clock check failed: " + message); }
 }

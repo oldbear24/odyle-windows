@@ -281,6 +281,11 @@ static class ReaderChecks
                 Check(!PreferencesStore.Load().CompactMode && Control<Grid>(window, "Card").Visibility == Visibility.Visible && Control<Border>(window, "TasksPanel").Visibility == Visibility.Visible && window.Left == 300 && window.Top == 200 && PreferencesStore.Load().CompactHotkey == "Ctrl+Alt+O",
                     "the full card and the checklist come back in the same place, and that is remembered");
                 compactShell.Width = double.NaN; Call(window, "SetTasksShown", false, false);
+                // A membership answer the readings contradict is pointed out under the clock; readings that fit it are not.
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 700, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5)), NaturalMax: 700, AnsweredCap: 560) }); Call(window, "RenderHero");
+                Check(Control<TextBlock>(window, "CapMismatchLabel") is { Visibility: Visibility.Visible, Text: "Natural pool held 700, more than 560: has the membership started? Answer on the dashboard." }, "the card points out readings above the answered cap");
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 700, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5)), NaturalMax: 700, AnsweredCap: 840) }); Call(window, "RenderHero");
+                Check(Control<TextBlock>(window, "CapMismatchLabel").Visibility == Visibility.Collapsed, "readings that fit the answer need no hint");
                 Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("accountId").SetValue(window, "");
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Call(window, "RenderHero");
                 // Language: automatic by default; a choice is remembered and applies after a restart.

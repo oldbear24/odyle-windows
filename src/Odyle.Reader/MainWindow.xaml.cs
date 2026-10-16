@@ -487,11 +487,13 @@ public partial class MainWindow : Window
         var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
         ClockState? state = null;
         if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
-            state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax);
+            state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
         else if (api is not null && reading is null && character is { Confirmed: true, Parts: { } parts } && Readiness.Parse(character.LastReadingAt) is { } saved)
-            state = OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, character.RegenTick, character.NaturalMax);
+            state = OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, character.RegenTick, character.NaturalMax, character.AnsweredCap);
         var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
         OdyleClockLabel.Text = line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var mismatch = api is not null && character is not null ? OdyleClock.Mismatch(character.NaturalMax, character.AnsweredCap) : "";
+        CapMismatchLabel.Text = mismatch; CapMismatchLabel.Visibility = mismatch.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
     private void RenderClock()
     {

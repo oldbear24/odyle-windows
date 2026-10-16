@@ -16,6 +16,7 @@ public static class Czech
         ["Stay on top of other windows, for example the game in windowed mode"] = "Držet nad ostatními okny, třeba nad hrou v okně",
         ["Hide the daily & weekly tasks"] = "Skrýt denní a týdenní úkoly", ["Show your daily & weekly tasks beside the card"] = "Ukázat denní a týdenní úkoly vedle karty",
         ["Hide until the message changes"] = "Skrýt, dokud se zpráva nezmění",
+        ["Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard."] = "Přirozená zásoba měla {0:N0}, víc než {1:N0}: začalo členství? Odpověz na dashboardu.",
         // Compact mode
         ["Compact mode"] = "Kompaktní režim", ["Full card"] = "Celá karta", ["Double-click for the full card"] = "Dvojklikem otevřeš celou kartu", ["Off"] = "Vypnuto", ["Paused by the server"] = "Pozastaveno serverem",
         ["Compact mode · your Odyle and your party's, nothing else"] = "Kompaktní režim · tvoje Odyle a Odyle tvé party, nic víc", ["Compact mode · your Odyle and your party's, nothing else ({0})"] = "Kompaktní režim · tvoje Odyle a Odyle tvé party, nic víc ({0})",
