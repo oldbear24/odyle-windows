@@ -67,12 +67,14 @@ public partial class MainWindow : Window
     // one whenever it loads a character into the world (login, switch, teleport, channel change)
     // and names the character only after the loading screen, 6 to 10 seconds later.
     // namedHasReading: the named character's Odyle was read this run.
+    // identityDue: a game connection resynced, and the lost bytes may have held a character
+    // switch; the next reading waits, like a snapshot, for the game to name its character.
     // odyleMissingDue: a snapshot without Odyle waits, like any snapshot, for the game to name its
     // character; odyleMissingKey is then that character, until its Odyle is read.
     private const string UnknownOwner = "?";
     private string currentCharacterId = "", gameCharacterKey = "", gameCharacterName = "", detectedCharacterKey = "", readingOwnerKey = "", odyleMissingKey = "";
     private ulong gameCharacterId;
-    private bool nameDue, namedHasReading, odyleMissingDue;
+    private bool nameDue, namedHasReading, odyleMissingDue, identityDue;
     // The server refused this build's adapter name: Odyle needs an update to keep reading. While it
     // does, an update check runs at most once an hour (outdatedCheckAt).
     private bool adapterOutdated;
@@ -847,7 +849,8 @@ public partial class MainWindow : Window
         npcapTimer.Stop(); if (settings.IsVisible) RenderNpcap();
         if (readerWanted && api is not null && capture is null && !readerPaused) { await ExecuteAsync(StartReaderAsync); return; }
         if (readerState == ReaderState.Problem && capture is null)
-            SetReaderState(ReaderState.Stopped, api is null ? T("Npcap is installed · pair Odyle in settings to read the game.") : T("Stopped · start the reader before logging in."));
+            // A saved pairing still being retried is no reason to pair again: the reader starts once the server answers.
+            SetReaderState(ReaderState.Stopped, api is not null ? T("Stopped · start the reader before logging in.") : retryAt is not null ? T("Npcap is installed · the reader starts once the server is reached.") : T("Npcap is installed · pair Odyle in settings to read the game."));
     }
 
     // ----- Daily & weekly tasks -----
@@ -924,7 +927,7 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; }
+    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; }
     // `latest` belongs to the character the game named: its updates follow it from now on.
     private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
@@ -1000,10 +1003,11 @@ public partial class MainWindow : Window
             if (capture != next) return;
             // A reading the game never attributed belongs to its connection; a new connection starts over.
             if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
+            if (kind == CaptureStatus.Resyncing) OnResync();
             // A new game connection while a reading is live keeps the live line, and so do joining
             // one midstream while the character is known (taken over after a restart) and a resync.
-            if (kind is CaptureStatus.Listening or CaptureStatus.Midstream or CaptureStatus.Resumed && readerState == ReaderState.Live) { Log.Info("Reader stays live: " + message); return; }
-            SetReaderState(kind switch { CaptureStatus.Listening or CaptureStatus.Resumed => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
+            if (kind is CaptureStatus.Listening or CaptureStatus.Midstream or CaptureStatus.Resyncing or CaptureStatus.Resumed && readerState == ReaderState.Live) { Log.Info("Reader stays live: " + message); return; }
+            SetReaderState(kind switch { CaptureStatus.Listening or CaptureStatus.Resumed => ReaderState.Listening, CaptureStatus.Midstream or CaptureStatus.Resyncing => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
         next.SnapshotWithoutOdyle += () => Dispatcher.BeginInvoke(() => OnSnapshotWithoutOdyle(next));
@@ -1045,7 +1049,8 @@ public partial class MainWindow : Window
         // screen. Hold every snapshot until the game names its owner so it can never be
         // saved to the previous character. Updates keep the owner of their snapshot; one
         // read without any snapshot waits for an owner the same way.
-        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; nameDue = true; odyleMissingDue = false; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
+        // After a resync the lost bytes may have held a switch, so the next reading waits the same way.
+        if ((observation.Source == CandidateSource.Snapshot || identityDue) && !duplicate) { identityDue = false; readingOwnerKey = ""; nameDue = true; odyleMissingDue = false; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
         else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
         if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle from the game · saving…", observation.Total));
         RenderHero();
@@ -1061,6 +1066,11 @@ public partial class MainWindow : Window
         if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
         RenderHero();
     }
+    // A game connection resynced: the bytes it lost may have held a switch to another character
+    // (its snapshot and identity), so the next reading waits for the game to name its character,
+    // and an unnamed snapshot no longer goes to the named one after 30 seconds. The reading on the
+    // card stays where it is.
+    private void OnResync() { identityDue = true; namedHasReading = false; }
     // Runs when a reading has had no owner for the publish delay. Without any named character
     // the reading keeps waiting for the identity message.
     private void AttributePending()
@@ -1190,7 +1200,7 @@ public partial class MainWindow : Window
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
-            gameCharacterId = identity.Id; nameDue = false;
+            gameCharacterId = identity.Id; nameDue = false; identityDue = false;
             // A snapshot without Odyle that waited for a name belongs to this character, unless its
             // Odyle was read already (the reading is kept).
             if (odyleMissingDue)

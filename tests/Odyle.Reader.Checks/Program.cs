@@ -80,6 +80,15 @@ static class ReaderChecks
                 Check(Owner() == "", "an unnamed snapshot never goes to a named character that had no Odyle reading");
                 Field("namedHasReading").SetValue(window, true); Call(window, "AttributePending");
                 Check(Owner() == "TestHero|2304", "after 30 seconds an unnamed snapshot goes to the named character whose Odyle was read");
+                // A resync may have lost a switch (the new character's snapshot and identity): the next reading,
+                // even a live update, waits for the game's name and never falls back to the character named before.
+                Call(window, "OnResync");
+                Call(window, "OnCandidate", inert, new PacketCandidate(200, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 200 });
+                Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Call(window, "AttributePending");
+                Check(Owner() == "" && !(bool)Field("namedHasReading").GetValue(window)! && Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "after a resync the next reading waits for the game's name instead of going to the character named before");
+                Call(window, "OnCandidate", inert, new PacketCandidate(205, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
+                Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+                Check(Owner() == "", "and so do the updates after it");
                 // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
                 Call(window, "ResetAttribution");
                 Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
@@ -251,6 +260,11 @@ static class ReaderChecks
                 Check(npcapTimer.IsEnabled && Control<Button>(window, "NpcapLink").Visibility == Visibility.Visible, "a missing Npcap is looked for again");
                 Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
                 Check(!npcapTimer.IsEnabled && Control<Button>(window, "NpcapLink").Visibility == Visibility.Collapsed && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is installed · pair Odyle in settings to read the game.", "an installed Npcap clears the line");
+                // A saved pairing that is still being retried does not ask to pair again.
+                Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15)); Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
+                Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is installed · the reader starts once the server is reached.", "an installed Npcap tells a paired app that is still retrying the server that the reader starts by itself");
+                Field("retryAt").SetValue(window, null);
                 // Copy diagnostics: version, Npcap, interfaces, the reader's last states and the end of the log,
                 // with the account and this PC's name masked (built here without touching the clipboard).
                 Log.Info("Connected to http://127.0.0.1:8090 as account abcdefghij12345 on device \"DESKTOP-CHECK\".");

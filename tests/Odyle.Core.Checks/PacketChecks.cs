@@ -70,10 +70,13 @@ static class PacketChecks
         Assert(seen.Last() is { Total: 120, Base: 120, Bonus: 0 }, "base only (tag 04)");
         decoder.Feed(Frame(Snapshot(Filler(5), Stat(0x00, Odyle))));
         Assert(seen.Last() is { Total: 0, Base: 0, Bonus: 0 } && seen.Count == 5 && missing == 0, "0 / 0 (tag 00)");
-        // A snapshot understood whole without the record: the character has no Odyle yet. A lone
+        // A full snapshot understood whole without the record: the character has no Odyle yet. A lone
         // record of the second counter is never taken for it.
-        decoder.Feed(Frame(Snapshot(Filler(6), Stat(0x0c, Counter, 3, 1), Filler(7))));
-        Assert(seen.Count == 5 && missing == 1 && observed.Last() is { Records: 3, Read: false, Fields.Length: 0 }, "a lone 80000001 snapshot is not Odyle; the snapshot says Odyle is missing");
+        decoder.Feed(Frame(Snapshot([.. Enumerable.Range(6, 36).Select(Filler), Stat(0x0c, Counter, 3, 1)])));
+        Assert(seen.Count == 5 && missing == 1 && observed.Last() is { Records: 37, Read: false, Fields.Length: 0 }, "a lone 80000001 snapshot is not Odyle; the full snapshot says Odyle is missing");
+        // A short snapshot (a partial refresh, or a count of 0) says nothing about Odyle.
+        decoder.Feed(Frame(Snapshot(Filler(6), Stat(0x0c, Counter, 3, 1), Filler(7)))); decoder.Feed(Frame([0x0b, 0x61, 0]));
+        Assert(seen.Count == 5 && missing == 1 && observed.Last() is { Records: 0, Read: false }, "a short snapshot without the record is no proof that Odyle is missing");
         // A layout with an unknown tag is not walked; the Odyle record is then found by its id.
         decoder.Feed(Frame(Snapshot(Filler(8), [0x10, 1, 2, 3, 4, 5], Stat(0x0c, Odyle, 105, 1110))));
         Assert(seen.Last() is { Total: 1215 } && observed.Last() is { Records: null, Read: true }, "the id search reads an unwalked layout");
@@ -125,18 +128,26 @@ static class PacketChecks
         decoder.Feed(Frame(Snapshot(Stat(0x08, Odyle, 0, 390))));
         decoder.Feed(Frame(Identity(42, "TestHero"))); decoder.Feed(Frame(Identity(42, "TestHero")));
         Assert(changes.Count == 0 && named.Count == 2 && named[0] is { Id: 42, CharacterName: "TestHero", Server: "Lumiel", Class: 25 }, "the first and a repeated own identity are no switch");
-        // A short, unreadable or other 3336 is no identity: it neither switches nor stops the reading.
-        decoder.Feed(Frame([0x33, 0x36])); decoder.Feed(Frame([0x33, 0x36, 43, 0, 0, 0, 0, 0])); decoder.Feed(Frame(Identity(43, "$tutorial"))); decoder.Feed(Frame(Identity(43, "Other", job: 99)));
+        // A short 3336, one without a readable id and an unreadable one of the same character are no
+        // identity: they neither switch nor stop the reading.
+        decoder.Feed(Frame([0x33, 0x36])); decoder.Feed(Frame([0x33, 0x36, 43, 0, 0, 0, 0])); decoder.Feed(Frame([0x33, 0x36, 0, 0, 0, 0, 0, 1, 1, 65]));
+        decoder.Feed(Frame([0x33, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0])); decoder.Feed(Frame(Identity(42, "$tutorial"))); decoder.Feed(Frame(Identity(42, "TestHero", job: 99)));
         decoder.Feed(Frame(Update(0, Stat(0x08, Odyle, 0, 380))));
-        Assert(changes.Count == 0 && named.Count == 2 && seen.Last().Total == 380, "short or unreadable 3336 frames change nothing");
+        Assert(changes.Count == 0 && named.Count == 2 && seen.Last().Total == 380, "short, id-less and unreadable 3336 frames of the same character change nothing");
         decoder.Feed(Frame(Identity(43, "Switched")));
         Assert(changes.SequenceEqual([43UL]) && named.Last().CharacterName == "Switched", "a valid identity with another id is a switch");
         decoder.Feed(Frame(Identity(43, "Switched"))); Assert(changes.Count == 1, "its repeat is not another switch");
+        // A character whose message this build cannot read (an unknown class, a mask without the
+        // name, an unknown server) is still a switch, without a name: its Odyle never goes to the previous one.
+        decoder.Feed(Frame(Identity(45, "Other", job: 99)));
+        Assert(changes.SequenceEqual([43UL, 45UL]) && named.Count == 4, "an unreadable identity with another id is a switch that names nobody");
+        decoder.Feed(Frame(Identity(45, "Other", server: 999))); decoder.Feed(Frame(Identity(45, "$tutorial")));
+        Assert(changes.Count == 2 && named.Count == 4, "its repeats are no further switch");
         decoder.Feed(Frame(Identity(44, "Brawler", job: 46)));
         Assert(named.Last() is { CharacterName: "Brawler", Class: 46 } && changes.Last() == 44, "a Brawler is named");
         // A resync keeps the character the decoder knew.
         decoder.Resync(); decoder.Feed([0x06, 0x00, 0x36, .. Frame(Identity(44, "Brawler", job: 46))]);
-        Assert(decoder.Synchronized && changes.Count == 2, "the same character after a resync is no switch");
+        Assert(decoder.Synchronized && changes.Count == 3, "the same character after a resync is no switch");
     }
     static void Framing()
     {
@@ -162,6 +173,15 @@ static class PacketChecks
         Assert(!falseMatch.Synchronized, "heartbeat bytes before an impossible length are not trusted");
         falseMatch.Feed([0x0e, 0x00, 0x36, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 70)))]);
         Assert(falseMatch.Synchronized && falseSeen.Single().Total == 70, "the long heartbeat and zero padding synchronise");
+        // Heartbeat bytes inside a payload before a length near 1 MB: the scan goes on at once
+        // instead of waiting for a megabyte of stream.
+        var swallow = new ExperimentalOdyleDecoder(startsAligned: false); var swallowSeen = new List<PacketCandidate>(); swallow.Candidate += swallowSeen.Add;
+        swallow.Feed([0x06, 0x00, 0x36, 0xff, 0xff, 0x3f, 1, 2, 3, 0x06, 0x00, 0x36, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 80)))]);
+        Assert(swallow.Synchronized && swallowSeen.Single().Total == 80, "a scanned boundary before a frame above 64 KB is not trusted");
+        // Once the next heartbeat confirms the boundary, large frames are read as usual.
+        var large = new byte[70000]; large[0] = 0x7a; large[1] = 0x01;
+        swallow.Feed([0x06, 0x00, 0x36, .. Frame(large), .. Frame(Snapshot(Stat(0x08, Odyle, 0, 85)))]);
+        Assert(swallowSeen.Last().Total == 85 && swallowSeen.Count == 2, "a confirmed boundary reads frames above 64 KB");
     }
     // Random input never makes the stat, identity or framing code throw anything but the
     // framing error a connection resyncs on; random layouts read exactly their Odyle record.
@@ -180,7 +200,7 @@ static class PacketChecks
             var decoder = new ExperimentalOdyleDecoder(); int? read = null; var missing = false;
             decoder.Candidate += c => read = c.Total; decoder.SnapshotWithoutOdyle += () => missing = true;
             decoder.Feed(Frame(Snapshot([.. records])));
-            Assert(read == expected && missing == (expected is null), "random stat layout " + round);
+            Assert(read == expected && missing == (expected is null && count >= 32), "random stat layout " + round);
         }
         byte[][] opcodes = [[0x0b, 0x61], [0x0c, 0x61], [0x33, 0x36]];
         var framed = new ExperimentalOdyleDecoder();
@@ -220,16 +240,16 @@ static class PacketChecks
         Assert(streams.Feed(game, next + 10, 0x18, snapshot) == 0, "data after a lost segment waits and does not count");
         streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(1)); Assert(statuses.Last().Kind == CaptureStatus.Listening, "a short gap is waited out");
         streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
-        Assert(!streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Midstream, Message: var lost } && lost.Contains("lost") && lost.Contains("resyncing"), "a persistent gap resyncs the connection instead of blocking it");
+        Assert(!streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var lost } && lost.Contains("lost") && lost.Contains("resyncing"), "a persistent gap resyncs the connection instead of blocking it");
         // Reading picks up at the next heartbeat, and the character the decoder knew is still known.
         byte[] resumed = [0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 140))), .. identity];
         var later = next + 5000;
         Assert(streams.Feed(game, later, 0x18, resumed) == resumed.Length && candidates.Last().Total == 140 && changes.Count == 0 && statuses.Last().Kind == CaptureStatus.Resumed, "after a resync the next heartbeat resumes reading without a switch");
         later += (uint)resumed.Length;
-        Assert(streams.Feed(game, later - 3, 0x18, new byte[] { 9, 9, 9 }) == 0 && !streams.IsBlocked(game) && statuses.Last().Kind == CaptureStatus.Midstream, "a conflicting retransmission resyncs");
+        Assert(streams.Feed(game, later - 3, 0x18, new byte[] { 9, 9, 9 }) == 0 && !streams.IsBlocked(game) && statuses.Last().Kind == CaptureStatus.Resyncing, "a conflicting retransmission resyncs");
         // Two heartbeats, then a length no frame can have.
         var unframed = new byte[] { 0x06, 0x00, 0x36, 0x06, 0x00, 0x36, 0x01, 0x00 };
-        Assert(streams.Feed(game, 1, 0x18, unframed) == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Midstream, Message: var unreadable } && unreadable.StartsWith("Unreadable"), "bytes that do not frame resync");
+        Assert(streams.Feed(game, 1, 0x18, unframed) == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var unreadable } && unreadable.StartsWith("Unreadable"), "bytes that do not frame resync");
         streams.Feed(game, 1, 0x18, unframed); streams.Feed(game, 1, 0x18, unframed);
         Assert(!streams.IsBlocked(game), "five resyncs in a minute are tolerated");
         streams.Feed(game, 1, 0x18, unframed);

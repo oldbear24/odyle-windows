@@ -234,6 +234,7 @@ public sealed class PacketCapture : IAsyncDisposable
         }
         finally { Marshal.FreeHGlobal(table); }
     }
+    private static byte[] Address(IntPtr row, int offset) { var bytes = new byte[16]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, 16); return bytes; }
     private static ushort PortAt(IntPtr row, int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
     private static TcpFlow[] GameFlows()
     {
@@ -248,6 +249,14 @@ public sealed class PacketCapture : IAsyncDisposable
             var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
             result.Add(new(local, PortAt(row, 8), remote, PortAt(row, 16)));
         });
+        // A dual-mode socket to an IPv4 server is listed in the IPv6 table with IPv4-mapped
+        // addresses; its packets are IPv4 and are read like the rows above.
+        ReadTcpTable(23, 56, row =>
+        {
+            if (result.Count >= 32 || PortAt(row, 44) != GameConnection.Port || Marshal.ReadInt32(row, 48) is not (3 or 4 or 5)) return;
+            if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(Marshal.ReadInt32(row, 52), processes))) return;
+            result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44)));
+        });
         return result.ToArray();
     }
     // What GameConnection.Explain needs: the live connections of the game's processes and every
@@ -257,6 +266,8 @@ public sealed class PacketCapture : IAsyncDisposable
         var result = new List<TcpConnection>(); var processes = new Dictionary<int, string>();
         void Add(IntPtr row, int state, int pid, int port, bool ipv6)
         {
+            // An IPv4-mapped row of the IPv6 table is an IPv4 connection.
+            if (ipv6 && GameConnection.MappedIPv4(Address(row, 24)) is not null) ipv6 = false;
             if (result.Count >= 64 || Marshal.ReadInt32(row, state) is not (3 or 4 or 5)) return;
             var owner = Marshal.ReadInt32(row, pid); var remote = PortAt(row, port); var game = games.Contains(owner);
             if (game || remote == GameConnection.Port) result.Add(new(game, ProcessName(owner, processes), remote, ipv6));

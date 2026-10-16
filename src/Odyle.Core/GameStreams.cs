@@ -1,8 +1,8 @@
 using static Odyle.Core.Localizer;
 
 namespace Odyle.Core;
-// Resumed: a connection that resynced is read again.
-public enum CaptureStatus { Waiting, Listening, Midstream, Resumed, Problem }
+// Resyncing: a connection lost bytes and waits for the next heartbeat; Resumed: it is read again.
+public enum CaptureStatus { Waiting, Listening, Midstream, Resumed, Problem, Resyncing }
 // One TCP connection of the game as this PC receives it: Local is this PC, Remote the game server.
 public sealed record TcpFlow(string Local, ushort LocalPort, string Remote, ushort RemotePort);
 // The game's connections seen on one capture interface: reassembly and decoding per
@@ -11,7 +11,8 @@ public sealed record TcpFlow(string Local, ushort LocalPort, string Remote, usho
 // A lost segment that does not arrive within three seconds, a conflicting retransmission
 // or bytes that do not frame resync the connection: reassembly starts again at the next
 // segment and the decoder waits for the next protocol heartbeat, keeping the character it
-// knows. More than five resyncs in a minute block the connection until it closes, so a
+// knows. The lost bytes may have held a character switch, so the status says Resyncing and
+// the app holds the next reading until the game names its character. More than five resyncs in a minute block the connection until it closes, so a
 // changed protocol shows up as a problem instead of a loop.
 public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<CaptureStatus, string> status)
 {
@@ -70,7 +71,7 @@ public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<
         while (stream.Resyncs.TryPeek(out var first) && now - first > ResyncWindow) stream.Resyncs.Dequeue();
         stream.Resyncs.Enqueue(now);
         if (stream.Resyncs.Count > ResyncLimit) { Block(stream, T("Unsupported or incomplete packets · reconnect the game before retrying.")); return; }
-        stream.Tcp.Reset(); stream.Decoder.Resync(); stream.Resyncing = true; status(CaptureStatus.Midstream, message);
+        stream.Tcp.Reset(); stream.Decoder.Resync(); stream.Resyncing = true; status(CaptureStatus.Resyncing, message);
     }
     private void Block(Stream stream, string message) { stream.Blocked = true; stream.Tcp.Reset(); stream.Decoder.Reset(); status(CaptureStatus.Problem, message); }
 }

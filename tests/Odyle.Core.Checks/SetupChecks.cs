@@ -13,6 +13,7 @@ static class SetupChecks
         Check(GameConnection.Explain([Game(443), new(false, "ExitLag", GameConnection.Port, false)]) == "The game connection runs through ExitLag, not AION2 · an accelerator or proxy hides it from the reader.", "another program on the game port is named");
         Check(GameConnection.Explain([Game(443), Game(7001), Game(7000), Game(7001), Game(9000), Game(9100)]) == "AION2 is connected, but not on the game port 13328 (ports 7000, 7001, 9000) · the reader only reads 13328.", "other game ports are listed, at most three");
         Check(GameConnection.Explain([Game(7000), Game(GameConnection.Port, ipv6: true), new(false, "ExitLag", GameConnection.Port, false)])!.Contains("IPv6"), "IPv6 is the first reason");
+        Check(GameConnection.MappedIPv4(System.Net.IPAddress.Parse("::ffff:203.0.113.5").GetAddressBytes())?.ToString() == "203.0.113.5" && GameConnection.MappedIPv4(System.Net.IPAddress.Parse("2001:db8::5").GetAddressBytes()) is null && GameConnection.MappedIPv4(System.Net.IPAddress.Parse("::5").GetAddressBytes()) is null && GameConnection.MappedIPv4(new byte[4]) is null, "an IPv4-mapped row of the IPv6 table is IPv4, a real IPv6 address is not");
 
         // The report masks the account id, this PC's name and the Windows user folder besides what the log masks.
         const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InUiLCJ0eXBlIjoiYXV0aCJ9.c2lnbmF0dXJlLXNpZ25hdHVyZQ";

@@ -73,7 +73,7 @@
    </DockPanel>
    <!-- Troubleshooting: a small log on this PC, never with tokens, device keys or pairing codes; diagnostics go to the clipboard only -->
    <TextBlock Style="{StaticResource Section}" Text="TROUBLESHOOTING"/>
-   <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard, without tokens or account details." Margin="2,0,0,4"/>
+   <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard. Tokens, device keys, pairing codes, your account id, this PC's name and your Windows user name are left out; character names and the server address stay in." Margin="2,0,0,4"/>
    <DockPanel><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><Button x:Name="DiagnosticsButton" HorizontalAlignment="Left" Style="{StaticResource Ghost}" Content="Copy diagnostics" Margin="-6,0,0,0" VerticalAlignment="Center" ToolTip="A short report for a bug report · nothing is sent until you paste it somewhere"/></DockPanel>
   </StackPanel>
  </ScrollViewer>

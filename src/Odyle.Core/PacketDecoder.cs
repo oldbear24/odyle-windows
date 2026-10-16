@@ -122,6 +122,9 @@ public sealed class ExperimentalOdyleDecoder
     /// <summary>Stat resource id of Odyle, bytes 01 87 93 03 on the wire. 80000001 is another, small counter.</summary>
     public const uint OdyleResource = 60000001;
     private const int FrameLimit = 1048576, BundleLimit = 8 * 1048576, ValueLimit = 1000000;
+    // Until a second heartbeat confirms a boundary found by scanning, a frame may claim at most
+    // 64 KB; a full stat snapshot holds at least FullSnapshotRecords records (73 on Global).
+    private const int ProbationFrameLimit = 65536, FullSnapshotRecords = 32;
     // Undecoded stream bytes live in buffer[start..end). Consuming a frame only moves
     // start; the data is compacted or grown when the tail runs out of room, instead
     // of shifting the whole remainder on every frame.
@@ -129,24 +132,24 @@ public sealed class ExperimentalOdyleDecoder
     private int start, end;
     private ulong? ownCharacter;
     private readonly bool startsAligned;
-    private bool synchronized;
+    private bool synchronized, probation;
     /// <param name="startsAligned">False for a connection joined midstream; framing then waits for a heartbeat.</param>
     public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
     /// <summary>True once a frame boundary is known. A midstream start or a resync waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
-    /// <summary>The game's id of the character switched to: a valid own identity with another id than before on this connection.</summary>
+    /// <summary>The game's id of the character switched to: an own-character message with another id than before on this connection, also one whose name, server or class cannot be read (no IdentityObserved follows then).</summary>
     public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
-    /// <summary>A stat snapshot whose layout was read whole has no Odyle record: the character has no Odyle yet.</summary>
+    /// <summary>A full stat snapshot (at least 32 records) whose layout was read whole has no Odyle record: the character has no Odyle yet.</summary>
     public event Action? SnapshotWithoutOdyle;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
-    public void Reset() { start = end = 0; ownCharacter = null; synchronized = startsAligned; }
+    public void Reset() { start = end = 0; ownCharacter = null; synchronized = startsAligned; probation = false; }
     /// <summary>Drops the undecoded bytes and waits for the next heartbeat; the own character stays known.</summary>
-    public void Resync() { start = end = 0; synchronized = false; }
+    public void Resync() { start = end = 0; synchronized = false; probation = false; }
     private void Push(ReadOnlySpan<byte> bytes)
     {
         if (end - start + bytes.Length > FrameLimit) throw new InvalidDataException("Frame buffer limit exceeded.");
@@ -168,10 +171,21 @@ public sealed class ExperimentalOdyleDecoder
             var header = Header(data, out var position, out var length);
             if (header == FrameHeader.Incomplete) return;
             if (header == FrameHeader.Invalid) throw new InvalidDataException("Unsupported game framing.");
+            // A boundary found by scanning is on probation until the next heartbeat: a longer claim
+            // means the heartbeat bytes were payload, and the scan goes on from the next byte instead
+            // of waiting for up to 1 MB of stream.
+            if (probation && length > ProbationFrameLimit)
+            {
+                Drop(1); synchronized = false;
+                if (!Synchronize()) return;
+                continue;
+            }
             if (length == 0) { Drop(1); continue; }
             if (data.Length < length) return;
             var frame = data.Slice(position, length - position).ToArray();
-            Drop(length); DecodeFrame(frame, 0);
+            Drop(length);
+            if (probation && frame is [0, 0x36, ..]) probation = false;
+            DecodeFrame(frame, 0);
         }
     }
     private enum FrameHeader { Valid, Incomplete, Invalid }
@@ -189,6 +203,7 @@ public sealed class ExperimentalOdyleDecoder
     // A midstream capture or a resync has no frame boundary. A complete protocol heartbeat
     // (06 00 36, or the 11-byte 0E 00 36 form) marks one, but only when the frame after it
     // starts with a valid length too: three matching bytes inside a payload are not enough.
+    // The heartbeat is dropped, and the boundary stays on probation until the next one.
     private bool Synchronize()
     {
         var data = buffer.AsSpan(start, end - start);
@@ -200,9 +215,8 @@ public sealed class ExperimentalOdyleDecoder
             if (padding == 8) continue;
             var header = Header(data[Math.Min(next, data.Length)..], out _, out _);
             if (header == FrameHeader.Invalid) continue;
-            Drop(i);
-            if (header == FrameHeader.Incomplete) return false;
-            synchronized = true; return true;
+            if (header == FrameHeader.Incomplete) { Drop(i); return false; }
+            Drop(next); synchronized = probation = true; return true;
         }
         if (data.Length > 10) Drop(data.Length - 10);
         return false;
@@ -238,13 +252,16 @@ public sealed class ExperimentalOdyleDecoder
         if (frame[0] == 0x33 && frame[1] == 0x36)
         {
             // The own-character identity may arrive after its stat snapshot and repeats every
-            // few minutes. Only a complete identity counts: a short or unreadable 3336 changes
-            // nothing, the same id again is a repeat, and only another id is a switch.
-            if (GameIdentity.Read(frame[2..]) is not { } identity) return;
-            var switched = ownCharacter is { } previous && previous != identity.Id;
-            ownCharacter = identity.Id;
-            if (switched) CharacterChanged?.Invoke(identity.Id);
-            IdentityObserved?.Invoke(identity);
+            // few minutes. A 3336 without a readable id or with a short tail changes nothing, and
+            // the same id again is a repeat. Another id is a switch even when the rest cannot be
+            // read (a class or server this build does not know): the new character then stays
+            // unnamed instead of its Odyle going to the previous one.
+            var identity = GameIdentity.Read(frame[2..]); var offset = 2;
+            if (!TryVarint(frame, ref offset, out var id) || id == 0 || identity is null && frame.Length - offset < 5) return;
+            var switched = ownCharacter is { } previous && previous != id;
+            ownCharacter = id;
+            if (switched) CharacterChanged?.Invoke(id);
+            if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
         if (frame[1] != 0x61) return; // Sprint/dash fields never enter this adapter.
@@ -282,8 +299,9 @@ public sealed class ExperimentalOdyleDecoder
         var read = fields.Count > 0 && fields.All(f => f.Base == fields[0].Base && f.Bonus == fields[0].Bonus) && fields[0].Base + fields[0].Bonus <= ValueLimit;
         SnapshotObserved?.Invoke(new(payload.Length, records, fields.ToArray(), read));
         if (read) Candidate?.Invoke(new((int)(fields[0].Base + fields[0].Bonus), Version) { Base = (int)fields[0].Base, Bonus = (int)fields[0].Bonus });
-        // Only a snapshot understood whole shows that the record is missing, not just unfound.
-        else if (records is not null && fields.Count == 0) SnapshotWithoutOdyle?.Invoke();
+        // Only a full snapshot understood whole shows that the record is missing, not just unfound;
+        // a short one may be a partial refresh.
+        else if (records >= FullSnapshotRecords && fields.Count == 0) SnapshotWithoutOdyle?.Invoke();
     }
     // A stat update: direction byte, one record, trailer. An increase (direction 1) ends with a
     // flag byte and a 32-bit delta, a decrease or a regeneration tick (direction 0) with one byte;

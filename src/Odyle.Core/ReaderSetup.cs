@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using static Odyle.Core.Localizer;
@@ -13,6 +14,15 @@ public static class GameConnection
     public const ushort Port = 13328;
     // The game client's process (AION2; AION-2 in some builds).
     public static bool IsGameProcess(string name) => name.Contains("AION2", StringComparison.OrdinalIgnoreCase) || name.Contains("AION-2", StringComparison.OrdinalIgnoreCase);
+    // A dual-mode socket connected to an IPv4 server is listed in the IPv6 table with an
+    // IPv4-mapped address (::ffff:a.b.c.d), but its packets are IPv4: the IPv4 address, or null
+    // for a real IPv6 address.
+    public static IPAddress? MappedIPv4(ReadOnlySpan<byte> address)
+    {
+        if (address.Length != 16) return null;
+        var ip = new IPAddress(address);
+        return ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : null;
+    }
     // Why a running game shows no IPv4 connection to the game port, or null when the table does
     // not say: the game connected over IPv6, another program (an accelerator, a proxy or a renamed
     // client) holds the connection to the game port, or the game is connected on other ports only.
