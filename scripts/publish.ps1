@@ -7,11 +7,22 @@ $packageKind = if ($SelfContained) { 'self-contained' } else { 'small' }
 $output = Join-Path $odyleRoot ('artifacts/staging/' + $packageKind + '-' + $Runtime + '-' + [guid]::NewGuid().ToString('N'))
 # The flag forms: some .NET 10 SDKs read "--self-contained false" as the bare flag and bundle the runtime anyway.
 $runtimeKind = if ($SelfContained) { '--self-contained' } else { '--no-self-contained' }
-# Release builds stamp their version into the executable and the archive name.
-$versionArgs = @(); if ($Version) { $versionArgs += "-p:Version=$Version" }
+# Release builds stamp their version into the executable and the archive name, and are marked as
+# releases (OdyleRelease), which update themselves.
+$versionArgs = @(); if ($Version) { $versionArgs += "-p:Version=$Version"; $versionArgs += '-p:OdyleRelease=true' }
 dotnet publish (Join-Path $odyleRoot 'src/Odyle.Reader/Odyle.Reader.csproj') -c Release -r $Runtime $runtimeKind -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false @versionArgs -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Windows publish failed.' }
 Copy-Item -LiteralPath (Join-Path $odyleRoot 'THIRD-PARTY.md') -Destination $output
+# A release package must update itself: the built Odyle says what it is (--build-info). Only x64
+# builds run on the build machine; arm64 ones are built from the same flags.
+if ($Version -and $Runtime -eq 'win-x64' -and [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'X64') {
+  $info = Join-Path ([System.IO.Path]::GetTempPath()) ('odyle-build-' + [guid]::NewGuid().ToString('N') + '.json')
+  $probe = Start-Process -FilePath (Join-Path $output 'Odyle.exe') -ArgumentList @('--build-info', "`"$info`"") -Wait -PassThru
+  if (!(Test-Path -LiteralPath $info)) { throw "The built Odyle did not say what it is (exit code $($probe.ExitCode))." }
+  $built = Get-Content -LiteralPath $info -Raw | ConvertFrom-Json; Remove-Item -LiteralPath $info
+  if (-not $built.release -or $built.version -ne $Version -or [bool]$built.selfContained -ne [bool]$SelfContained) { throw "This package would not update itself: $($built | ConvertTo-Json -Compress)" }
+  Write-Output "Odyle $($built.version) ($packageKind $Runtime) is a release build that updates itself."
+}
 $suffix = if ($SelfContained) { '-self-contained' } else { '' }
 $prefix = if ($Version) { "odyle-$Version" } else { 'odyle' }
 $artifacts = Join-Path $odyleRoot 'artifacts'
