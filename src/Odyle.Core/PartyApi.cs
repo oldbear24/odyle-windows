@@ -35,6 +35,9 @@ public sealed record PacketReading(string SessionId, long Sequence, string Chara
 public sealed record ReportResponse(Character Character);
 public sealed class PartyApi : IDisposable
 {
+    // The backend's 400 answer to a reading whose adapter its registry does not list
+    // (backend/odyle/validation.go); the app recognises it by this exact text.
+    public const string AdapterRefused = "This packet adapter has not been validated for Global. No reading was saved.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;

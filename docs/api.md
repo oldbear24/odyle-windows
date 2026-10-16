@@ -11,6 +11,7 @@ Every answer that is not 2xx becomes an error carrying its status code. The mess
 | Answer | What the app does |
 | --- | --- |
 | 401 | The token expired or was replaced: a paired app signs in with its device key (`desktop-sign-in`) and repeats the request once. A 401 from that sign-in means the server no longer knows this PC: the pairing has ended, every further request fails at once without contacting the server, the saved session is removed and the app asks for a new connection link |
+| 400 | A refused reading is shown as **Not saved** with the message and retried after a minute. *This packet adapter has not been validated for Global. No reading was saved.* means the backend does not list this build's adapter: the app checks GitHub for its update at once (then at most hourly), the card says **Odyle needs an update to keep reading** and the reading is tried again every ten minutes |
 | 403 | Never a lost pairing. *Publisher session expired. Reconnect.* starts a new reader session at the next heartbeat; a refused reading is shown as **Not saved** and retried after a minute; at start-up a 403 is retried like an unavailable server |
 | 429 | Every request pauses until `Retry-After` (seconds or an HTTP date; a minute when missing or unusable, at most an hour) without reaching the server; the reader session is kept, so the reading stays live. The footer shows **Server busy · retrying in …** |
 | 5xx, timeout, offline | While running: retried with the next 20-second heartbeat, which opens a new reader session. At start-up the saved pairing is kept and tried again after 15 s, 30 s, 1 min, 2 min and then every 5 minutes (**Reconnect saved account** tries at once) |
@@ -53,13 +54,13 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
   "server": "Lumiel",
   "region": "GLOBAL_EU",
   "value": 390,
-  "parserVersion": "global-reference-v1",
+  "parserVersion": "global-reference-v2",
   "source": "packet",
   "confirmed": true
 }
 ```
 
-An existing `characterId` must belong to the account and keeps its saved identity. `value` is an integer 0–1,000,000, `sequence` grows per session and `parserVersion` must be listed in the backend's adapter registry (`global-reference-v1`). The app sends a value the first time it reads a character and afterwards only when it changes; the heartbeat keeps an unchanged value live. Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Presence follows the dashboard's rule: live while the heartbeat is younger than 45 seconds, stale after that or once invalidated, offline after 90 seconds (`Odyle.Core.Readiness`).
+An existing `characterId` must belong to the account and keeps its saved identity. `value` is an integer 0–1,000,000, `sequence` grows per session and `parserVersion` must be listed in the backend's adapter registry: this app sends `global-reference-v2`, and backends keep accepting `global-reference-v1` from apps not yet updated. The backend must list a new adapter name before the Windows release that sends it is pushed. The app sends a value the first time it reads a character and afterwards only when it changes; the heartbeat keeps an unchanged value live. Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Presence follows the dashboard's rule: live while the heartbeat is younger than 45 seconds, stale after that or once invalidated, offline after 90 seconds (`Odyle.Core.Readiness`).
 
 ## Rooms, party and planned runs
 

@@ -40,6 +40,8 @@ static class ConnectionChecks
             throw new Exception("Connection check failed: a failing answer was accepted.");
         }
         Check(await Fails(Answer(HttpStatusCode.BadRequest, """{"message":"Outdated reading.","data":{}}""")) is { StatusCode: HttpStatusCode.BadRequest, Message: "Outdated reading." }, "the server's message is kept");
+        // The backend's refusal of an adapter it does not list arrives word for word, so the app can tell it needs an update.
+        Check(await Fails(Answer(HttpStatusCode.BadRequest, """{"message":"This packet adapter has not been validated for Global. No reading was saved.","data":{}}""")) is { StatusCode: HttpStatusCode.BadRequest, Message: PartyApi.AdapterRefused }, "the adapter refusal is recognised");
         Check(await Fails(Answer(HttpStatusCode.InternalServerError, """{"code":500,"data":{}}""")) is { StatusCode: HttpStatusCode.InternalServerError, Message: "Server returned 500." }, "JSON without a message");
         Check(await Fails(Answer(HttpStatusCode.BadGateway, "<html>Bad gateway</html>", "text/html")) is { StatusCode: HttpStatusCode.BadGateway, Message: "Server returned 502." }, "a body that is not JSON");
         Check(await Fails(Answer(HttpStatusCode.ServiceUnavailable, "")) is { StatusCode: HttpStatusCode.ServiceUnavailable }, "an empty error body");

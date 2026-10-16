@@ -5,11 +5,13 @@ using Odyle.Core;
 
 namespace Odyle.Reader;
 // The live character a restarting Odyle (update, language) hands to the next start. The
-// game names a character only at login or a channel change, so without it the new start
-// would wait for a relog. Total and the owner are the last reading, already saved on the
-// account; the next start sends it again under its own session. Nothing secret is kept.
+// game names a character at login, at a channel change and every few minutes, so without
+// it the new start would wait for that. Total is the last reading, already saved on the
+// account; the next start sends it again under its own session, with the adapter name that
+// read it. Nothing secret is kept. A hand-over written by an older build carries stat owner
+// fields too, which are ignored.
 public sealed record Handover(string Endpoint, string AccountId, string CharacterId, string CharacterKey, string CharacterName,
-    int Total, ulong EntityId, bool OwnerConfirmed, string ParserVersion, CandidateSource Source, DateTimeOffset SavedAt);
+    int Total, string ParserVersion, CandidateSource Source, DateTimeOffset SavedAt);
 public static class HandoverStore
 {
     // A restart takes seconds; an older hand-over may no longer describe what the game plays.

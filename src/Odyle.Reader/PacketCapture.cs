@@ -29,15 +29,12 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<PacketCandidate>? Candidate;
     public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
+    public event Action? SnapshotWithoutOdyle;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     private long receivedPackets, gameBytes;
-    // Stat owner ids snapshots confirmed, shared by every stream so updates can be trusted before a snapshot.
-    private readonly KnownOwners owners = new();
-    /// <summary>Trust a stat owner id a snapshot confirmed on this or an earlier run.</summary>
-    public void TrustOwner(ulong id) => owners.Add(id);
     public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
     // Payload bytes that reached a decoder; blocked or unknown connections add nothing.
     public long GameBytes => Interlocked.Read(ref gameBytes);
@@ -220,14 +217,14 @@ public sealed class PacketCapture : IAsyncDisposable
     {
         decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += id => CharacterChanged?.Invoke(id); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
-        decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value);
+        decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value); decoder.SnapshotWithoutOdyle += () => SnapshotWithoutOdyle?.Invoke();
     }
     private void Receive(string name, Worker worker, CancellationToken token)
     {
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
         worker.OpenedAt = DateTimeOffset.UtcNow;
         if (handle == IntPtr.Zero) { Stopped(name, worker, token, "cannot be opened: " + error); return; }
-        var streams = new GameStreams(owners, Attach, (kind, message) => Status?.Invoke(kind, message));
+        var streams = new GameStreams(Attach, (kind, message) => Status?.Invoke(kind, message));
         var flows = Array.Empty<TcpFlow>(); var nextRefresh = DateTimeOffset.MinValue; var reason = "";
         try
         {

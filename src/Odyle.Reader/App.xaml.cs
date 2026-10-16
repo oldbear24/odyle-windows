@@ -43,12 +43,19 @@ public partial class App : System.Windows.Application
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
         if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
-        Updater.CleanUp(); Autostart.Repair();
+        Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
         var window = new MainWindow(); MainWindow = window;
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
         if (!tray) window.Show();
         _ = window.StartAsync(tray);
+    }
+    // Builds before the global-reference-v2 decoder kept stat owner ids in stat-owners.json. Odyle
+    // is now read by its resource id, so the file is no longer used and is removed.
+    private static void ForgetStatOwners()
+    {
+        try { System.IO.File.Delete(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "stat-owners.json")); }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException) { }
     }
     // This start came from the user, so it may hand the foreground on to the running Odyle.
     private static void ShowRunning(string user)

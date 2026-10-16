@@ -1,7 +1,9 @@
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -18,9 +20,9 @@ static class ReaderChecks
         PreferencesStore.FilePath = Path.Combine(Path.GetTempPath(), "odyle-check-preferences-" + Guid.NewGuid().ToString("N") + ".json");
         // The checks read English texts whatever the language of the Windows running them.
         Localizer.Use("en");
-        // The pairing, stat owners and the log go to temporary files too.
+        // The pairing, the hand-over and the log go to temporary files too.
         var scratch = Directory.CreateTempSubdirectory("odyle-check-").FullName;
-        SessionStore.FilePath = Path.Combine(scratch, "session.bin"); OwnerStore.FilePath = Path.Combine(scratch, "stat-owners.json"); HandoverStore.FilePath = Path.Combine(scratch, "handover.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
+        SessionStore.FilePath = Path.Combine(scratch, "session.bin"); HandoverStore.FilePath = Path.Combine(scratch, "handover.json"); Log.UseFolder(Path.Combine(scratch, "logs"));
         // Start with Windows writes to a Run key kept in memory, never to the real one.
         var runKey = new MemoryRunKey(); Autostart.Key = runKey; Autostart.Executable = @"C:\Odyle\Odyle.exe";
         App.Headless = true; var app = new App(); app.InitializeComponent();
@@ -61,27 +63,52 @@ static class ReaderChecks
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
-                Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
+                Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
                 Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
                 Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
                 Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
                 Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
                 // A snapshot the game leaves unnamed for 30 seconds came without a world load: it goes to the
-                // named character only if that character's readings came from the same stat owner.
+                // named character only if that character's Odyle was already read this run.
                 string Owner() => (string)Field("readingOwnerKey").GetValue(window)!;
-                Field("gameCharacterKey").SetValue(window, "TestHero|2304"); Field("ownerEntity").SetValue(window, 7UL);
+                Field("gameCharacterKey").SetValue(window, "TestHero|2304"); Field("namedHasReading").SetValue(window, true);
                 Call(window, "AttributePending");
-                Check(Owner() == "", "during the loading screen a snapshot waits for the name even when the named character owns its stat id");
-                Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Field("ownerEntity").SetValue(window, null);
+                Check(Owner() == "", "during the loading screen a snapshot waits for the name even when the named character had a reading");
+                Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Field("namedHasReading").SetValue(window, false);
                 Call(window, "AttributePending");
                 Check(Owner() == "", "an unnamed snapshot never goes to a named character that had no Odyle reading");
-                Field("ownerEntity").SetValue(window, 7UL); Call(window, "AttributePending");
-                Check(Owner() == "TestHero|2304", "after 30 seconds an unnamed snapshot goes to the named character that owns its stat id");
-                // A reader started after login (no snapshot this run) shows the next live update and asks for one relog so the game names the character.
+                Field("namedHasReading").SetValue(window, true); Call(window, "AttributePending");
+                Check(Owner() == "TestHero|2304", "after 30 seconds an unnamed snapshot goes to the named character whose Odyle was read");
+                // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
                 Call(window, "ResetAttribution");
-                Call(window, "OnCandidate", inert, new PacketCandidate(380, 7, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { OwnerConfirmed = false });
-                Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Relog"), "a live update read without a snapshot is shown and asks for one relog");
+                Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
+                Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text == "The game names the character within a few minutes, or at once after a relog or channel change.", "a live update read without a snapshot is shown and waits for the game's name");
+                ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+                // A snapshot without Odyle waits for the game's name like any snapshot; the named character then
+                // says it has no Odyle yet instead of waiting for a snapshot forever. A reading still waiting for a
+                // name belonged to the character the game left.
+                var server = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, server)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, "");
+                Call(window, "OnSnapshotWithoutOdyle", inert);
+                Check(Field("latest").GetValue(window) is null, "an unnamed reading is dropped by a snapshot without Odyle");
+                await (Task)Call(window, "SaveDetectedCharacterAsync", inert, new GameIdentity(50, "Newcomer", 2304, "Lumiel", "GLOBAL_EU"))!;
+                Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2 · Newcomer has no Odyle yet.", "a named character without Odyle says so");
+                // Its first Odyle replaces the note. A server that refuses this build's adapter makes the card ask for an
+                // update instead of repeating the server's message, and the update check runs at once.
+                Call(window, "OnCandidate", inert, new PacketCandidate(15, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
+                Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+                Check((string)Field("odyleMissingKey").GetValue(window)! == "", "a reading clears the note");
+                await (Task)Call(window, "PublishLatestAsync")!;
+                Check(server.Reports == 1 && (bool)Field("adapterOutdated").GetValue(window)! && Control<TextBlock>(window, "StateText").Text == "Not saved" && Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · it looks for one every hour." && Control<TextBlock>(window, "PacketStateLabel").Text == "The server no longer accepts readings from this Odyle version.", "a refused adapter asks for an update");
+                Check((DateTimeOffset)Field("publishBlockedUntil").GetValue(window)! > DateTimeOffset.UtcNow.AddMinutes(9) && DateTimeOffset.UtcNow - (DateTimeOffset)Field("outdatedCheckAt").GetValue(window)! < TimeSpan.FromMinutes(1), "the reading is tried again in ten minutes and the update check ran at once");
+                Field("staged").SetValue(window, new StagedUpdate(new Version(9, 9, 9, 9), scratch, "https://github.com/oldbear24/odyle-windows/releases")); Call(window, "RenderHero");
+                Check(Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · Restart to update installs it.", "a downloaded update is offered");
+                Field("staged").SetValue(window, null);
+                server.Refusal = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); await (Task)Call(window, "PublishLatestAsync")!;
+                Check(server.Reports == 2 && !(bool)Field("adapterOutdated").GetValue(window)! && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
+                Call(window, "ResetAttribution"); Field("latest").SetValue(window, null); Field("activeCharacterId").SetValue(window, ""); Field("publishedTotal").SetValue(window, -1);
+                Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 // The party list shows other members' live and stale characters, never your own or offline ones.
                 Field("accountId").SetValue(window, "u"); Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true) });
                 Field("snapshots").SetValue(window, new[] { PartySnapshot() }); Call(window, "RenderParty");
@@ -110,22 +137,32 @@ static class ReaderChecks
                 Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
                 foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
-                Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version));
+                Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, ExperimentalOdyleDecoder.Version));
                 Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
                 Field("activeCharacterId").SetValue(window, "c1");
                 var handover = (Handover?)Call(window, "LiveHandover");
-                Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, EntityId: 7, OwnerConfirmed: true }, "a live reading is handed to the restart");
+                Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: ExperimentalOdyleDecoder.Version }, "a live reading is handed to the restart");
                 HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
                 // The restarted build: connected again, the reader running, nothing named by the game yet.
                 Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
                 await (Task)Call(window, "TakeOverAsync")!;
-                Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is PacketCandidate { Total: 390, EntityId: 7 }, "the next start takes the character over, once");
+                Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is PacketCandidate { Total: 390 }, "the next start takes the character over, once");
                 Check(Control<TextBlock>(window, "HeroTitle").Text == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
                 HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
                 Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");
                 HandoverStore.Save(handover! with { AccountId = "someone-else" }); await (Task)Call(window, "StopCaptureAsync", false)!;
                 Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
                 Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "" && Field("latest").GetValue(window) is null, "another account's hand-over is ignored");
+                // A hand-over from the build before v2 (with its stat owner fields) is taken over and its reading sent
+                // again under the adapter that read it. A server that no longer takes that adapter drops the reading
+                // without asking for an update, and this build reads the next Odyle change.
+                await (Task)Call(window, "StopCaptureAsync", false)!;
+                File.WriteAllText(HandoverStore.FilePath, $$"""{"Endpoint":"http://127.0.0.1:8090","AccountId":"u","CharacterId":"c1","CharacterKey":"TestHero|2304","CharacterName":"TestHero","Total":390,"EntityId":51591,"OwnerConfirmed":true,"ParserVersion":"global-reference-v1","Source":0,"SavedAt":"{{DateTimeOffset.UtcNow:O}}"}""");
+                var refusing = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, refusing)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+                Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+                Check(!File.Exists(HandoverStore.FilePath) && refusing.Reports == 1 && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is null && !(bool)Field("adapterOutdated").GetValue(window)!, "a refused reading of the previous adapter is dropped without asking for an update");
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Updated · the value is read again at the next Odyle change.", "the reader line says the value is read again");
+                Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 await (Task)Call(window, "StopCaptureAsync", false)!;
                 Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("accountId").SetValue(window, ""); Call(window, "RenderHero");
@@ -219,7 +256,7 @@ static class ReaderChecks
                     Check(automatic.CharacterName == "DetectedHero" && automatic.Server == "Lumiel" && automatic.Region == "GLOBAL_EU" && !automatic.Confirmed, "the game's character is saved with unknown energy");
                     Check((string)Field("currentCharacterId").GetValue(window)! == automatic.Id, "the card follows the character the game reports");
                     // A snapshot is held until the game names its owner after the loading screen, then saved to that character.
-                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1") { Primary = 0, Bonus = 390 });
+                    Call(window, "OnCandidate", capture, new PacketCandidate(390, "test-fixture-v1") { Base = 0, Bonus = 390 });
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, detected)!;
                     Check((await api.GetCharactersAsync()).Length == 1, "repeated identity is deduplicated");
                     await Until(() => (int)Field("publishedTotal").GetValue(window)! == 390, 400);
@@ -228,17 +265,17 @@ static class ReaderChecks
                     // Odyle is sent only on first read and on change; the heartbeat keeps it live.
                     var sent = (long)Field("sequence").GetValue(window)!;
                     await (Task)Call(window, "PublishLatestAsync")!;
-                    Call(window, "OnCandidate", capture, new PacketCandidate(390, 7, "test-fixture-v1", CandidateSource.Update) { Primary = 0, Bonus = 390 });
+                    Call(window, "OnCandidate", capture, new PacketCandidate(390, "test-fixture-v1", CandidateSource.Update) { Base = 0, Bonus = 390 });
                     await Task.Delay(300);
                     Check((long)Field("sequence").GetValue(window)! == sent, "an unchanged value is not sent again");
-                    Call(window, "OnCandidate", capture, new PacketCandidate(395, 7, "test-fixture-v1", CandidateSource.Update) { Primary = 5, Bonus = 390 });
+                    Call(window, "OnCandidate", capture, new PacketCandidate(395, "test-fixture-v1", CandidateSource.Update) { Base = 5, Bonus = 390 });
                     await Until(() => (int)Field("publishedTotal").GetValue(window)! == 395, 200);
                     Check((long)Field("sequence").GetValue(window)! == sent + 1, "a changed value is sent once");
                     // In-game switches: a character without Odyle is named (its snapshot has no Odyle field), then
                     // one with Odyle. The game sends the new snapshot first and names the character only after the
                     // loading screen, 6 to 10 seconds later, when the publish delay has long run out.
                     await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(45, "NoOdyleHero", 2304, "Lumiel", "GLOBAL_EU"))!;
-                    Call(window, "OnCandidate", capture, new PacketCandidate(120, 7, "test-fixture-v1") { Primary = 0, Bonus = 120 });
+                    Call(window, "OnCandidate", capture, new PacketCandidate(120, "test-fixture-v1") { Base = 0, Bonus = 120 });
                     Call(window, "AttributePending"); await (Task)Call(window, "PublishLatestAsync")!;
                     Check((long)Field("sequence").GetValue(window)! == sent + 1 && Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot is not sent before the game names its character, however long the loading screen takes");
                     // Two capture interfaces see the same connection, and each reports the switch and the identity.
@@ -386,7 +423,7 @@ static class ReaderChecks
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
-        Call(window, "OnCandidate", inert, new PacketCandidate(390, 7, ExperimentalOdyleDecoder.Version) { Primary = 0, Bonus = 390 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
@@ -405,7 +442,7 @@ static class ReaderChecks
         Snapshot(window, Path.Combine(directory, "tasks-preview.png"), 520);
         Call(window, "SetTasksShown", false, false); Call(window, "SetStayOnTop", false, false);
         Field("latest").SetValue(window, null); Call(window, "RenderHero");
-        Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; relog or change channel once so the game names your character.");
+        Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; the game names your character within a few minutes, or at once after a relog or channel change.");
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
         Call(window, "ShowAnnouncement", new Announcement("Server maintenance on Thursday 10:00–11:00 UTC. Readings pause meanwhile.", "warning"));
         Snapshot(window, Path.Combine(directory, "announcement-preview.png"));
@@ -442,6 +479,30 @@ static class ReaderChecks
             new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5)]),
             new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
             new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
+    }
+    // Answers like the backend for the offline checks: the character the game names, the account's
+    // characters and rooms, and readings, refused for their adapter while Refusal is set.
+    sealed class FakeServer : HttpMessageHandler
+    {
+        public int Reports;
+        public string? Refusal = PartyApi.AdapterRefused;
+        const string Saved = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
+        const string Read = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":15,"confirmed":true,"valid":true,"lastReadingAt":"2026-10-15 12:00:00.000Z"}""";
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var route = request.RequestUri!.AbsolutePath;
+            if (route == "/api/odyle/report") Reports++;
+            var (status, body) = route switch
+            {
+                "/api/odyle/character" => (HttpStatusCode.OK, $$"""{"character":{{Saved}}}"""),
+                "/api/collections/characters/records" => (HttpStatusCode.OK, $$"""{"items":[{{Saved}}]}"""),
+                "/api/odyle/rooms" => (HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":null}"""),
+                "/api/odyle/report" when Refusal is { } message => (HttpStatusCode.BadRequest, System.Text.Json.JsonSerializer.Serialize(new { message, data = new { } })),
+                "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{Read}}}"""),
+                _ => (HttpStatusCode.OK, "{}"),
+            };
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }
     }
     sealed class MemoryRunKey : IRunKey
     {
