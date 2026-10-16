@@ -63,6 +63,10 @@ static class SetupChecks
         for (var i = 0; i < DecoderTrace.Kept + 50; i++) busy.Update(new(80000001, 0x0C, i, 0, 1, 0));
         using (var parsed = System.Text.Json.JsonDocument.Parse(busy.ToJson("x", "y")))
             Check(parsed.RootElement.GetProperty("updates").GetProperty("total").GetInt64() == DecoderTrace.Kept + 50 && parsed.RootElement.GetProperty("updates").GetProperty("kept").GetArrayLength() == DecoderTrace.Kept, "the trace keeps its first entries and counts the rest");
+        // What a reading changed, from the one saved before it.
+        Check(OdyleChange.Of(CandidateSource.Snapshot, 390, 0, 400, 10) == (OdyleChange.Snapshot, null) && OdyleChange.Of(CandidateSource.Update, 390, 0, null, null) == (OdyleChange.Update, null), "a snapshot, and an update with nothing before it");
+        Check(OdyleChange.Of(CandidateSource.Update, 830, 0, 910, 15) == (OdyleChange.Spend, -80) && OdyleChange.Of(CandidateSource.Update, 910, 15, 895, 0) == (OdyleChange.Regen, 15), "a spend, and a tick of the natural pool");
+        Check(OdyleChange.Of(CandidateSource.Update, 935, 15, 895, 15) == (OdyleChange.Item, 40) && OdyleChange.Of(CandidateSource.Update, 935, null, 895, 15) == (OdyleChange.Item, 40) && OdyleChange.Of(CandidateSource.Update, 895, 15, 895, 15) == (OdyleChange.Update, 0), "items raise the bonus; an unchanged total is no change");
         // The game build comes from Steam's files: its library list and AION 2's app manifest.
         const string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"apps\" { \"228980\" \"1\" }\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\" { \"3393110\" \"2\" }\n\t}\n}\n";
         Check(SteamManifest.Libraries(vdf).SequenceEqual([@"C:\Program Files (x86)\Steam", @"D:\SteamLibrary"]) && SteamManifest.Libraries("").Length == 0, "Steam's library folders, with escaped backslashes undone");

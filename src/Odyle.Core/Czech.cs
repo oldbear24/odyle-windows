@@ -122,6 +122,8 @@ public static class Czech
         ["Listening to AION2 · {0} has no Odyle yet."] = "Poslouchám AION2 · {0} zatím nemá Odyle.",
         ["Unsupported or incomplete packets · reconnect the game before retrying."] = "Nepodporované nebo neúplné pakety · před dalším pokusem připoj hru znovu.",
         ["Message from the server's operators"] = "Zpráva od provozovatelů serveru",
+        ["natural {0:N0} · items {1:N0}"] = "přirozená {0:N0} · z předmětů {1:N0}",
+        ["{0} at {1:HH:mm}"] = "{0} v {1:HH:mm}",
         ["Two game clients are running · Odyle reads one at a time. Close one to read again."] = "Běží dva herní klienti · Odyle čte jen jeden. Jeden zavři a čtení pokračuje.",
         ["Install Npcap from npcap.com before starting the packet reader."] = "Před spuštěním čtečky paketů nainstaluj Npcap z npcap.com.",
         ["Npcap could not load. Check its installation and CPU architecture."] = "Npcap se nepodařilo načíst. Zkontroluj jeho instalaci a architekturu procesoru.",

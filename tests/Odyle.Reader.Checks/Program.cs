@@ -131,6 +131,17 @@ static class ReaderChecks
                 Check(server.Reports == 2 && !(bool)Field("adapterOutdated").GetValue(window)! && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
                 // The first live reading offers to start with Windows (answered below, with Start with Windows).
                 Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Visible, "the first live reading offers to start with Windows");
+                // The reading carries the game's two numbers and what changed since the one saved before it.
+                Check(server.LastReport.Contains("\"base\":15,\"bonus\":0,\"kind\":\"update\",\"delta\":null"), "the first reading of a live streak carries base and bonus and is an update");
+                async Task Change(int total, int natural, int items)
+                {
+                    Call(window, "OnCandidate", inert, new PacketCandidate(total, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = natural, Bonus = items });
+                    ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
+                }
+                await Change(0, 0, 0);
+                Check(server.LastReport.Contains("\"base\":0,\"bonus\":0,\"kind\":\"spend\",\"delta\":-15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 0 · items 0 · −15 at "), "a spend is sent as one, and the card shows the split and the change");
+                await Change(15, 15, 0);
+                Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at "), "a rise of the natural pool alone is a regeneration tick");
                 // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
                 // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
                 server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
@@ -595,6 +606,7 @@ static class ReaderChecks
     sealed class FakeServer : HttpMessageHandler
     {
         public int Reports;
+        public string LastReport = "";
         public string? Refusal = PartyApi.AdapterRefused;
         public bool? Paused;
         const string Saved = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
@@ -602,7 +614,7 @@ static class ReaderChecks
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var route = request.RequestUri!.AbsolutePath;
-            if (route == "/api/odyle/report") Reports++;
+            if (route == "/api/odyle/report") { Reports++; LastReport = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult(); }
             var pause = Paused is { } paused ? $$""","readerPaused":{{(paused ? "true" : "false")}}""" : "";
             var (status, body) = route switch
             {

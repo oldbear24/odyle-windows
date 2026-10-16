@@ -57,9 +57,15 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
   "value": 390,
   "parserVersion": "global-reference-v2",
   "source": "packet",
-  "confirmed": true
+  "confirmed": true,
+  "base": 0,
+  "bonus": 390,
+  "kind": "snapshot",
+  "delta": null
 }
 ```
+
+`base` is the natural pool (it regenerates up to a cap) and `bonus` what items added; they add up to `value`. `kind` says what changed since the reading the app saved before it on this live streak: `snapshot` (the game sent the whole value: login, channel change), `update` (no reading before it), `regen` (the natural pool alone rose: the game's three-hourly tick), `spend` (the total fell) or `item` (anything else that raised it), and `delta` the change of the total (`null` for a snapshot or the first update). All four are optional: backends from before them ignore them, and the total in `value` is what every backend stores.
 
 **Reader pause.** `readerPaused` in the rooms, session and heartbeat answers is the superusers' **Server controls → Pause packet readers** switch (`odyle_settings.readerPaused`). While it is `true` the app stops capturing and closes Npcap, says so on the card and keeps its heartbeat and invalidations; a reading sent meanwhile answers 503 with *Packet readers are paused by the server operators.*, which the app treats the same. The first answer with `false` starts the reader again by itself, unless it was stopped by hand. Backends from before the switch leave the field out, which changes nothing; a new connection without it counts as not paused.
 

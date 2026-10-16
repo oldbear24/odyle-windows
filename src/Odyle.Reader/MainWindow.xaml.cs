@@ -117,6 +117,10 @@ public partial class MainWindow : Window
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
     private PacketCandidate? latest;
     private int publishedTotal = -1;
+    // The natural pool of the reading saved last, and the last change the game made (a spend, a
+    // regeneration tick or an item), for the reading's kind (OdyleChange) and the card's split line.
+    private int? publishedBase;
+    private (int Delta, string Kind, DateTimeOffset At, string CharacterId)? lastChange;
     private string? publishFailure;
     private ReaderState readerState = ReaderState.Stopped;
     private bool exit, quitting, busy, needsReconnect, busyShown;
@@ -339,6 +343,11 @@ public partial class MainWindow : Window
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        // The game's two numbers: the natural pool and what items added, and the last change it made.
+        var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Base, character?.Bonus);
+        var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
+        if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
+        SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
@@ -1156,7 +1165,12 @@ public partial class MainWindow : Window
         }
         try
         {
-            var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id));
+            // What changed since the reading saved before it on this live streak (none after a snapshot).
+            var streak = publishedTotal >= 0 && activeCharacterId == character.Id;
+            var (kind, delta) = OdyleChange.Of(reading.Source, reading.Total, reading.Base, streak ? publishedTotal : null, streak ? publishedBase : null);
+            var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id, Base: reading.Base, Bonus: reading.Bonus, Kind: kind, Delta: delta));
+            publishedBase = reading.Base;
+            if (delta is { } change && kind is OdyleChange.Spend or OdyleChange.Regen or OdyleChange.Item) lastChange = (change, kind, DateTimeOffset.Now, saved.Id);
             if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
             activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; adapterOutdated = false;
             UpdateCharacterInList(saved);

@@ -20,7 +20,7 @@ public sealed record Announcement(string Text, string Level = "info")
 // ReaderPaused: the server's operators paused every packet reader (Server controls); the rooms,
 // session and heartbeat answers carry it. Backends from before the switch leave it out (null).
 public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", int? Base = null, int? Bonus = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
@@ -34,7 +34,10 @@ public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, stri
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null);
 public sealed record HeartbeatResponse(bool? ReaderPaused = null);
-public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
+// Base is the natural pool (it regenerates up to a cap), Bonus what items added; Kind and Delta
+// say what changed since the reading before it (OdyleChange). All four are optional: older
+// backends ignore them, and the total in Value is what they store.
+public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true, int? Base = null, int? Bonus = null, string? Kind = null, int? Delta = null);
 public sealed record ReportResponse(Character Character);
 public sealed class PartyApi : IDisposable
 {
