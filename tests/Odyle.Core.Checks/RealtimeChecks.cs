@@ -19,6 +19,13 @@ static class RealtimeChecks
         var seen = RealtimeNews.Parse(Json("""{"seen":{"c":"2026-10-12T12:00:10.000Z","x":5}}"""));
         Check(seen is { Refresh: false } && seen.Seen.Count == 1 && seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");
+        // News for everyone on the account's topic: a new release and a changed announcement.
+        var release = RealtimeNews.Parse(Json("""{"release":{"version":"0.6.0.16","publishedAt":"2026-10-16T15:19:32Z","url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.6.0.16"}}"""));
+        Check(release is { Refresh: false, AnnouncementChanged: false } && release.Release == new Version(0, 6, 0, 16), "a new release names its version and fetches nothing");
+        Check(RealtimeNews.Parse(Json("""{"release":{"version":"latest"}}""")).Release is null && RealtimeNews.Parse(Json("""{"refresh":true}""")).Release is null, "a release without a version is no release");
+        var warning = RealtimeNews.Parse(Json("""{"announcement":{"text":"Maintenance at 08:00 UTC","level":"warning"}}"""));
+        Check(warning is { AnnouncementChanged: true, Refresh: false, Announcement: { IsWarning: true, Text: "Maintenance at 08:00 UTC" } }, "a changed announcement with its level");
+        Check(RealtimeNews.Parse(Json("""{"announcement":null}""")) is { AnnouncementChanged: true, Announcement: null } && RealtimeNews.Parse(Json("""{"seen":{}}""")) is { AnnouncementChanged: false }, "a cleared announcement, and news without one");
 
         var snapshots = new[] { Snapshot(), Snapshot() with { Room = Snapshot().Room with { Id = "other" } } };
         var applied = PartyNews.WithCharacters(snapshots, "r", changed.Characters, out var complete);

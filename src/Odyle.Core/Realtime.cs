@@ -7,9 +7,14 @@ namespace Odyle.Core;
 // News from the backend's realtime topics (the dashboard's docs/api.md#realtime): a room's
 // changes and its characters' heartbeats, and the account's own changes. Refresh means
 // "fetch again"; Characters are changed characters to apply in place, Seen heartbeats
-// (character id → lastSeenAt) and Removed that the account left the room.
+// (character id → lastSeenAt) and Removed that the account left the room. News for everyone
+// comes on the account's topic too: Release is the version of a newer Windows release, and
+// AnnouncementChanged says the announcement changed to Announcement (null when cleared).
 public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Characters, IReadOnlyDictionary<string, string> Seen)
 {
+    public Version? Release { get; init; }
+    public bool AnnouncementChanged { get; init; }
+    public Announcement? Announcement { get; init; }
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     // A message the app cannot read means "fetch again".
     public static RealtimeNews Parse(JsonElement data)
@@ -23,7 +28,17 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         var seen = new Dictionary<string, string>();
         if (data.TryGetProperty("seen", out var times) && times.ValueKind == JsonValueKind.Object)
             foreach (var entry in times.EnumerateObject()) if (entry.Value.ValueKind == JsonValueKind.String) seen[entry.Name] = entry.Value.GetString()!;
-        return new(Flag("refresh"), Flag("removed"), characters, seen);
+        Version? release = null;
+        if (data.TryGetProperty("release", out var news) && news.ValueKind == JsonValueKind.Object && news.TryGetProperty("version", out var text) && text.ValueKind == JsonValueKind.String && Version.TryParse(text.GetString(), out var parsed))
+            release = ReleaseFeed.Normalize(parsed);
+        var changed = data.TryGetProperty("announcement", out var message) && message.ValueKind is JsonValueKind.Object or JsonValueKind.Null;
+        Announcement? announcement = null;
+        if (changed && message.ValueKind == JsonValueKind.Object)
+        {
+            try { announcement = message.Deserialize<Announcement>(Json); } catch (JsonException) { changed = false; }
+            if (announcement is not { Text.Length: > 0 }) announcement = null;
+        }
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, AnnouncementChanged = changed, Announcement = announcement };
     }
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's

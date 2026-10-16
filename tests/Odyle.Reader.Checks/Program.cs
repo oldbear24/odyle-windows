@@ -175,6 +175,16 @@ static class ReaderChecks
                 Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "a removed announcement disappears");
                 Check(Field("hiddenAnnouncement").GetValue(window) is "Maintenance at 10:00 UTC", "hiding is remembered while the app runs");
                 Field("hiddenAnnouncement").SetValue(window, "");
+                // News on the account's topic: a changed announcement shows at once, a new warning also as a
+                // notification; a release no newer than this build looks for nothing.
+                Task News(string json) => (Task)Call(window, "OnNewsAsync", RealtimeTopics.Own + "u", RealtimeNews.Parse(System.Text.Json.JsonDocument.Parse(json).RootElement.Clone()))!;
+                typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
+                await News("""{"announcement":{"text":"Servers restart at 08:00 UTC","level":"warning"}}""");
+                var notice = ((string Title, string Text)?)typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Servers restart at 08:00 UTC" && notice?.Text == "Servers restart at 08:00 UTC", "an announcement the server pushes shows at once, a warning also as a notification");
+                await News("""{"announcement":null}""");
+                await News("""{"release":{"version":"0.0.0.1"}}""");
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed && !(bool)Field("updating").GetValue(window)!, "a cleared announcement disappears at once; an older release starts no update check");
                 // An update restart hands the live character to the next start, which takes it over without a relog.
                 Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");

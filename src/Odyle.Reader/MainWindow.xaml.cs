@@ -582,6 +582,14 @@ public partial class MainWindow : Window
             await RefreshPartyAsync();
             return;
         }
+        // News for everyone: a changed announcement shows at once (a new warning also as a
+        // notification), and a newer release is looked for at once, verified like any update.
+        if (news.AnnouncementChanged)
+        {
+            if (news.Announcement is { IsWarning: true } warning && warning.Text != announcement?.Text) Notify(T("Message from the server's operators"), warning.Text);
+            ShowAnnouncement(news.Announcement); RenderHero();
+        }
+        if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
         if (!news.Refresh && news.Characters.Length > 0)
         {
             var mine = PartyNews.WithCharacters(characters, news.Characters, out var complete);
