@@ -2,6 +2,15 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.11.0 · 2026-10-16
+
+### New
+- Odyle reads while the server is down: the card says **OFFLINE** and shows the value it reads, and the character and its Odyle are sent as soon as the server is back, with no relog.
+- The party list says whether it follows live updates or refreshes every 15 seconds.
+
+### Changed
+- Settings no longer open by themselves while the PC's pairing is kept and the server is only unreachable.
+
 ## 0.10.0 · 2026-10-16
 
 ### New

@@ -316,7 +316,7 @@ public partial class MainWindow : Window
     // While the server pauses readers there is nothing to start.
     private void RenderReaderButton()
     {
-        ReportButton.Content = capture is not null ? T("Stop") : api is not null ? T("Start") : T("Connect");
+        ReportButton.Content = capture is not null ? T("Stop") : api is not null || Offline ? T("Start") : T("Connect");
         if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
         ReportButton.IsEnabled = !busy && !(readerPaused && api is not null && capture is null);
     }
@@ -356,27 +356,30 @@ public partial class MainWindow : Window
     }
     private void RenderHero()
     {
-        var connected = api is not null;
+        // Offline: paired, but the server has not confirmed the pairing yet (it is tried again by itself);
+        // the reader reads locally and what it read is sent once the server answers.
+        var connected = api is not null; var offline = Offline;
         var character = CurrentCharacter;
         var cost = HeroCost(character);
         var reading = capture is not null ? latest : null;
         // A reading whose owner is not yet the shown character is displayed, but never under its name.
         var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
         int? value = reading?.Total ?? (character is { Confirmed: true } ? character.Value : null);
-        AccountLabel.Text = !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? accountName.ToUpper(Culture) : T("CONNECTING…");
-        HeroTitle.Text = !connected ? T("Not connected")
+        AccountLabel.Text = offline ? T("OFFLINE") : !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? accountName.ToUpper(Culture) : T("CONNECTING…");
+        HeroTitle.Text = !connected && !offline ? T("Not connected")
+            : offline && reading is not null ? (gameCharacterName.Length > 0 && readingOwnerKey == gameCharacterKey ? T("{0} · offline", gameCharacterName) : T("Detecting character…"))
             : reading is not null && !owned ? (gameCharacterName.Length > 0 && gameCharacterKey != detectedCharacterKey && readingOwnerKey == gameCharacterKey ? T("{0} · not saved", gameCharacterName) : T("Detecting character…"))
             : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet");
         ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
-        EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected || offline ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         if (rooms.Length > 1 && HeroRoom(character) is { } costRoom) CubeLabel.Text += " · " + costRoom.Name;
         // A long room name is trimmed so the value keeps its room; the tooltip has the whole line.
         CubeLabel.ToolTip = CubeLabel.Text.Length > 0 ? CubeLabel.Text : null;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
-        var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
+        var split = (connected || offline) && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderOdyleClock();
@@ -393,7 +396,8 @@ public partial class MainWindow : Window
         else if (character is null) SetPill("Muted", "Muted", "PillNeutral", T("No character"));
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
-        ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
+        ReadingLabel.Text = offline ? (reading is not null ? T("Offline · {0:N0} Odyle read here, sent when the server is back.", reading.Total) : T("Offline · the reader reads locally and sends what it reads when the server is back."))
+            : !connected ? T("Open settings to pair with the dashboard.")
             // The operators' announcement, when there is one, says why; it moves into the card meanwhile.
             : readerPaused ? (announcement is { } reason ? T("Paused by the server · {0}", reason.Text) : T("Paused by the server · reading resumes by itself when the operators allow it again."))
             : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
@@ -408,10 +412,12 @@ public partial class MainWindow : Window
         ReadingLabel.Visibility = ReadingLabel.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         RenderClock();
         var name = character?.CharacterName ?? accountName;
-        var tip = !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
+        var tip = offline ? T("Odyle · Offline") : !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
         heroValue = value; heroCost = cost; RenderCompact();
     }
+    // Paired, but the server has not confirmed the pairing yet: it is tried again by itself (retryAt).
+    private bool Offline => api is null && retryAt is not null;
     private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character) => HeroRoom(character)?.Cost is > 0 and var cost ? cost : odylePerCube;
@@ -449,6 +455,9 @@ public partial class MainWindow : Window
         PartyList.ItemsSource = groups;
         PartyPanel.Visibility = api is not null && rooms.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         PartyEmptyLabel.Visibility = groups.All(g => g.Mates.Length == 0) ? Visibility.Visible : Visibility.Collapsed;
+        var live = realtime?.IsConnected == true;
+        PartyModeLabel.Text = live ? T("live updates") : T("refreshed every 15 s"); PartyModeLabel.Foreground = Brush(live ? "MintSoft" : "Faint");
+        PartyModeLabel.ToolTip = live ? T("The party follows changes as they happen.") : realtime?.LastProblem is { } problem ? T("Live updates are off: {0}", T(problem)) : T("Live updates are not connected; the party is fetched every 15 seconds.");
         RenderRunChip();
     }
     // The next planned run under the card: soonest first, ones you go to before others, with a
@@ -545,7 +554,7 @@ public partial class MainWindow : Window
         if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
         {
             if (!IsVisible) ShowWindow();
-            if (api is null) OpenSettings();
+            if (api is null && !Offline) OpenSettings();
         }
     }
     private async void Retry_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(RestoreAsync);
@@ -576,9 +585,13 @@ public partial class MainWindow : Window
             DropApi(); settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
             ScheduleRestore(error);
         }
-        // The login snapshot names the character, so read from the moment the account is connected.
-        if (api is not null && capture is null) await StartReaderAsync();
+        // The login snapshot names the character, so read from the moment the account is connected, or,
+        // while the server cannot confirm the pairing, from its first failed try on (a reader stopped by
+        // hand meanwhile stays stopped).
+        if (capture is null && (api is not null || Offline && restoreAttempt <= 1)) await StartReaderAsync();
         if (capture is not null) await TakeOverAsync();
+        // The character the game named while offline is saved and its reading sent now (not under this lock).
+        if (api is not null && pendingIdentity is { } named) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(named.Capture, named.Identity)); }
     }
     private void ScheduleRestore(Exception error)
     {
@@ -653,10 +666,17 @@ public partial class MainWindow : Window
         next.Connected += again => Dispatcher.BeginInvoke(async () =>
         {
             if (realtime != next) return;
+            RenderParty();
             if (!again) Log.Info("Realtime connected; the party follows changes as they happen.");
             else await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
         });
         next.Message += (topic, data) => Dispatcher.BeginInvoke(async () => { if (realtime == next) await OnNewsAsync(topic, RealtimeNews.Parse(data)); });
+        next.Disconnected += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (realtime != next) return;
+            Log.Warn($"Realtime dropped ({next.LastProblem ?? "no reason given"}); the party is fetched every 15 seconds until it is back.");
+            RenderParty();
+        });
         next.Start(RealtimeTopics.For(accountId, rooms));
     }
     // A room's changed characters and heartbeats are applied to the party in place, anything
@@ -1068,10 +1088,10 @@ public partial class MainWindow : Window
     {
         if (busy || !Npcap.Probe()) return;
         npcapTimer.Stop(); if (settings.IsVisible) RenderNpcap();
-        if (readerWanted && api is not null && capture is null && !readerPaused) { await ExecuteAsync(StartReaderAsync); return; }
+        // A saved pairing still being retried reads too, and sends what it reads once the server answers.
+        if (readerWanted && (api is not null || Offline) && capture is null && !readerPaused) { await ExecuteAsync(StartReaderAsync); return; }
         if (readerState == ReaderState.Problem && capture is null)
-            // A saved pairing still being retried is no reason to pair again: the reader starts once the server answers.
-            SetReaderState(ReaderState.Stopped, api is not null ? T("Stopped · start the reader before logging in.") : retryAt is not null ? T("Npcap is installed · the reader starts once the server is reached.") : T("Npcap is installed · pair Odyle in settings to read the game."));
+            SetReaderState(ReaderState.Stopped, api is not null || Offline ? T("Stopped · start the reader before logging in.") : T("Npcap is installed · pair Odyle in settings to read the game."));
     }
 
     // ----- Daily & weekly tasks -----
@@ -1165,11 +1185,11 @@ public partial class MainWindow : Window
     }
     private async void Reader_Click(object sender, RoutedEventArgs e)
     {
-        if (api is null && capture is null) { OpenSettings(); return; }
+        if (api is null && capture is null && !Offline) { OpenSettings(); return; }
         await ExecuteAsync(async () =>
         {
             if (capture is not null) { readerWanted = false; await StopReaderAsync(); }
-            else if (api is not null) await StartReaderAsync();
+            else if (api is not null || Offline) await StartReaderAsync();
         });
     }
     // Notes what an answer of the server says about the reader pause (null: the backend does not
@@ -1444,7 +1464,7 @@ public partial class MainWindow : Window
         await operations.WaitAsync();
         try
         {
-            if (capture != next || api is null || twoClients) return;
+            if (capture != next || twoClients || api is null && !Offline) return;
             var key = identity.CharacterName + "|" + identity.ServerId;
             if (key != gameCharacterKey)
             {
@@ -1461,6 +1481,15 @@ public partial class MainWindow : Window
             {
                 odyleMissingDue = false;
                 if (latest is null) { odyleMissingKey = key; SetReaderState(ReaderState.Listening, T("Listening to AION2 · {0} has no Odyle yet.", identity.CharacterName)); }
+            }
+            // Offline the character is followed as online, so a reading never moves to another one; only
+            // saving it and sending its reading wait for the server (after the next connection or heartbeat).
+            if (api is null)
+            {
+                pendingIdentity = (next, identity);
+                if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
+                Log.Info($"Offline: {identity.CharacterName} is followed and saved once the server answers.");
+                RenderHero(); return;
             }
             if (detectedCharacterKey != key)
             {
