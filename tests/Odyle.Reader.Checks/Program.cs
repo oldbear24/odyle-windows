@@ -89,6 +89,19 @@ static class ReaderChecks
                 Call(window, "OnCandidate", inert, new PacketCandidate(205, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
                 Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
                 Check(Owner() == "", "and so do the updates after it");
+                // Two game clients on this PC would mix their characters' messages: nothing is read or named until one closes.
+                Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
+                Call(window, "OnTwoClients");
+                Call(window, "OnCandidate", inert, new PacketCandidate(999, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
+                Call(window, "OnSnapshotWithoutOdyle", inert);
+                Check(Field("latest").GetValue(window) is null && Owner() == "" && (string)Field("gameCharacterKey").GetValue(window)! == "" && !(bool)Field("odyleMissingDue").GetValue(window)!, "with two game clients nothing is read, attributed or named");
+                Check((string)Call(window, "ReaderStatus")! == "two-clients", "the heartbeat reports two game clients");
+                Field("twoClients").SetValue(window, false);
+                // The heartbeat's reader state: listening until this connection gave a reading, then reading.
+                Field("connectionRead").SetValue(window, false); Call(window, "SetReaderState", Enum.Parse(Field("readerState").FieldType, "Listening"), "Listening to AION2 · waiting for the Odyle snapshot.");
+                var listening = (string)Call(window, "ReaderStatus")!;
+                Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 }); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+                Check(listening == "listening" && (string)Call(window, "ReaderStatus")! == "reading", "the heartbeat reports listening until Odyle is read on this connection, then reading");
                 // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
                 Call(window, "ResetAttribution");
                 Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
@@ -162,6 +175,16 @@ static class ReaderChecks
                 Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "a removed announcement disappears");
                 Check(Field("hiddenAnnouncement").GetValue(window) is "Maintenance at 10:00 UTC", "hiding is remembered while the app runs");
                 Field("hiddenAnnouncement").SetValue(window, "");
+                // News on the account's topic: a changed announcement shows at once, a new warning also as a
+                // notification; a release no newer than this build looks for nothing.
+                Task News(string json) => (Task)Call(window, "OnNewsAsync", RealtimeTopics.Own + "u", RealtimeNews.Parse(System.Text.Json.JsonDocument.Parse(json).RootElement.Clone()))!;
+                typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
+                await News("""{"announcement":{"text":"Servers restart at 08:00 UTC","level":"warning"}}""");
+                var notice = ((string Title, string Text)?)typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Servers restart at 08:00 UTC" && notice?.Text == "Servers restart at 08:00 UTC", "an announcement the server pushes shows at once, a warning also as a notification");
+                await News("""{"announcement":null}""");
+                await News("""{"release":{"version":"0.0.0.1"}}""");
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed && !(bool)Field("updating").GetValue(window)!, "a cleared announcement disappears at once; an older release starts no update check");
                 // An update restart hands the live character to the next start, which takes it over without a relog.
                 Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");

@@ -37,7 +37,37 @@ static class SetupChecks
         finally { Directory.Delete(folder, true); }
 
         Check(StartupCommand.Unpairs(["--unpair"]) && StartupCommand.Unpairs(["--UNPAIR"]) && !StartupCommand.Unpairs(["--tray"]) && !StartupCommand.InTray(["--unpair"]), "the uninstaller's --unpair argument");
-        Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail and --unpair passed.");
+
+        // The patch-day trace counts opcodes and keeps plain numbers, never a character's name.
+        Check(StartupCommand.Traces(["--tray", "--decoder-trace"]) && StartupCommand.Traces(["--DECODER-TRACE"]) && !StartupCommand.Traces(["--tray"]), "the --decoder-trace argument");
+        var trace = new DecoderTrace { GameVersion = "0.0.4387.0" };
+        Check(trace.Summary() == "no frames yet", "an empty trace says so");
+        foreach (var (opcode, bytes) in new (ushort, int)[] { (0x0B61, 495), (0x0C61, 8), (0x0C61, 12), (0x0036, 4), (0x0C61, 8) }) trace.Frame(opcode, bytes);
+        trace.Snapshot(new(495, 73, [new(258, 0x0C, 90, 990)], true));
+        trace.Update(new(ExperimentalOdyleDecoder.OdyleResource, 0x0C, 15, 895, 1, 0));
+        trace.Update(new(80000001, 0x0C, 2, 1, 1, 0));
+        trace.Layout(new(0x0C61, 0, 0x0C, 1, 12)); trace.Layout(new(0x0C61, 0, 0x0C, 1, 12));
+        trace.Identity(new GameIdentity(42, "SecretHero", 2304, "Lumiel", "GLOBAL_EU", 12));
+        var opcodes = trace.Opcodes();
+        Check(opcodes[0] == new OpcodeCount("0C61", 3, 8, 12, 28) && opcodes.Length == 3 && trace.Summary(1) == "0C61×3 (8–12 B), 2 more opcodes", "opcodes are counted with their frame sizes, the busiest first");
+        var json = trace.ToJson("0.6.0.16", ExperimentalOdyleDecoder.Version);
+        using (var parsed = System.Text.Json.JsonDocument.Parse(json))
+        {
+            var root = parsed.RootElement;
+            Check(root.GetProperty("game").GetString() == "0.0.4387.0" && root.GetProperty("adapter").GetString() == ExperimentalOdyleDecoder.Version && root.GetProperty("opcodes").GetArrayLength() == 3, "the trace names the game and app versions and lists every opcode");
+            Check(root.GetProperty("updates").GetProperty("total").GetInt64() == 2 && root.GetProperty("updates").GetProperty("kept")[1].GetProperty("resource").GetUInt32() == 80000001 && root.GetProperty("snapshots").GetProperty("kept")[0].GetProperty("odyle")[0].GetProperty("bonus").GetInt64() == 990, "stat updates of every resource and the snapshot's Odyle record are kept as numbers");
+            Check(root.GetProperty("layouts").GetArrayLength() == 1 && root.GetProperty("identities")[0].GetProperty("server").GetInt32() == 2304 && root.GetProperty("identities")[0].GetProperty("class").GetUInt32() == 12, "layouts once each; identities by server and class");
+        }
+        Check(!json.Contains("SecretHero") && !json.Contains("Lumiel\""), "the trace keeps no character name");
+        var busy = new DecoderTrace();
+        for (var i = 0; i < DecoderTrace.Kept + 50; i++) busy.Update(new(80000001, 0x0C, i, 0, 1, 0));
+        using (var parsed = System.Text.Json.JsonDocument.Parse(busy.ToJson("x", "y")))
+            Check(parsed.RootElement.GetProperty("updates").GetProperty("total").GetInt64() == DecoderTrace.Kept + 50 && parsed.RootElement.GetProperty("updates").GetProperty("kept").GetArrayLength() == DecoderTrace.Kept, "the trace keeps its first entries and counts the rest");
+        // The game build comes from Steam's files: its library list and AION 2's app manifest.
+        const string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"apps\" { \"228980\" \"1\" }\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\" { \"3393110\" \"2\" }\n\t}\n}\n";
+        Check(SteamManifest.Libraries(vdf).SequenceEqual([@"C:\Program Files (x86)\Steam", @"D:\SteamLibrary"]) && SteamManifest.Libraries("").Length == 0, "Steam's library folders, with escaped backslashes undone");
+        Check(SteamManifest.BuildId("\"AppState\"\n{\n\t\"appid\"\t\t\"3393110\"\n\t\"buildid\"\t\t\"25800038\"\n}") == "25800038" && SteamManifest.BuildId("\"AppState\" { \"buildid\" \"x1\" }") is null && SteamManifest.ManifestName == "appmanifest_3393110.acf" && SteamManifest.Label("25800038") == "Steam build 25800038", "the build id from AION 2's app manifest");
+        Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail, --unpair, the decoder trace and the Steam build passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Setup check failed: " + message); }
 }

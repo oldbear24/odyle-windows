@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security;
 using Microsoft.Win32;
 using Odyle.Core;
@@ -69,5 +71,31 @@ public static class Npcap
             catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { }
         }
         return false;
+    }
+}
+// The game build Steam installed (SteamManifest), for the log, the heartbeat and the patch-day
+// trace: Steam's path from the per-user registry, its library list and AION 2's app manifest.
+// Only Steam's own files are read; the game's process is never opened. Null for a game
+// installed outside Steam, or when Steam's files cannot be read.
+public static class GameClient
+{
+    public static string? Version()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            if (key?.GetValue("SteamPath") is not string { Length: > 0 } steam) return null;
+            var steamapps = Path.Combine(steam.Replace('/', Path.DirectorySeparatorChar), "steamapps");
+            var libraries = new List<string> { steamapps };
+            var list = Path.Combine(steamapps, "libraryfolders.vdf");
+            if (File.Exists(list)) libraries.AddRange(SteamManifest.Libraries(File.ReadAllText(list)).Select(library => Path.Combine(library, "steamapps")));
+            foreach (var library in libraries)
+            {
+                var manifest = Path.Combine(library, SteamManifest.ManifestName);
+                if (File.Exists(manifest) && SteamManifest.BuildId(File.ReadAllText(manifest)) is { } build) return SteamManifest.Label(build);
+            }
+        }
+        catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException or ArgumentException) { }
+        return null;
     }
 }

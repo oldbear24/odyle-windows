@@ -54,6 +54,8 @@ public partial class App : System.Windows.Application
         if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
         Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
         var window = new MainWindow(); MainWindow = window;
+        // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
+        if (StartupCommand.Traces(e.Args)) window.StartTrace();
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
         quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + user);
