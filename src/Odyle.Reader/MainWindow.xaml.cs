@@ -137,6 +137,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
+    // The Odyle clock's rules from the server; null from older backends (the defaults apply).
+    private ClockRules? clockRules;
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     // An update check a few seconds after every start that installs what it finds, then once a
     // day while the app runs (UpdateSchedule). The timer looks every hour, so a day spent asleep
@@ -348,6 +350,7 @@ public partial class MainWindow : Window
         var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RenderOdyleClock();
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
@@ -417,6 +420,20 @@ public partial class MainWindow : Window
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale")), Brush(live ? "Mint" : "Amber"),
             live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName));
     }
+    // The Odyle clock under the split: from the reading on screen, or the saved character's last
+    // one (an estimate then), with the operators' rules. Ticked every second with the age.
+    private void RenderOdyleClock()
+    {
+        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
+        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        ClockState? state = null;
+        if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
+            state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax);
+        else if (api is not null && reading is null && character is { Confirmed: true, Parts: { } parts } && Readiness.Parse(character.LastReadingAt) is { } saved)
+            state = OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, character.RegenTick, character.NaturalMax);
+        var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
+        OdyleClockLabel.Text = line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
     private void RenderClock()
     {
         var character = CurrentCharacter;
@@ -424,6 +441,7 @@ public partial class MainWindow : Window
             : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
         if (capture is { } running)
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
+        RenderOdyleClock();
     }
 
     // ----- Operations -----
@@ -616,7 +634,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -679,7 +697,7 @@ public partial class MainWindow : Window
                 var listed = await current.GetRoomsAsync();
                 var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
                 if (api != current) return;
-                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
                 if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
                 RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
                 if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));

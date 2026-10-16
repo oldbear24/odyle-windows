@@ -142,6 +142,12 @@ static class ReaderChecks
                 Check(server.LastReport.Contains("\"base\":0,\"bonus\":0,\"kind\":\"spend\",\"delta\":-15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 0 · items 0 · −15 at "), "a spend is sent as one, and the card shows the split and the change");
                 await Change(15, 15, 0);
                 Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at "), "a rise of the natural pool alone is a regeneration tick");
+                // The Odyle clock under the split: the next tick and when each cap the character may have is reached; the operators can hide it.
+                var odyleClock = Control<TextBlock>(window, "OdyleClockLabel");
+                Check(odyleClock.Visibility == Visibility.Visible && System.Text.RegularExpressions.Regex.IsMatch(odyleClock.Text, @"^\+15 in .+ · full ≈ .+ at 560 / .+ at 840$"), "the card shows the Odyle clock: " + odyleClock.Text);
+                Field("clockRules").SetValue(window, ClockRules.Default with { Paused = true }); Call(window, "RenderOdyleClock");
+                Check(odyleClock.Visibility == Visibility.Collapsed, "the operators can hide the Odyle clock");
+                Field("clockRules").SetValue(window, null);
                 // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
                 // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
                 server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
