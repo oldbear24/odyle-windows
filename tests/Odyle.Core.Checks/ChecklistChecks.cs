@@ -38,6 +38,10 @@ static class ChecklistChecks
         var serverNow = Readiness.Parse(listed.ServerNow)!.Value;
         Check(listed.Tasks.Length == 2 && listed.Resets is { DailyResetHour: 7, WeeklyResetDay: "wednesday" }, "checklist contract");
         Check(Checklist.IsDone(listed.Tasks[0], serverNow, listed.Resets) && !Checklist.IsDone(listed.Tasks[1], serverNow, listed.Resets), "done follows doneAt and the server time");
+        // A list per character (#38): the app shows the account's own list and the card's character's.
+        var scoped = JsonSerializer.Deserialize<TasksResponse>("""{"tasks":[{"id":"a","user":"u","title":"Arena","cadence":"daily","character":""},{"id":"b","user":"u","title":"Nightmare","cadence":"weekly","character":"alt","characterName":"Altie"},{"id":"c","user":"u","title":"Main only","cadence":"daily","character":"main","characterName":"Mainy"}],"characters":[],"templates":[],"limit":40}""", options)!;
+        Check(scoped.Tasks[1] is { Character: "alt", CharacterName: "Altie" } && listed.Tasks[0].Character is null, "a task carries its character's list, and older backends send none");
+        Check(Checklist.Shown(scoped.Tasks, "alt").Select(t => t.Id).SequenceEqual(["a", "b"]) && Checklist.Shown(scoped.Tasks, null).Select(t => t.Id).SequenceEqual(["a"]) && Checklist.Shown(listed.Tasks, "alt").Length == 2, "the account's list and the card's character's, never the other characters'");
         Console.WriteLine("Daily and weekly checklist periods, reset settings, done state and wire contract passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Checklist check failed: " + message); }

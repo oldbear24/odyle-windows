@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.13.0 · 2026-10-17
+
+### New
+- The checklist shows the tasks of the character in game next to your account's, now that the dashboard keeps a list per character.
+
 ## 0.12.0 · 2026-10-16
 
 ### New

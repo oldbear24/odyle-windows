@@ -279,6 +279,15 @@ static class ReaderChecks
                 Check(groups.Length == 2 && groups[0].Header == "DAILY" && groups[0].Tasks.Select(t => t.Done).SequenceEqual(new[] { true, false }) && groups[0].Progress.Trim() == "1 / 2", "daily tasks show done and open items with their count");
                 Check(groups[1].Header == "WEEKLY" && groups[1].Tasks.Select(t => t.Done).SequenceEqual(new[] { false, true }) && groups[1].Percent == 50, "a weekly tick from before the current period no longer counts");
                 Check(groups.All(g => g.Reset.StartsWith("resets in ")) && groups[0].Tasks[0].Hint.StartsWith("Done") && groups[0].Tasks[1].Hint == "Still to do today", "each list counts down to its reset");
+                // A list per character (#38): the card's character's tasks join the account's, the others' stay on the dashboard.
+                var accountTasks = (UserTask[])Field("tasks").GetValue(window)!;
+                Field("tasks").SetValue(window, accountTasks.Concat(new[] { new UserTask("t4", "u", "Nightmare", "weekly", Character: "alt", CharacterName: "Altie"), new UserTask("t5", "u", "Main boss", "weekly", Character: "main", CharacterName: "Mainy") }).ToArray());
+                Field("characters").SetValue(window, new[] { new Character("alt", "u", "Altie", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "alt");
+                Call(window, "RenderHero");
+                var scopedGroups = (TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource;
+                Check(scopedGroups[1].Tasks.Length == 3 && scopedGroups[1].Tasks[2] is { Task.Title: "Nightmare", Hint: "Altie · Still to do this week" } && !scopedGroups[1].Tasks.Any(t => t.Task.Title == "Main boss"), "the card's character brings its own list, named, and other characters' stay out: " + string.Join(",", scopedGroups[1].Tasks.Select(t => t.Task.Title)));
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("tasks").SetValue(window, accountTasks); Call(window, "RenderHero");
+                Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource)[1].Tasks.Length == 2, "without a character only the account's list shows");
                 var shell = (FrameworkElement)window.Content; shell.Width = 520; shell.Measure(new Size(520, double.PositiveInfinity)); shell.Arrange(new Rect(0, 0, 520, shell.DesiredSize.Height)); shell.UpdateLayout();
                 Check(Control<Grid>(window, "Card").ActualWidth == 280 && Control<Border>(window, "TasksPanel").ActualWidth == 240, "the card keeps its width and the checklist takes its own column");
                 shell.Width = double.NaN;
