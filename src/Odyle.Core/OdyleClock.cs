@@ -29,20 +29,22 @@ public static class OdyleClock
         return ticks;
     }
 
-    // The caps a character may have, smallest first: those its fullest natural pool of the
-    // last 30 days fits under; one once its readings settled it.
-    public static int[] Caps(int? naturalMax, ClockRules rules)
+    // The caps a character may have, smallest first: the one its account's membership answer
+    // settled (answeredCap, set on the dashboard: 840 with it, 560 without), else those its
+    // fullest natural pool of the last 30 days fits under; one once its readings settled it.
+    public static int[] Caps(int? naturalMax, ClockRules rules, int? answeredCap = null)
     {
+        if (answeredCap is > 0 and var answered) return [answered];
         var fit = rules.Caps.Where(cap => cap >= (naturalMax ?? 0)).ToArray();
         return fit.Length > 0 ? fit : rules.Caps.Length > 0 ? [rules.Caps[^1]] : [];
     }
 
     // Null while the operators pause the clock or without the two numbers and a reading time.
     // While the cap is open the estimate stops at the smallest one.
-    public static ClockState? Of(int natural, int items, DateTimeOffset readAt, DateTimeOffset now, ClockRules? rules = null, int? regenTick = null, int? naturalMax = null)
+    public static ClockState? Of(int natural, int items, DateTimeOffset readAt, DateTimeOffset now, ClockRules? rules = null, int? regenTick = null, int? naturalMax = null, int? answeredCap = null)
     {
         rules ??= ClockRules.Default;
-        var caps = Caps(naturalMax, rules);
+        var caps = Caps(naturalMax, rules, answeredCap);
         if (rules.Paused || caps.Length == 0 || rules.TickHours.Length == 0) return null;
         var tick = regenTick is > 0 and var own ? own : rules.Tick; var cap = caps[0];
         if (tick <= 0) return null;
@@ -56,6 +58,12 @@ public static class OdyleClock
         }).ToArray();
         return new ClockState(value, value + items, cap, tick, next, fills, value >= cap, caps.Length == 1, value != natural);
     }
+
+    // Readings that contradict the membership answer: the natural pool held more than the
+    // answered cap (the membership started, most likely). The readings stay as read; the card
+    // says so under the clock, or "" when they fit.
+    public static string Mismatch(int? naturalMax, int? answeredCap) =>
+        answeredCap is > 0 and var cap && naturalMax is { } held && held > cap ? Localizer.T("Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard.", held, cap) : "";
 
     // One line for the card: the estimate of a character not read right now, then either the
     // next tick and when the natural pool is full, or that it is full and losing each tick.
