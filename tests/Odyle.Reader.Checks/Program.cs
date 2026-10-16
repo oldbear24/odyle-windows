@@ -396,6 +396,13 @@ static class ReaderChecks
                 Check(Control<TextBlock>(window, "RunChipNotice") is { Visibility: Visibility.Visible, Text: var cancelled } && cancelled.StartsWith("Fire Temple at ") && cancelled.EndsWith(" was cancelled") && Control<TextBlock>(window, "RunChipLabel").Visibility == Visibility.Collapsed, "a cancelled run of yours says so");
                 Field("chipNoticeUntil").SetValue(window, DateTimeOffset.MinValue); Call(window, "RenderRunChip");
                 Check(Control<Border>(window, "RunChipBox").Visibility == Visibility.Collapsed, "no run, no chip");
+                // A character none of your rooms can see says so on the card, with a link to the dashboard.
+                Field("characters").SetValue(window, new[] { Member("c1", "u", "Ayla", 130) }); Field("currentCharacterId").SetValue(window, "c1");
+                Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", false, []) }); Call(window, "RenderHero");
+                Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Visible, "a character no room sees says so");
+                Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true, ["c1"]) }); Call(window, "RenderHero");
+                Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Collapsed, "a shared character does not");
+                Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>());
                 Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("api").SetValue(window, null);
                 Field("notifications").SetValue(window, NotificationSettings.Default);
                 Field("preferences").SetValue(window, PreferencesStore.Load()); Field("accountId").SetValue(window, ""); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>());

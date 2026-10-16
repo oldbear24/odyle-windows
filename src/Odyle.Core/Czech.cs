@@ -169,6 +169,7 @@ public static class Czech
         ["{0} moved to {1:ddd HH:mm}"] = "{0} se přesunul na {1:ddd HH:mm}", ["Party · nobody live"] = "Parta · nikdo není živě", ["you"] = "ty",
         ["Party · {0} · lowest {1}"] = "Parta · {0} · nejnižší {1}", ["{0} not live"] = "{0} není živě", ["Going ✓"] = "Jdu ✓", ["Join"] = "Přidat se",
         ["You are going · click to leave this run"] = "Jdeš · kliknutím run opustíš", ["Go to this run"] = "Jít na tento run", ["seen {0}"] = "viděn {0}",
+        ["Not shared in any room · Share ↗"] = "Není sdílená v žádné místnosti · Sdílet ↗", ["Your rooms cannot see this character. Choose the rooms on the dashboard."] = "Tvé místnosti tuto postavu nevidí. Vyber místnosti na dashboardu.",
         ["NOTIFICATIONS"] = "OZNÁMENÍ", ["Notification settings"] = "Nastavení oznámení", ["Open Account & data on the dashboard"] = "Otevřít Účet a data na dashboardu",
         ["Run reminders, their times and quiet hours are set for your account on the dashboard. Odyle shows them here, also while it waits in the tray. A downloaded update is announced once."] = "Připomínky runů, jejich časy a tiché hodiny se nastavují pro tvůj účet na dashboardu. Odyle je ukazuje tady, i když čeká v oznamovací oblasti. Stažená aktualizace se ohlásí jednou.",
         ["{0} · starts at {1:t}"] = "{0} · začátek v {1:t}", ["Odyle {0} is ready"] = "Odyle {0} je připravené",

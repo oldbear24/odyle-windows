@@ -354,6 +354,9 @@ public partial class MainWindow : Window
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderOdyleClock();
+        // A character your rooms cannot see: you might think the party sees you when it does not.
+        var unseen = connected && character is { Id.Length: > 0 } && rooms.Length > 0 && !rooms.Any(r => r.Shares(character.Id));
+        ShareHintButton.Visibility = unseen ? Visibility.Visible : Visibility.Collapsed;
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
@@ -479,6 +482,7 @@ public partial class MainWindow : Window
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
         RenderOdyleClock();
     }
+    private void ShareHint_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/");
 
     // ----- Operations -----
     private void SetBusy(bool value)
