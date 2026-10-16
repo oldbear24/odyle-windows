@@ -11,6 +11,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # main and the release tags, for the version check
+      # A change to what ships bumps <Version> (AGENTS.md, Versioning).
+      - name: Version bump
+        run: ./scripts/version.ps1 check -Base '${{ github.event.pull_request.base.sha }}'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
