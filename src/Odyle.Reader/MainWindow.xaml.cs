@@ -112,6 +112,8 @@ public partial class MainWindow : Window
     private bool tasksLoaded, refreshingTasks;
     private string? tasksProblem;
     private DateTimeOffset renderedDaily, renderedWeekly;
+    // The character whose list the checklist shows with the account's (Checklist.Shown).
+    private string? renderedTasksCharacter;
     // Pinned above other windows and the checklist beside the card: remembered on this PC.
     private Preferences preferences = new();
     private readonly Forms.ToolStripMenuItem pinItem = new(T("Stay on top")) { CheckOnClick = true };
@@ -383,6 +385,7 @@ public partial class MainWindow : Window
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderOdyleClock();
+        if (tasksLoaded && CurrentCharacter?.Id != renderedTasksCharacter) RenderTasks();
         // A character your rooms cannot see: you might think the party sees you when it does not.
         var unseen = connected && character is { Id.Length: > 0 } && rooms.Length > 0 && !rooms.Any(r => r.Shares(character.Id));
         ShareHintButton.Visibility = unseen ? Visibility.Visible : Visibility.Collapsed;
@@ -1131,13 +1134,16 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.UtcNow + serverOffset; var connected = api is not null;
         renderedDaily = Checklist.PeriodStart("daily", now, resets); renderedWeekly = Checklist.PeriodStart("weekly", now, resets);
+        renderedTasksCharacter = CurrentCharacter?.Id; var shown = Checklist.Shown(tasks, renderedTasksCharacter);
         TaskGroups.ItemsSource = !connected ? Array.Empty<TaskGroup>() : new[] { "daily", "weekly" }.Select(cadence =>
         {
-            var items = tasks.Where(t => t.Cadence == cadence).Select(t =>
+            var items = shown.Where(t => t.Cadence == cadence).Select(t =>
             {
                 var done = Checklist.IsDone(t, now, resets);
                 var age = Age(Readiness.Parse(t.DoneAt) ?? now);
                 var hint = done ? (cadence == "daily" ? T("Done {0} · unchecks itself at the daily reset", age) : T("Done {0} · unchecks itself at the weekly reset", age)) : cadence == "daily" ? T("Still to do today") : T("Still to do this week");
+                // A task of the character's own list says whose it is.
+                if (!string.IsNullOrEmpty(t.CharacterName)) hint = t.CharacterName + " · " + hint;
                 return new TaskItem(t, done, hint);
             }).ToArray();
             return new TaskGroup(cadence, items) { Reset = ResetIn(cadence, now), ResetAt = ResetAt(cadence, now) };
@@ -1145,7 +1151,7 @@ public partial class MainWindow : Window
         TasksHint.Text = !connected ? T("Pair the app in settings to see your daily and weekly tasks.")
             : tasksProblem is { } problem ? T("Could not load the tasks: {0}", problem)
             : !tasksLoaded ? T("Loading your checklist…")
-            : tasks.Length == 0 ? T("Add tasks on the dashboard under Daily & weekly; they show up here.")
+            : shown.Length == 0 ? T("Add tasks on the dashboard under Daily & weekly; they show up here.")
             : T("Tick a task when it is done · it unchecks itself at the game's reset.");
     }
     private string ResetIn(string cadence, DateTimeOffset now) => T("resets in {0}", Checklist.Remaining(Checklist.NextReset(cadence, now, resets) - now));

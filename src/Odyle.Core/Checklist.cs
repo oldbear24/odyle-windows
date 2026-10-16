@@ -1,7 +1,9 @@
 namespace Odyle.Core;
 // One task of the account's private daily or weekly checklist, as GET /api/odyle/tasks
-// lists it. DoneAt is the last time the account checked it, "" while unchecked.
-public sealed record UserTask(string Id, string User, string Title, string Cadence, string DoneAt = "", string Created = "", string Updated = "");
+// lists it. DoneAt is the last time the account checked it, "" while unchecked. Character is
+// the character whose list it is on (with its name), "" for the account's own list; older
+// backends send neither (#38).
+public sealed record UserTask(string Id, string User, string Title, string Cadence, string DoneAt = "", string Created = "", string Updated = "", string? Character = null, string? CharacterName = null);
 // Reset times of the Global service, edited by superusers on the backend.
 public sealed record TaskResets(int DailyResetHour = 7, string WeeklyResetDay = "wednesday");
 public sealed record TasksResponse(UserTask[] Tasks, TaskResets? Resets = null, string ServerNow = "");
@@ -26,6 +28,10 @@ public static class Checklist
         return start;
     }
     public static DateTimeOffset NextReset(string cadence, DateTimeOffset now, TaskResets? resets = null) => PeriodStart(cadence, now, resets).AddDays(cadence == "weekly" ? 7 : 1);
+    // The tasks the app shows: the account's own list and the list of the character on the card
+    // (the dashboard keeps one per character); the other characters' lists stay on the dashboard.
+    public static UserTask[] Shown(IEnumerable<UserTask> tasks, string? characterId) =>
+        tasks.Where(t => string.IsNullOrEmpty(t.Character) || t.Character == characterId && !string.IsNullOrEmpty(characterId)).ToArray();
     public static bool IsDone(UserTask task, DateTimeOffset now, TaskResets? resets = null) => Readiness.Parse(task.DoneAt) is { } done && done >= PeriodStart(task.Cadence, now, resets);
     // "2d 3h", "5h 12m", "4m" or "under a minute".
     public static string Remaining(TimeSpan span)
