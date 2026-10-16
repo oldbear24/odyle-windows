@@ -68,7 +68,8 @@ public static class PartyNews
         var found = new HashSet<string>();
         var next = snapshots.Select(s => s.Room.Id != roomId ? s : s with
         {
-            Members = s.Members.Select(m => m with { Characters = m.Characters.Select(c => { if (!changedById.TryGetValue(c.Id, out var n)) return c; found.Add(c.Id); return n; }).ToArray() }).ToArray(),
+            // A copy without the room's shared flag keeps the one the snapshot had.
+            Members = s.Members.Select(m => m with { Characters = m.Characters.Select(c => { if (!changedById.TryGetValue(c.Id, out var n)) return c; found.Add(c.Id); return n with { Shared = n.Shared ?? c.Shared }; }).ToArray() }).ToArray(),
         }).ToArray();
         complete = changedById.Keys.All(found.Contains);
         return next;

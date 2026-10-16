@@ -42,9 +42,21 @@
       </DockPanel>
       <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>
       <TextBlock x:Name="SplitLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+      <Button x:Name="ShareHintButton" Style="{StaticResource Ghost}" Content="Not shared in any room · Share ↗" Visibility="Collapsed" Click="ShareHint_Click" HorizontalAlignment="Left" Margin="-4,2,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Amber}" ToolTip="Your rooms cannot see this character. Choose the rooms on the dashboard."/>
       <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
       <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
      </StackPanel>
+    </Border>
+
+    <!-- The next planned run: countdown, who goes and Going; a cancelled or moved run of yours says so -->
+    <Border x:Name="RunChipBox" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource Line}" Background="{StaticResource Panel}" Padding="9,4,4,4" Margin="0,7,0,0">
+     <DockPanel>
+      <Button x:Name="RunGoingButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Click="RunGoing_Click" Padding="6,1" FontSize="10.5" VerticalAlignment="Center" Margin="6,0,0,0"/>
+      <StackPanel VerticalAlignment="Center">
+       <TextBlock x:Name="RunChipLabel" FontSize="11" TextTrimming="CharacterEllipsis"/>
+       <TextBlock x:Name="RunChipNotice" FontSize="10" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed"/>
+      </StackPanel>
+     </DockPanel>
     </Border>
 
     <!-- Packet reader: status line with a compact start/stop toggle -->
@@ -78,6 +90,7 @@
        <ItemsControl.ItemTemplate><DataTemplate>
         <StackPanel>
          <DockPanel Margin="2,6,2,0"><TextBlock DockPanel.Dock="Right" Text="{Binding Online}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/><TextBlock Style="{StaticResource Eyebrow}" Text="{Binding Header}" TextTrimming="CharacterEllipsis"/></DockPanel>
+         <TextBlock Text="{Binding Summary}" Foreground="{Binding SummaryBrush}" FontSize="10.5" Margin="2,1,2,0" TextTrimming="CharacterEllipsis"/>
          <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
           <ItemsControl.ItemTemplate><DataTemplate>
            <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">

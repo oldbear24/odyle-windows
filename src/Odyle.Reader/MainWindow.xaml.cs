@@ -23,7 +23,8 @@ namespace Odyle.Reader;
 public sealed record CharacterSharing(string Title, string Rooms);
 public sealed record LanguageChoice(string Code, string Name);
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint);
-public sealed record PartyRoom(string Name, PartyMate[] Mates)
+// Summary is the room's party line (RunChip.PartyLine), mint while the party can do a cube.
+public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = "", Brush? SummaryBrush = null)
 {
     public string Header => Name.ToUpper(Culture);
     public string Online => T("{0} online", Mates.Length);
@@ -210,7 +211,7 @@ public partial class MainWindow : Window
         heartbeat.Tick += async (_, _) => await PulseAsync();
         npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
-        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
+        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
@@ -346,12 +347,16 @@ public partial class MainWindow : Window
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        if (rooms.Length > 1 && HeroRoom(character) is { } costRoom) CubeLabel.Text += " · " + costRoom.Name;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
         var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderOdyleClock();
+        // A character your rooms cannot see: you might think the party sees you when it does not.
+        var unseen = connected && character is { Id.Length: > 0 } && rooms.Length > 0 && !rooms.Any(r => r.Shares(character.Id));
+        ShareHintButton.Visibility = unseen ? Visibility.Visible : Visibility.Collapsed;
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
@@ -382,11 +387,9 @@ public partial class MainWindow : Window
     }
     private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
-    private int HeroCost(Character? character)
-    {
-        var room = (character is null ? null : Array.Find(rooms, r => r.Shares(character.Id))) ?? (rooms.Length > 0 ? rooms[0] : null);
-        return room?.Cost is > 0 and var cost ? cost : odylePerCube;
-    }
+    private int HeroCost(Character? character) => HeroRoom(character)?.Cost is > 0 and var cost ? cost : odylePerCube;
+    // The room whose cost the card counts cubes with: the first one the character is shared in.
+    private Room? HeroRoom(Character? character) => (character is null ? null : Array.Find(rooms, r => r.Shares(character.Id))) ?? (rooms.Length > 0 ? rooms[0] : null);
     // Sharing is configured on the dashboard; settings only summarizes it.
     private void RenderRooms()
     {
@@ -403,22 +406,57 @@ public partial class MainWindow : Window
     private void RenderParty()
     {
         var now = DateTimeOffset.UtcNow + serverOffset;
-        var groups = snapshots.Select(s => new PartyRoom(s.Room.Name, s.Members.Where(m => m.User != accountId)
-                .SelectMany(m => m.Characters.Select(c => (Member: m, Character: c, State: Readiness.Of(c, now))))
-                .Where(x => x.State is Presence.Live or Presence.Stale)
-                .OrderBy(x => x.State).ThenByDescending(x => x.Character.Value)
-                .Select(x => Mate(x.Member, x.Character, x.State, s.Room.Cost)).ToArray()))
-            .Where(g => g.Mates.Length > 0).ToArray();
+        // Each room with characters: its party line (your character included, same rules as the
+        // dashboard) and the other members' characters online.
+        var groups = snapshots.Select(s =>
+            {
+                var cost = s.Room.Cost > 0 ? s.Room.Cost : odylePerCube; var party = PartyReadiness.Party(PartyReadiness.Entries(s), now, cost);
+                var mates = s.Members.Where(m => m.User != accountId)
+                    .SelectMany(m => m.Characters.Where(c => c.Shared ?? true).Select(c => (Member: m, Character: c, State: Readiness.Of(c, now))))
+                    .Where(x => x.State is Presence.Live or Presence.Stale)
+                    .OrderBy(x => x.State).ThenByDescending(x => x.Character.Value)
+                    .Select(x => Mate(x.Member, x.Character, x.State, s.Room.Cost, now)).ToArray();
+                return (Party: party, Room: new PartyRoom(s.Room.Name, mates, RunChip.PartyLine(party, accountId), Brush(party.Cubes > 0 ? "Mint" : "Muted")));
+            })
+            .Where(g => g.Party.Characters.Length > 0).Select(g => g.Room).ToArray();
         PartyList.ItemsSource = groups;
         PartyPanel.Visibility = api is not null && rooms.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        PartyEmptyLabel.Visibility = groups.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PartyEmptyLabel.Visibility = groups.All(g => g.Mates.Length == 0) ? Visibility.Visible : Visibility.Collapsed;
+        RenderRunChip();
     }
-    private PartyMate Mate(RoomMember member, Character c, Presence state, int cost)
+    // The next planned run under the card: soonest first, ones you go to before others, with a
+    // countdown and Going. A run you were going to that was cancelled or moved says so for 30 minutes.
+    private NextRun? chipRun; private string chipNotice = ""; private DateTimeOffset chipNoticeUntil;
+    private void RenderRunChip()
+    {
+        var now = DateTimeOffset.UtcNow + serverOffset;
+        if (RunChip.Change(chipRun, snapshots, now) is { } change) { chipNotice = change; chipNoticeUntil = now.AddMinutes(30); }
+        var next = api is null ? null : RunChip.Pick(snapshots, accountId, now);
+        chipRun = next;
+        var notice = now < chipNoticeUntil ? chipNotice : "";
+        RunChipBox.Visibility = next is not null || notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RunChipLabel.Text = next is null ? "" : RunChip.Line(next, now); RunChipLabel.Visibility = next is null ? Visibility.Collapsed : Visibility.Visible;
+        RunChipNotice.Text = notice; RunChipNotice.Visibility = notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var viewer = next is not null && next.Room.Role == "viewer";
+        RunGoingButton.Visibility = next is null || viewer ? Visibility.Collapsed : Visibility.Visible;
+        RunGoingButton.Content = next is { Going: true } ? T("Going ✓") : T("Join");
+        RunGoingButton.ToolTip = next is { Going: true } ? T("You are going · click to leave this run") : T("Go to this run");
+    }
+    private async void RunGoing_Click(object sender, RoutedEventArgs e)
+    {
+        if (api is not { } current || chipRun is not { } run) return;
+        RunGoingButton.IsEnabled = false;
+        try { await current.GoingAsync(run.Room.Id, run.Run.Id, !run.Going); Log.Info($"{(run.Going ? "Left" : "Joined")} the planned run {run.Run.Id}."); await RefreshPartyAsync(); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException) { Status(T(error.Message)); }
+        finally { RunGoingButton.IsEnabled = true; }
+    }
+    private PartyMate Mate(RoomMember member, Character c, Presence state, int cost, DateTimeOffset now)
     {
         cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
+        var seen = !live && Readiness.Parse(c.LastSeenAt) is { } at ? " · " + T("seen {0}", Age(at)) : "";
         return new PartyMate(c.CharacterName, c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}",
-            c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale")), Brush(live ? "Mint" : "Amber"),
+            c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale") + seen), Brush(live ? "Mint" : "Amber"),
             live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName));
     }
     // The Odyle clock under the split: from the reading on screen, or the saved character's last
@@ -444,6 +482,7 @@ public partial class MainWindow : Window
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
         RenderOdyleClock();
     }
+    private void ShareHint_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/");
 
     // ----- Operations -----
     private void SetBusy(bool value)
