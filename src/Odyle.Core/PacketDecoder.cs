@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Collections.Concurrent;
 using K4os.Compression.LZ4;
 
 namespace Odyle.Core;
@@ -69,35 +68,47 @@ public sealed class TcpReceiveStream
 
 /// <summary>One Odyle observation decoded from the game stream.</summary>
 /// <param name="Total">Base plus bonus energy as the game displays it.</param>
-/// <param name="EntityId">Stat owner id from the snapshot or update frame.</param>
 /// <param name="ParserVersion">Adapter name the backend must approve before storing the value.</param>
 /// <param name="Source">Whether the value came from a full snapshot or an incremental update.</param>
-public sealed record PacketCandidate(int Total, ulong EntityId, string ParserVersion, CandidateSource Source = CandidateSource.Snapshot)
+public sealed record PacketCandidate(int Total, string ParserVersion, CandidateSource Source = CandidateSource.Snapshot)
 {
-    /// <summary>Base component; null when the frame carried only the total.</summary>
-    public int? Primary { get; init; }
-    /// <summary>Bonus component; null when the frame carried only the total.</summary>
+    /// <summary>Base component; null when only the total is known (a reading handed over by a restart).</summary>
+    public int? Base { get; init; }
+    /// <summary>Bonus component; null when only the total is known.</summary>
     public int? Bonus { get; init; }
-    /// <summary>False while the owner is the first stat id seen on a connection that had no snapshot.</summary>
-    public bool OwnerConfirmed { get; init; } = true;
 }
 public enum CandidateSource { Snapshot, Update }
 
-/// <summary>Stat owner ids a snapshot named as the Odyle counter. Shared by every stream of a capture.</summary>
-public sealed class KnownOwners
+/// <summary>
+/// One record of the stat snapshot (0B61) and stat update (0C61): a tag byte, the stat's
+/// resource id as a little-endian u32, the base value as a varint when the tag has bit 4 and
+/// the bonus value when it has bit 8. A value the tag leaves out is zero: 0C carries base and
+/// bonus, 08 the bonus only, 04 the base only and 00 neither.
+/// </summary>
+public readonly record struct StatRecord(byte Tag, uint Resource, long Base, long Bonus)
 {
-    private readonly ConcurrentDictionary<ulong, byte> ids = new();
-    public bool Any => !ids.IsEmpty;
-    public bool Contains(ulong id) => ids.ContainsKey(id);
-    public void Add(ulong id) { if (id > 0) ids[id] = 0; }
-    public ulong[] ToArray() => ids.Keys.ToArray();
+    public long Total => Base + Bonus;
+    public static bool IsTag(byte tag) => (tag & ~0x0c) == 0;
+    /// <summary>Reads the record at offset and moves past it; false, offset unchanged, for an unknown tag or a short or oversized value. Never throws.</summary>
+    public static bool TryRead(ReadOnlySpan<byte> data, ref int offset, out StatRecord record)
+    {
+        record = default; var p = offset;
+        if (p < 0 || data.Length - p < 5 || !IsTag(data[p])) return false;
+        var tag = data[p]; var resource = BinaryPrimitives.ReadUInt32LittleEndian(data[(p + 1)..]); p += 5;
+        ulong value = 0, bonus = 0;
+        if ((tag & 4) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out value)) return false;
+        if ((tag & 8) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out bonus)) return false;
+        record = new(tag, resource, (long)value, (long)bonus); offset = p; return true;
+    }
 }
 
-// Diagnostic fields only; the reading itself is the candidate.
-public sealed record OdyleUpdateObservation(byte Mode, ulong First, ulong? Second, int TrailerBytes, byte Direction);
-// Every Odyle-shaped field of one stat snapshot and the owner read from it, if any.
-public sealed record OdyleSnapshotField(int Offset, ulong Id, int Base, int Total);
-public sealed record OdyleSnapshotObservation(int PayloadBytes, OdyleSnapshotField[] Fields, ulong? ReadOwner);
+// Diagnostic fields only; the reading itself is the candidate. Resource is the stat's id:
+// 60000001 is Odyle, anything else another counter that is never read.
+public sealed record OdyleUpdateObservation(uint Resource, byte Tag, long Base, long Bonus, int TrailerBytes, byte Direction);
+// The Odyle records of one stat snapshot: Records is the record count when the whole layout
+// was walked, null when only the Odyle record's id was searched for.
+public sealed record OdyleSnapshotField(int Offset, byte Tag, long Base, long Bonus);
+public sealed record OdyleSnapshotObservation(int PayloadBytes, int? Records, OdyleSnapshotField[] Fields, bool Read);
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
 /// <summary>
@@ -107,36 +118,41 @@ public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1,
 public sealed class ExperimentalOdyleDecoder
 {
     /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
-    public const string Version = "global-reference-v1";
+    public const string Version = "global-reference-v2";
+    /// <summary>Stat resource id of Odyle, bytes 01 87 93 03 on the wire. 80000001 is another, small counter.</summary>
+    public const uint OdyleResource = 60000001;
+    private const int FrameLimit = 1048576, BundleLimit = 8 * 1048576, ValueLimit = 1000000;
+    // Until a second heartbeat confirms a boundary found by scanning, a frame may claim at most
+    // 64 KB; a full stat snapshot holds at least FullSnapshotRecords records (73 on Global).
+    private const int ProbationFrameLimit = 65536, FullSnapshotRecords = 32;
     // Undecoded stream bytes live in buffer[start..end). Consuming a frame only moves
     // start; the data is compacted or grown when the tail runs out of room, instead
     // of shifting the whole remainder on every frame.
     private byte[] buffer = new byte[16384];
     private int start, end;
-    private readonly KnownOwners owners;
-    private ulong? entity;
-    private bool ownerConfirmed;
     private ulong? ownCharacter;
     private readonly bool startsAligned;
-    private bool synchronized;
+    private bool synchronized, probation;
     /// <param name="startsAligned">False for a connection joined midstream; framing then waits for a heartbeat.</param>
-    /// <param name="owners">Owner ids confirmed by snapshots of other streams or earlier runs.</param>
-    public ExperimentalOdyleDecoder(bool startsAligned = true, KnownOwners? owners = null) { this.startsAligned = startsAligned; synchronized = startsAligned; this.owners = owners ?? new(); }
-    /// <summary>True once a frame boundary is known. A midstream start waits for a protocol heartbeat.</summary>
+    public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
+    /// <summary>True once a frame boundary is known. A midstream start or a resync waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
-    /// <summary>The game's id of the character switched to; 0 when the message did not carry one.</summary>
+    /// <summary>The game's id of the character switched to: an own-character message with another id than before on this connection, also one whose name, server or class cannot be read (no IdentityObserved follows then).</summary>
     public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
+    /// <summary>A full stat snapshot (at least 32 records) whose layout was read whole has no Odyle record: the character has no Odyle yet.</summary>
+    public event Action? SnapshotWithoutOdyle;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
-    public void Reset() { start = end = 0; ForgetOwner(); ownCharacter = null; synchronized = startsAligned; }
-    private void ForgetOwner() { entity = null; ownerConfirmed = false; }
+    public void Reset() { start = end = 0; ownCharacter = null; synchronized = startsAligned; probation = false; }
+    /// <summary>Drops the undecoded bytes and waits for the next heartbeat; the own character stays known.</summary>
+    public void Resync() { start = end = 0; synchronized = false; probation = false; }
     private void Push(ReadOnlySpan<byte> bytes)
     {
-        if (end - start + bytes.Length > 1048576) throw new InvalidDataException("Frame buffer limit exceeded.");
+        if (end - start + bytes.Length > FrameLimit) throw new InvalidDataException("Frame buffer limit exceeded.");
         if (end + bytes.Length > buffer.Length)
         {
             if (start > 0) { buffer.AsSpan(start, end - start).CopyTo(buffer); end -= start; start = 0; }
@@ -148,27 +164,62 @@ public sealed class ExperimentalOdyleDecoder
     public void Feed(ReadOnlySpan<byte> bytes)
     {
         Push(bytes);
-        if (!synchronized)
-        {
-            // A midstream capture has no frame boundary. Wait for a complete
-            // protocol heartbeat instead of interpreting arbitrary payload bytes.
-            var data = buffer.AsSpan(start, end - start); var at = -1;
-            for (var i = 0; i + 3 <= data.Length; i++)
-                if (data[i + 1] == 0 && data[i + 2] == 0x36 && (data[i] == 6 || (data[i] == 0x0e && i + 11 <= data.Length))) { at = i; break; }
-            if (at < 0) { if (data.Length > 10) Drop(data.Length - 10); return; }
-            Drop(at); synchronized = true;
-        }
+        if (!synchronized && !Synchronize()) return;
         while (end > start)
         {
-            var data = buffer.AsSpan(start, end - start); var position = 0;
-            if (!TryVarint(data, ref position, out var encoded)) return;
-            if (encoded == 0) { Drop(1); continue; }
-            var length = (long)encoded + position - 4;
-            if (length < position + 2 || length > 1048576) throw new InvalidDataException("Unsupported game framing.");
+            var data = buffer.AsSpan(start, end - start);
+            var header = Header(data, out var position, out var length);
+            if (header == FrameHeader.Incomplete) return;
+            if (header == FrameHeader.Invalid) throw new InvalidDataException("Unsupported game framing.");
+            // A boundary found by scanning is on probation until the next heartbeat: a longer claim
+            // means the heartbeat bytes were payload, and the scan goes on from the next byte instead
+            // of waiting for up to 1 MB of stream.
+            if (probation && length > ProbationFrameLimit)
+            {
+                Drop(1); synchronized = false;
+                if (!Synchronize()) return;
+                continue;
+            }
+            if (length == 0) { Drop(1); continue; }
             if (data.Length < length) return;
-            var frame = data.Slice(position, (int)length - position).ToArray();
-            Drop((int)length); DecodeFrame(frame, 0);
+            var frame = data.Slice(position, length - position).ToArray();
+            Drop(length);
+            if (probation && frame is [0, 0x36, ..]) probation = false;
+            DecodeFrame(frame, 0);
         }
+    }
+    private enum FrameHeader { Valid, Incomplete, Invalid }
+    // A frame starts with a varint holding the size of the rest of the frame plus four; a
+    // zero byte is padding. Valid frames hold at least a two-byte opcode and at most 1 MB.
+    private static FrameHeader Header(ReadOnlySpan<byte> data, out int position, out int length)
+    {
+        position = 0; length = 0;
+        if (!TryVarint(data, ref position, out var encoded)) return data.Length < 5 ? FrameHeader.Incomplete : FrameHeader.Invalid;
+        if (encoded == 0) return FrameHeader.Valid;
+        var total = (long)encoded + position - 4;
+        if (total < position + 2 || total > FrameLimit) return FrameHeader.Invalid;
+        length = (int)total; return FrameHeader.Valid;
+    }
+    // A midstream capture or a resync has no frame boundary. A complete protocol heartbeat
+    // (06 00 36, or the 11-byte 0E 00 36 form) marks one, but only when the frame after it
+    // starts with a valid length too: three matching bytes inside a payload are not enough.
+    // The heartbeat is dropped, and the boundary stays on probation until the next one.
+    private bool Synchronize()
+    {
+        var data = buffer.AsSpan(start, end - start);
+        for (var i = 0; i + 3 <= data.Length; i++)
+        {
+            if (data[i + 1] != 0 || data[i + 2] != 0x36 || data[i] is not (6 or 0x0e)) continue;
+            var next = i + (data[i] == 6 ? 3 : 11); var padding = 0;
+            while (next < data.Length && data[next] == 0 && padding < 8) { next++; padding++; }
+            if (padding == 8) continue;
+            var header = Header(data[Math.Min(next, data.Length)..], out _, out _);
+            if (header == FrameHeader.Invalid) continue;
+            if (header == FrameHeader.Incomplete) { Drop(i); return false; }
+            Drop(next); synchronized = probation = true; return true;
+        }
+        if (data.Length > 10) Drop(data.Length - 10);
+        return false;
     }
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)
     {
@@ -179,7 +230,10 @@ public sealed class ExperimentalOdyleDecoder
         {
             if (depth >= 3 || frame.Length < 6) throw new InvalidDataException("Invalid compressed frame.");
             var size = BinaryPrimitives.ReadInt32LittleEndian(frame[2..]);
-            if (size < 1 || size > 1048576) throw new InvalidDataException("Invalid LZ4 size.");
+            // LZ4 restores at most about 255 bytes per compressed byte; a larger claim is not a bundle.
+            if (size < 1 || size > (frame.Length - 6) * 256L + 64) throw new InvalidDataException("Invalid LZ4 size.");
+            // A bundle above 8 MB is skipped whole; the frames after it are read as usual.
+            if (size > BundleLimit) return;
             var restored = new byte[size];
             if (LZ4Codec.Decode(frame[6..], restored) != size) throw new InvalidDataException("Incomplete LZ4 block.");
             var offset = 0;
@@ -197,18 +251,16 @@ public sealed class ExperimentalOdyleDecoder
         FrameObserved?.Invoke(BinaryPrimitives.ReadUInt16BigEndian(frame), frame.Length - 2);
         if (frame[0] == 0x33 && frame[1] == 0x36)
         {
-            var identity = GameIdentity.Read(frame[2..]);
-            var offset = 2; ulong named = 0;
-            // The own-character identity may arrive after its stat snapshot
-            // and may repeat. Neither establishes a character switch alone.
-            if (TryVarint(frame, ref offset, out var character) && character > 0 && frame.Length - offset >= 5)
-            {
-                var changed = ownCharacter is { } previous && previous != character;
-                ownCharacter = named = character;
-                if (!changed) { if (identity is not null) IdentityObserved?.Invoke(identity); return; }
-            }
-            var hadOwner = entity is not null; ForgetOwner();
-            if (hadOwner) CharacterChanged?.Invoke(named);
+            // The own-character identity may arrive after its stat snapshot and repeats every
+            // few minutes. A 3336 without a readable id or with a short tail changes nothing, and
+            // the same id again is a repeat. Another id is a switch even when the rest cannot be
+            // read (a class or server this build does not know): the new character then stays
+            // unnamed instead of its Odyle going to the previous one.
+            var identity = GameIdentity.Read(frame[2..]); var offset = 2;
+            if (!TryVarint(frame, ref offset, out var id) || id == 0 || identity is null && frame.Length - offset < 5) return;
+            var switched = ownCharacter is { } previous && previous != id;
+            ownCharacter = id;
+            if (switched) CharacterChanged?.Invoke(id);
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
@@ -216,76 +268,65 @@ public sealed class ExperimentalOdyleDecoder
         var payload = frame[2..];
         if (frame[0] is 0x0b or 0x0c && payload.Length >= 3)
             LayoutObserved?.Invoke(new(BinaryPrimitives.ReadUInt16BigEndian(frame), payload[0], payload[1], payload[2], payload.Length));
-        if (frame[0] == 0x0b)
-        {
-            var candidates = new List<OdyleSnapshotField>();
-            for (var i = 0; i + 2 < payload.Length; i++)
-            {
-                var twoValues = payload[i] == 0x0c && payload[i + 1] == 1;
-                var oneValue = payload[i] == 0 && payload[i + 1] == 8 && payload[i + 2] == 1;
-                if (!twoValues && !oneValue) continue;
-                var p = i + (twoValues ? 2 : 3);
-                if (oneValue)
-                {
-                    // Servers omit the base component when it is zero.
-                    if (TryVarint(payload, ref p, out var singleId) && TryVarint(payload, ref p, out var value) && singleId > 0 && value <= 1000000)
-                        candidates.Add(new(i, singleId, 0, (int)value));
-                    continue;
-                }
-                if (TryVarint(payload, ref p, out var id) && TryVarint(payload, ref p, out var left) && TryVarint(payload, ref p, out var right) && id > 0 && left <= 1000000 && right <= 1000000 && left + right <= 1000000)
-                    candidates.Add(new(i, id, (int)left, (int)(left + right)));
-            }
-            // The snapshot after a teleport or zone change can hold another counter of the same
-            // shape. The owner an earlier snapshot confirmed (login, an earlier run) picks Odyle;
-            // without one, several fields stay ambiguous and nothing is read.
-            var read = candidates.Count > 1 ? candidates.Where(f => owners.Contains(f.Id)).ToList() : candidates;
-            SnapshotObserved?.Invoke(new(payload.Length, candidates.ToArray(), read.Count == 1 ? read[0].Id : null));
-            if (read.Count != 1) { ForgetOwner(); return; }
-            var c = read[0]; entity = c.Id; ownerConfirmed = true; owners.Add(c.Id);
-            Candidate?.Invoke(new(c.Total, c.Id, Version) { Primary = c.Base, Bonus = c.Total - c.Base });
-        }
-        else if (frame[0] == 0x0c)
-        {
-            // 0C61 is a general stat update. Other field IDs do not
-            // disturb the Odyle owner or supply an energy reading.
-            if (payload.Length >= 3 && payload[2] != 1) return;
-            if (payload.Length < 6 || payload[0] > 1 || (payload[1] != 8 && payload[1] != 12)) { ForgetOwner(); return; }
-            var p = 3;
-            if (!TryVarint(payload, ref p, out var id) || !TryVarint(payload, ref p, out var first)) return;
-            ulong? second = null;
-            if (payload[1] == 12) { if (!TryVarint(payload, ref p, out var value)) return; second = value; }
-            if (first > 1000000 || second > 1000000) { ForgetOwner(); return; }
-            UpdateObserved?.Invoke(new(payload[1], first, second, payload.Length - p, payload[0]));
-            // The single-value form carries the new total and the two-value form repeats
-            // base and bonus, so neither needs a snapshot first. An increase ends with a
-            // flag byte and a 32-bit delta, a decrease with one byte; other layouts are unknown.
-            var total = first + (second ?? 0);
-            if (payload.Length - p != (payload[0] == 1 ? 5 : 1) || total > 1000000) { if (entity == id) ForgetOwner(); return; }
-            if (!ClaimOwner(id)) return;
-            Candidate?.Invoke(new((int)total, id, Version, CandidateSource.Update) { Primary = second is null ? null : (int)first, Bonus = second is { } bonus ? (int)bonus : null, OwnerConfirmed = ownerConfirmed });
-        }
+        if (frame[0] == 0x0b) ReadSnapshot(payload);
+        else if (frame[0] == 0x0c) ReadUpdate(payload);
     }
-    // The update opcode is shared with other counters that differ only in their owner id.
-    // A snapshot-confirmed id, from this stream, another connection or an earlier run, is
-    // trusted and replaces an adopted one. Without any confirmed id the first id seen on
-    // this connection is adopted until a snapshot names the owner.
-    private bool ClaimOwner(ulong id)
+    // The own character's stats: a varint record count, then the records. Odyle is the record
+    // of resource 60000001; another resource is never read, whatever its shape.
+    private void ReadSnapshot(ReadOnlySpan<byte> payload)
     {
-        if (id == 0) return false;
-        if (owners.Contains(id)) { entity = id; ownerConfirmed = true; return true; }
-        if (entity == id) return true;
-        if (entity is not null || owners.Any) return false;
-        entity = id; ownerConfirmed = false; return true;
+        var fields = new List<OdyleSnapshotField>(); var p = 0; int? records = null;
+        if (TryVarint(payload, ref p, out var count) && count <= (ulong)payload.Length)
+        {
+            var walked = 0UL;
+            while (walked < count)
+            {
+                var at = p;
+                if (!StatRecord.TryRead(payload, ref p, out var record)) break;
+                walked++;
+                if (record.Resource == OdyleResource) fields.Add(new(at, record.Tag, record.Base, record.Bonus));
+            }
+            if (walked == count && p == payload.Length) records = (int)count; else fields.Clear();
+        }
+        // A layout that is not walked whole (an unknown tag) is searched for the Odyle id after a valid tag.
+        if (records is null)
+            for (var i = 0; i + 5 <= payload.Length; i++)
+            {
+                var at = i;
+                if (BinaryPrimitives.ReadUInt32LittleEndian(payload[(i + 1)..]) == OdyleResource && StatRecord.TryRead(payload, ref at, out var record))
+                    fields.Add(new(i, record.Tag, record.Base, record.Bonus));
+            }
+        var read = fields.Count > 0 && fields.All(f => f.Base == fields[0].Base && f.Bonus == fields[0].Bonus) && fields[0].Base + fields[0].Bonus <= ValueLimit;
+        SnapshotObserved?.Invoke(new(payload.Length, records, fields.ToArray(), read));
+        if (read) Candidate?.Invoke(new((int)(fields[0].Base + fields[0].Bonus), Version) { Base = (int)fields[0].Base, Bonus = (int)fields[0].Bonus });
+        // Only a full snapshot understood whole shows that the record is missing, not just unfound;
+        // a short one may be a partial refresh.
+        else if (records >= FullSnapshotRecords && fields.Count == 0) SnapshotWithoutOdyle?.Invoke();
     }
+    // A stat update: direction byte, one record, trailer. An increase (direction 1) ends with a
+    // flag byte and a 32-bit delta, a decrease or a regeneration tick (direction 0) with one byte;
+    // other trailers are unknown layouts. Its record carries the new base and bonus, so it needs
+    // no snapshot first: the regeneration tick repeats both, a spend drains base before bonus.
+    private void ReadUpdate(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length < 6 || payload[0] > 1) return;
+        var p = 1;
+        if (!StatRecord.TryRead(payload, ref p, out var record)) return;
+        var trailer = payload.Length - p;
+        UpdateObserved?.Invoke(new(record.Resource, record.Tag, record.Base, record.Bonus, trailer, payload[0]));
+        if (record.Resource != OdyleResource || trailer != (payload[0] == 1 ? 5 : 1) || record.Total > ValueLimit) return;
+        Candidate?.Invoke(new((int)record.Total, Version, CandidateSource.Update) { Base = (int)record.Base, Bonus = (int)record.Bonus });
+    }
+    /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
     {
         value = 0; var start = offset;
         for (var shift = 0; shift < 35; shift += 7)
         {
-            if (offset >= data.Length) { offset = start; return false; }
+            if (offset < 0 || offset >= data.Length) { offset = start; return false; }
             var b = data[offset++]; value |= (ulong)(b & 127) << shift;
             if ((b & 128) == 0) return true;
         }
-        throw new InvalidDataException("Oversized varint.");
+        offset = start; value = 0; return false;
     }
 }

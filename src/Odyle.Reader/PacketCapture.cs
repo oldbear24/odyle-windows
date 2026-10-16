@@ -20,7 +20,8 @@ namespace Odyle.Reader;
 // broken) is opened again after a short delay that grows while it keeps failing, the
 // interface list is scanned again every 30 seconds for new adapters (VPN, accelerator,
 // a reset network card), and everything restarts after the PC resumes from sleep. The
-// status is the capture's as a whole: Problem only while no interface can capture.
+// status is the capture's as a whole: Problem only while no interface can capture. When
+// AION2 runs but its connection does not show up, the waiting line says why if it can.
 public sealed class PacketCapture : IAsyncDisposable
 {
     private readonly CancellationTokenSource cancellation = new();
@@ -29,15 +30,12 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<PacketCandidate>? Candidate;
     public event Action<ulong>? CharacterChanged;
     public event Action<GameIdentity>? IdentityObserved;
+    public event Action? SnapshotWithoutOdyle;
     public event Action<ushort, int>? FrameObserved;
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     private long receivedPackets, gameBytes;
-    // Stat owner ids snapshots confirmed, shared by every stream so updates can be trusted before a snapshot.
-    private readonly KnownOwners owners = new();
-    /// <summary>Trust a stat owner id a snapshot confirmed on this or an earlier run.</summary>
-    public void TrustOwner(ulong id) => owners.Add(id);
     public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
     // Payload bytes that reached a decoder; blocked or unknown connections add nothing.
     public long GameBytes => Interlocked.Read(ref gameBytes);
@@ -97,14 +95,17 @@ public sealed class PacketCapture : IAsyncDisposable
         if (e.Mode != PowerModes.Resume) return;
         Log.Info("The PC resumed from sleep; the capture restarts."); restart = true;
     }
-    private static List<string> Interfaces()
+    private static List<string> Interfaces() => Devices().Select(d => d.Name).ToList();
+    // The capture interfaces Npcap lists, by description, for Copy diagnostics.
+    public static string[] Adapters() => Devices().Select(d => d.Description is { Length: > 0 } text ? text : "unnamed").ToArray();
+    private static List<(string Name, string? Description)> Devices()
     {
         var error = new StringBuilder(256);
         if (pcap_findalldevs(out var list, error) != 0) throw new InvalidOperationException(T("Npcap device discovery failed. Check capture permissions."));
-        var names = new List<string>();
-        try { for (var p = list; p != IntPtr.Zero; ) { var device = Marshal.PtrToStructure<Device>(p); var name = Marshal.PtrToStringAnsi(device.Name); if (name is not null) names.Add(name); p = device.Next; } }
+        var devices = new List<(string, string?)>();
+        try { for (var p = list; p != IntPtr.Zero; ) { var device = Marshal.PtrToStructure<Device>(p); var name = Marshal.PtrToStringAnsi(device.Name); if (name is not null) devices.Add((name, Marshal.PtrToStringAnsi(device.Description))); p = device.Next; } }
         finally { if (list != IntPtr.Zero) pcap_freealldevs(list); }
-        return names;
+        return devices;
     }
     private async Task SuperviseAsync(List<string> names)
     {
@@ -162,11 +163,38 @@ public sealed class PacketCapture : IAsyncDisposable
         }
         if (reportedCapturing == 0) Log.Info($"Capturing again on {capturing} interface(s).");
         reportedCapturing = capturing;
-        var connected = CurrentFlows(immediate: false).Length > 0;
-        if (connected == reportedConnected) return;
-        reportedConnected = connected;
-        if (connected) Status?.Invoke(CaptureStatus.Listening, T("Listening to AION2 · waiting for the Odyle snapshot."));
-        else Status?.Invoke(CaptureStatus.Waiting, T("Waiting for the AION2 game connection…"));
+        var connected = CurrentFlows(immediate: false).Length > 0; var now = DateTimeOffset.UtcNow;
+        if (connected != reportedConnected)
+        {
+            reportedConnected = connected; explainAt = now + ExplainAfter; explained = null;
+            if (connected) Status?.Invoke(CaptureStatus.Listening, T("Listening to AION2 · waiting for the Odyle snapshot."));
+            else Status?.Invoke(CaptureStatus.Waiting, T("Waiting for the AION2 game connection…"));
+            return;
+        }
+        // About a minute without the game's connection while AION2 runs: the connection table
+        // may say why (IPv6, an accelerator, other ports). Looked at again every 15 seconds.
+        if (connected || now < explainAt) return;
+        explainAt = now.AddSeconds(15);
+        var reason = ExplainMissingConnection();
+        if (reason == explained) return;
+        explained = reason;
+        Status?.Invoke(CaptureStatus.Waiting, reason ?? T("Waiting for the AION2 game connection…"));
+    }
+    private static readonly TimeSpan ExplainAfter = TimeSpan.FromMinutes(1);
+    private DateTimeOffset explainAt;
+    private string? explained;
+    // Null while no AION2 process runs or the table does not say (GameConnection.Explain). A
+    // failed look is no reason to stop the capture.
+    private static string? ExplainMissingConnection()
+    {
+        var games = new HashSet<int>();
+        try
+        {
+            foreach (var process in Process.GetProcesses())
+                using (process) { try { if (GameConnection.IsGameProcess(process.ProcessName)) games.Add(process.Id); } catch (InvalidOperationException) { } }
+            return games.Count == 0 ? null : GameConnection.Explain(GameConnections(games));
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or UnauthorizedAccessException) { return null; }
     }
     // The game's connections, shared by every capture worker: refreshed every two
     // seconds, or at once when a packet arrives on an unknown flow (at most ten
@@ -183,51 +211,83 @@ public sealed class PacketCapture : IAsyncDisposable
             knownFlows = GameFlows(); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
         }
     }
-    private static bool IsGameProcess(int pid, Dictionary<int, bool> cache)
+    private static string ProcessName(int pid, Dictionary<int, string> cache)
     {
         if (cache.TryGetValue(pid, out var known)) return known;
-        var game = false;
-        try { using var process = Process.GetProcessById(pid); game = process.ProcessName.Contains("AION2", StringComparison.OrdinalIgnoreCase) || process.ProcessName.Contains("AION-2", StringComparison.OrdinalIgnoreCase); } catch { }
-        return cache[pid] = game;
+        var name = "process " + pid;
+        try { using var process = Process.GetProcessById(pid); name = process.ProcessName; } catch { }
+        return cache[pid] = name;
     }
-    private static TcpFlow[] GameFlows()
+    // The operating system's TCP connection table (connection metadata, never packets), one
+    // address family at a time: IPv4 (2) with 24-byte rows or IPv6 (23) with 56-byte rows.
+    private static void ReadTcpTable(int family, int rowSize, Action<IntPtr> each)
     {
-        var size = 0; GetExtendedTcpTable(IntPtr.Zero, ref size, false, 2, 4, 0);
-        if (size < 4 || size > 4194304) return Array.Empty<TcpFlow>();
+        var size = 0; GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, 4, 0);
+        if (size < 4 || size > 4194304) return;
         var table = Marshal.AllocHGlobal(size);
         try
         {
-            if (GetExtendedTcpTable(table, ref size, false, 2, 4, 0) != 0) return Array.Empty<TcpFlow>();
-            var count = Marshal.ReadInt32(table); var result = new List<TcpFlow>(); var processes = new Dictionary<int, bool>();
-            if (count < 0 || count > (size - 4) / 24) return Array.Empty<TcpFlow>();
-            for (var i = 0; i < count; i++)
-            {
-                var row = IntPtr.Add(table, 4 + i * 24);
-                ushort Port(int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
-                // Only live connections to the game port are checked against their owning
-                // process; the game's HTTPS/login connections and every other program need
-                // no process lookup at all.
-                if (Port(16) != 13328 || Marshal.ReadInt32(row) is not (3 or 4 or 5) || !IsGameProcess(Marshal.ReadInt32(row, 20), processes)) continue;
-                var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
-                var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
-                result.Add(new(local, Port(8), remote, Port(16)));
-            }
-            return result.Take(32).ToArray();
+            if (GetExtendedTcpTable(table, ref size, false, family, 4, 0) != 0) return;
+            var count = Marshal.ReadInt32(table);
+            if (count < 0 || count > (size - 4) / rowSize) return;
+            for (var i = 0; i < count; i++) each(IntPtr.Add(table, 4 + i * rowSize));
         }
         finally { Marshal.FreeHGlobal(table); }
+    }
+    private static byte[] Address(IntPtr row, int offset) { var bytes = new byte[16]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, 16); return bytes; }
+    private static ushort PortAt(IntPtr row, int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
+    private static TcpFlow[] GameFlows()
+    {
+        var result = new List<TcpFlow>(); var processes = new Dictionary<int, string>();
+        ReadTcpTable(2, 24, row =>
+        {
+            // Only live connections to the game port are checked against their owning
+            // process; the game's HTTPS/login connections and every other program need
+            // no process lookup at all.
+            if (result.Count >= 32 || PortAt(row, 16) != GameConnection.Port || Marshal.ReadInt32(row) is not (3 or 4 or 5) || !GameConnection.IsGameProcess(ProcessName(Marshal.ReadInt32(row, 20), processes))) return;
+            var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
+            var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
+            result.Add(new(local, PortAt(row, 8), remote, PortAt(row, 16)));
+        });
+        // A dual-mode socket to an IPv4 server is listed in the IPv6 table with IPv4-mapped
+        // addresses; its packets are IPv4 and are read like the rows above.
+        ReadTcpTable(23, 56, row =>
+        {
+            if (result.Count >= 32 || PortAt(row, 44) != GameConnection.Port || Marshal.ReadInt32(row, 48) is not (3 or 4 or 5)) return;
+            if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(Marshal.ReadInt32(row, 52), processes))) return;
+            result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44)));
+        });
+        return result.ToArray();
+    }
+    // What GameConnection.Explain needs: the live connections of the game's processes and every
+    // live connection to the game port, over IPv4 and IPv6, with their owning process.
+    private static List<TcpConnection> GameConnections(HashSet<int> games)
+    {
+        var result = new List<TcpConnection>(); var processes = new Dictionary<int, string>();
+        void Add(IntPtr row, int state, int pid, int port, bool ipv6)
+        {
+            // An IPv4-mapped row of the IPv6 table is an IPv4 connection.
+            if (ipv6 && GameConnection.MappedIPv4(Address(row, 24)) is not null) ipv6 = false;
+            if (result.Count >= 64 || Marshal.ReadInt32(row, state) is not (3 or 4 or 5)) return;
+            var owner = Marshal.ReadInt32(row, pid); var remote = PortAt(row, port); var game = games.Contains(owner);
+            if (game || remote == GameConnection.Port) result.Add(new(game, ProcessName(owner, processes), remote, ipv6));
+        }
+        ReadTcpTable(2, 24, row => Add(row, 0, 20, 16, false));
+        ReadTcpTable(23, 56, row => Add(row, 48, 52, 44, true));
+        return result;
     }
     private void Attach(ExperimentalOdyleDecoder decoder)
     {
         decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += id => CharacterChanged?.Invoke(id); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
-        decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value);
+        decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value); decoder.SnapshotWithoutOdyle += () => SnapshotWithoutOdyle?.Invoke();
     }
     private void Receive(string name, Worker worker, CancellationToken token)
     {
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
         worker.OpenedAt = DateTimeOffset.UtcNow;
         if (handle == IntPtr.Zero) { Stopped(name, worker, token, "cannot be opened: " + error); return; }
-        var streams = new GameStreams(owners, Attach, (kind, message) => Status?.Invoke(kind, message));
+        var streams = new GameStreams(Attach, (kind, message) => Status?.Invoke(kind, message));
         var flows = Array.Empty<TcpFlow>(); var nextRefresh = DateTimeOffset.MinValue; var reason = "";
         try
         {

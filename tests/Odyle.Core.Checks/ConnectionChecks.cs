@@ -40,6 +40,8 @@ static class ConnectionChecks
             throw new Exception("Connection check failed: a failing answer was accepted.");
         }
         Check(await Fails(Answer(HttpStatusCode.BadRequest, """{"message":"Outdated reading.","data":{}}""")) is { StatusCode: HttpStatusCode.BadRequest, Message: "Outdated reading." }, "the server's message is kept");
+        // The backend's refusal of an adapter it does not list arrives word for word, so the app can tell it needs an update.
+        Check(await Fails(Answer(HttpStatusCode.BadRequest, """{"message":"This packet adapter has not been validated for Global. No reading was saved.","data":{}}""")) is { StatusCode: HttpStatusCode.BadRequest, Message: PartyApi.AdapterRefused }, "the adapter refusal is recognised");
         Check(await Fails(Answer(HttpStatusCode.InternalServerError, """{"code":500,"data":{}}""")) is { StatusCode: HttpStatusCode.InternalServerError, Message: "Server returned 500." }, "JSON without a message");
         Check(await Fails(Answer(HttpStatusCode.BadGateway, "<html>Bad gateway</html>", "text/html")) is { StatusCode: HttpStatusCode.BadGateway, Message: "Server returned 502." }, "a body that is not JSON");
         Check(await Fails(Answer(HttpStatusCode.ServiceUnavailable, "")) is { StatusCode: HttpStatusCode.ServiceUnavailable }, "an empty error body");
@@ -123,6 +125,23 @@ static class ConnectionChecks
             Check(listed.Announcement is { Text: "Maintenance at 10:00 UTC", IsWarning: true }, "the rooms answer carries the server's announcement");
         }
         Check(JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Announcement is null, "a backend without announcements answers none");
+        // The reader pause (contract C3): the rooms, session and heartbeat answers carry readerPaused, a
+        // backend without the switch leaves it out, and a reading meanwhile answers 503 with its message.
+        var paused = new Stub((route, _) => route switch
+        {
+            "/api/odyle/rooms" => Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":null,"readerPaused":true,"serverNow":"2026-10-15 20:00:00.000Z"}"""),
+            "/api/odyle/session" => Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0,"readerPaused":false}"""),
+            "/api/odyle/heartbeat" => Answer(HttpStatusCode.OK, """{"serverNow":"2026-10-15 20:00:00.000Z","readerPaused":true}"""),
+            _ => Answer(HttpStatusCode.ServiceUnavailable, """{"message":"Packet readers are paused by the server operators.","data":{}}"""),
+        });
+        using (var api = new PartyApi("https://party.example", "token", "key", paused))
+        {
+            Check((await api.GetRoomsAsync()).ReaderPaused == true && (await api.StartSessionAsync()).ReaderPaused == false && (await api.HeartbeatAsync("s", null)).ReaderPaused == true, "the rooms, session and heartbeat answers carry the pause");
+            try { await api.ReportAsync(new PacketReading("s", 1, "Main", "Lumiel", "GLOBAL_EU", 390, ExperimentalOdyleDecoder.Version)); throw new Exception("Connection check failed: a paused reading was accepted."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.ServiceUnavailable && error.Message == PartyApi.ReadersPaused && !api.PairingEnded, "a reading while readers are paused answers 503 with the pause message"); }
+        }
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        Check(JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.ReaderPaused is null && JsonSerializer.Deserialize<PublisherSession>("""{"sessionId":"s","sequence":0}""", options)!.ReaderPaused is null && JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x"}""", options)!.ReaderPaused is null, "a backend without the switch says nothing about it");
         Check(PartyApi.NameOf("  DESKTOP-ODYLE  ") == "DESKTOP-ODYLE" && PartyApi.NameOf(new string('x', 55)).Length == 40 && PartyApi.NameOf("") == "Windows PC" && PartyApi.DeviceName.Length is > 0 and <= 40, "device names are trimmed to 40 characters");
 
         // The log rotates at its limit, keeps one previous file, takes writes from many threads and masks secrets.

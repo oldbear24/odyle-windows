@@ -17,7 +17,7 @@ static class LocalizationChecks
         "Publisher session expired. Reconnect.", "Publisher session changed. Reconnect your client.", "This task no longer exists.", "This task belongs to another account.",
         "Send done (true or false) or remove: true.", "Only character name, server and region may be saved here.", "Pairing code is invalid or expired.", "Pairing new PCs is paused for now. Try again later.", "Pairing code is required (max 24 characters).",
         "Device key is required (max 100 characters).", "This PC is no longer paired with an account.", "Select a Global region.", "Outdated reading.",
-        "Odyle must come from game packets. Manual readings are disabled.", "This packet adapter has not been validated for Global. No reading was saved.", "A verified packet observation is required.",
+        "Odyle must come from game packets. Manual readings are disabled.", "This packet adapter has not been validated for Global. No reading was saved.", "Packet readers are paused by the server operators.", "A verified packet observation is required.",
         "You can keep up to 30 characters. Delete one you no longer play under My rooms & characters.", "Character is required (max 40 characters).", "Server is required (max 40 characters)."];
     const string Literal = "\"((?:[^\"\\\\]|\\\\.)*)\"";
     public static void Run()

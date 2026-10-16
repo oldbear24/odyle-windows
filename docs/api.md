@@ -11,9 +11,11 @@ Every answer that is not 2xx becomes an error carrying its status code. The mess
 | Answer | What the app does |
 | --- | --- |
 | 401 | The token expired or was replaced: a paired app signs in with its device key (`desktop-sign-in`) and repeats the request once. A 401 from that sign-in means the server no longer knows this PC: the pairing has ended, every further request fails at once without contacting the server, the saved session is removed and the app asks for a new connection link |
+| 400 | A refused reading is shown as **Not saved** with the message and retried after a minute. *This packet adapter has not been validated for Global. No reading was saved.* means the backend does not list this build's adapter: the app checks GitHub for its update at once (then at most hourly), the card says **Odyle needs an update to keep reading** and the reading is tried again every ten minutes |
 | 403 | Never a lost pairing. *Publisher session expired. Reconnect.* starts a new reader session at the next heartbeat; a refused reading is shown as **Not saved** and retried after a minute; at start-up a 403 is retried like an unavailable server |
 | 429 | Every request pauses until `Retry-After` (seconds or an HTTP date; a minute when missing or unusable, at most an hour) without reaching the server; the reader session is kept, so the reading stays live. The footer shows **Server busy · retrying in …** |
 | 5xx, timeout, offline | While running: retried with the next 20-second heartbeat, which opens a new reader session. At start-up the saved pairing is kept and tried again after 15 s, 30 s, 1 min, 2 min and then every 5 minutes (**Reconnect saved account** tries at once) |
+| 503 *Packet readers are paused by the server operators.* | Only `POST /api/odyle/report` answers this, while the operators pause packet readers (`readerPaused`, below). The app stops capturing and closes Npcap, the card says **Paused by the server**, and the reader starts again by itself once a rooms, session or heartbeat answer says `readerPaused: false`. Any other 503 is handled like a 5xx |
 
 ## Pairing and sign-in
 
@@ -26,7 +28,7 @@ Every pairing request names the PC: `name` is its Windows computer name, trimmed
 | POST `/api/odyle/pair` | `{ code, name }` | Public, rate limited: `{ token, record, deviceKey }`; `record` is `{ id, displayName }`. The code is consumed. The app keeps endpoint, token and device key in `%LOCALAPPDATA%\Odyle\session.bin`, protected with DPAPI |
 | POST `/api/odyle/desktop-sign-in` | `{ deviceKey, name }` | Public: `{ token, record }`; 401 *This PC is no longer paired with an account.* for an unknown key. Called at start-up, every 24 hours while running and after a 401 |
 | POST `/api/odyle/desktop-device` | `{ name }` | Signed in: `{ deviceKey }`. Called once by an app paired before device keys existed; 404 on a backend without device keys, which then keeps refreshing the token |
-| POST `/api/odyle/unpair` | `{ deviceKey }` | Public: forgets the key and ends its reader sessions (**Disconnect**, and before pairing again) |
+| POST `/api/odyle/unpair` | `{ deviceKey }` | Public: forgets the key and ends its reader sessions (**Disconnect**, before pairing again, and `Odyle.exe --unpair`, which the uninstaller runs when asked to disconnect the PC; installs updated in place from an earlier setup keep an uninstaller without that question) |
 | POST `/api/collections/users/auth-refresh` | `{}` | Refreshes a still-valid token; used only by apps without a device key |
 
 Every sign-in answer refreshes the account's display name shown in the app. Account tokens last seven days; the device key keeps the pairing until the app disconnects, the PC is removed on the dashboard (`POST /api/odyle/forget-device`), the account signs out everywhere or is deleted. An account keeps its 10 most recently used pairings.
@@ -37,10 +39,10 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
 
 | Method / route | Body | Answer and use |
 | --- | --- | --- |
-| POST `/api/odyle/session` | `{ previousSessionId?, deviceKey?, appVersion? }` | `{ sessionId, sequence: 0 }`. `previousSessionId` rotates the app's own session and invalidates its last readings. A paired app sends its `deviceKey`, which ties the session to the PC; a key the server no longer knows answers 401. `appVersion` (for example `0.6.0.12`) shows on the server's superuser monitor. Absent fields are left out of the body |
+| POST `/api/odyle/session` | `{ previousSessionId?, deviceKey?, appVersion? }` | `{ sessionId, sequence: 0, readerPaused }`. `previousSessionId` rotates the app's own session and invalidates its last readings. A paired app sends its `deviceKey`, which ties the session to the PC; a key the server no longer knows answers 401. `appVersion` (for example `0.6.0.12`) shows on the server's superuser monitor. Absent fields are left out of the body |
 | POST `/api/odyle/character` | `{ characterName, server, region }` | `{ character }`: saves the character the game names (unknown Odyle until the first reading); repeating an identity returns the same record. Any other field is refused. Used for automatic game identification only: the app has no manual character entry |
-| POST `/api/odyle/report` | see below | `{ character, serverNow }` |
-| POST `/api/odyle/heartbeat` | `{ sessionId, characterId }` | Every 20 seconds: keeps the session's latest reading live; `characterId` is `null` without a live reading |
+| POST `/api/odyle/report` | see below | `{ character, serverNow }`; 503 while the operators pause packet readers |
+| POST `/api/odyle/heartbeat` | `{ sessionId, characterId }` | `{ serverNow, readerPaused }`. Every 20 seconds: keeps the session's latest reading live; `characterId` is `null` without a live reading. The heartbeat keeps running while readers are paused |
 | POST `/api/odyle/invalidate` | `{ characterId, sessionId }` | Marks the reading stale (reader stopped, character switched, 20 seconds without decodable game packets, disconnect, quit); value and timestamps are kept |
 | GET `/api/collections/characters/records?perPage=500&sort=created` | — | The account's own characters (`id`, `user`, `characterName`, `server`, `region`, `value`, `confirmed`, `valid`, `lastReadingAt`, `lastSeenAt`, `source`) |
 
@@ -53,22 +55,24 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
   "server": "Lumiel",
   "region": "GLOBAL_EU",
   "value": 390,
-  "parserVersion": "global-reference-v1",
+  "parserVersion": "global-reference-v2",
   "source": "packet",
   "confirmed": true
 }
 ```
 
-An existing `characterId` must belong to the account and keeps its saved identity. `value` is an integer 0–1,000,000, `sequence` grows per session and `parserVersion` must be listed in the backend's adapter registry (`global-reference-v1`). The app sends a value the first time it reads a character and afterwards only when it changes; the heartbeat keeps an unchanged value live. Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Presence follows the dashboard's rule: live while the heartbeat is younger than 45 seconds, stale after that or once invalidated, offline after 90 seconds (`Odyle.Core.Readiness`).
+**Reader pause.** `readerPaused` in the rooms, session and heartbeat answers is the superusers' **Server controls → Pause packet readers** switch (`odyle_settings.readerPaused`). While it is `true` the app stops capturing and closes Npcap, says so on the card and keeps its heartbeat and invalidations; a reading sent meanwhile answers 503 with *Packet readers are paused by the server operators.*, which the app treats the same. The first answer with `false` starts the reader again by itself, unless it was stopped by hand. Backends from before the switch leave the field out, which changes nothing; a new connection without it counts as not paused.
+
+An existing `characterId` must belong to the account and keeps its saved identity. `value` is an integer 0–1,000,000, `sequence` grows per session and `parserVersion` must be listed in the backend's adapter registry: this app sends `global-reference-v2`, and backends keep accepting `global-reference-v1` from apps not yet updated. The backend must list a new adapter name before the Windows release that sends it is pushed. The app sends a value the first time it reads a character and afterwards only when it changes; the heartbeat keeps an unchanged value live. Regions: `GLOBAL_EU`, `GLOBAL_NA`, `GLOBAL_SA`, `GLOBAL_ASIA`. Presence follows the dashboard's rule: live while the heartbeat is younger than 45 seconds, stale after that or once invalidated, offline after 90 seconds (`Odyle.Core.Readiness`).
 
 ## Rooms, party and planned runs
 
 | Method / route | Answer and use |
 | --- | --- |
-| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, announcement, serverNow }`; `announcement` is the server's message `{ text, level }` (`info` or `warning`) or `null`, shown above the card; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
+| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, announcement, readerPaused, serverNow }`; `announcement` is the server's message `{ text, level }` (`info` or `warning`) or `null`, shown above the card (inside it while readers are paused); `readerPaused` is the reader pause above; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
 | GET `/api/odyle/snapshot/{id}` | `{ room, members, wishlist, runs, dungeons, serverNow }`; members have `id`, `user`, `role`, `displayName` and `characters`. The app lists other members' live and stale characters, corrects its clock with `serverNow` and reads `runs` for reminders; it ignores `wishlist` and `dungeons` |
 
-The app reads the rooms and their snapshots when it connects and listens to realtime news (below); it reads them again on news it cannot apply in place, when the realtime connection comes back and every five minutes. Without a realtime connection it reads them every 15 seconds while its window is open and every minute while it waits in the tray. Sharing, rooms, invitations, the wishlist and planning are managed on the dashboard.
+The app reads the rooms and their snapshots when it connects and listens to realtime news (below); it reads them again on news it cannot apply in place, when the realtime connection comes back and every five minutes. Without a realtime connection it reads them every 15 seconds while its window is open and, while run reminders are on (they are by default), every minute while it waits in the tray. Sharing, rooms, invitations, the wishlist and planning are managed on the dashboard.
 
 A snapshot's `runs` list the room's planned runs until three hours after they started:
 

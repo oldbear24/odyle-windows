@@ -5,6 +5,8 @@ namespace Odyle.Core;
 public static class StartupCommand
 {
     public const string ValueName = "Odyle", TrayArgument = "--tray";
+    // The uninstaller runs "<Odyle.exe>" --unpair when asked to disconnect this PC: no window opens.
+    public const string UnpairArgument = "--unpair";
     public static string For(string executable) => $"\"{executable}\" {TrayArgument}";
     // The executable a Run value starts: the quoted path, or the first word without quotes.
     public static string? PathOf(string? command)
@@ -15,6 +17,7 @@ public static class StartupCommand
         return text.Length == 0 ? null : space < 0 ? text : text[..space];
     }
     public static bool InTray(IEnumerable<string> args) => args.Any(a => string.Equals(a, TrayArgument, StringComparison.OrdinalIgnoreCase));
+    public static bool Unpairs(IEnumerable<string> args) => args.Any(a => string.Equals(a, UnpairArgument, StringComparison.OrdinalIgnoreCase));
     // A start in the tray stays there while the app is paired (even while the server is
     // still being retried); unpaired, the window and settings open as on a normal start.
     public static bool ShowsWindow(bool tray, bool paired) => !tray || !paired;

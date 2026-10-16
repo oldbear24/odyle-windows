@@ -36,10 +36,30 @@ public static class Autostart
         catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { Log.Warn("The Start with Windows entry could not be checked: " + error.Message); }
     }
 }
-// Npcap is installed separately: its library in System32\Npcap, or its registry key.
+// Npcap is installed separately: its library in System32\Npcap, or its registry key. Odyle may
+// not bundle it; the installer and the reader row link to its download page.
 public static class Npcap
 {
+    public const string DownloadPage = "https://npcap.com/#download";
     public static Func<bool> Probe { get; set; } = Installed;
+    // Installed with "Restrict Npcap driver's access to Administrators only" (its AdminOnly option):
+    // an Odyle running without administrator rights then finds no capture interface.
+    public static Func<bool> Restricted { get; set; } = AdminOnly;
+    public static bool AdminOnly()
+    {
+        try { using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\npcap\Parameters"); return key?.GetValue("AdminOnly") is int value && value != 0; }
+        catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { return false; }
+    }
+    // The installed version from Npcap's uninstall entry, for Copy diagnostics.
+    public static string? Version()
+    {
+        foreach (var view in new[] { RegistryView.Registry32, RegistryView.Registry64 })
+        {
+            try { using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view); using var key = root.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NpcapInst"); if (key?.GetValue("DisplayVersion") is string { Length: > 0 } version) return version; }
+            catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { }
+        }
+        return null;
+    }
     public static bool Installed()
     {
         try { if (File.Exists(System.IO.Path.Combine(Environment.SystemDirectory, "Npcap", "wpcap.dll"))) return true; } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }

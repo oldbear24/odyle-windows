@@ -52,7 +52,7 @@ public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropert
 }
 public partial class MainWindow : Window
 {
-    private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem }
+    private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem, Paused }
     private PartyApi? api;
     private PacketCapture? capture;
     private readonly SettingsWindow settings = new();
@@ -66,11 +66,29 @@ public partial class MainWindow : Window
     // nameDue: a snapshot came and the game has not named the character since. The game sends
     // one whenever it loads a character into the world (login, switch, teleport, channel change)
     // and names the character only after the loading screen, 6 to 10 seconds later.
+    // namedHasReading: the named character's Odyle was read this run.
+    // identityDue: a game connection resynced, and the lost bytes may have held a character
+    // switch; the next reading waits, like a snapshot, for the game to name its character.
+    // odyleMissingDue: a snapshot without Odyle waits, like any snapshot, for the game to name its
+    // character; odyleMissingKey is then that character, until its Odyle is read.
     private const string UnknownOwner = "?";
-    private string currentCharacterId = "", gameCharacterKey = "", gameCharacterName = "", detectedCharacterKey = "", readingOwnerKey = "";
+    private string currentCharacterId = "", gameCharacterKey = "", gameCharacterName = "", detectedCharacterKey = "", readingOwnerKey = "", odyleMissingKey = "";
     private ulong gameCharacterId;
-    private bool nameDue;
-    private ulong? ownerEntity;
+    private bool nameDue, namedHasReading, odyleMissingDue, identityDue;
+    // The server refused this build's adapter name: Odyle needs an update to keep reading. While it
+    // does, an update check runs at most once an hour (outdatedCheckAt).
+    private bool adapterOutdated;
+    private DateTimeOffset outdatedCheckAt = DateTimeOffset.MinValue;
+    // The server's operators paused every packet reader (Server controls): the rooms, session and
+    // heartbeat answers carry the switch, and a reading sent meanwhile answers 503. The capture stops
+    // and Npcap is closed until the switch is off again; then the reader starts by itself.
+    // readerWanted: the reader should run whenever it can (started, and not stopped by hand).
+    private bool readerPaused, readerWanted;
+    // Without a working Npcap the reader row links to its download page and Npcap is looked for every
+    // 10 seconds; once it is there, the reader starts by itself.
+    private readonly DispatcherTimer npcapTimer = new() { Interval = TimeSpan.FromSeconds(10) };
+    // The reader line's last states, for Copy diagnostics.
+    private readonly Queue<string> readerHistory = new();
     private Character[] characters = [];
     private Room[] rooms = [];
     // Server-wide Odyle per cube: the cost shown while the account has no room yet.
@@ -144,7 +162,8 @@ public partial class MainWindow : Window
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
-        settings.NpcapButton.Click += (_, _) => OpenLink("https://npcap.com/#download"); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
@@ -181,6 +200,7 @@ public partial class MainWindow : Window
             else if (preferences.RemindRuns && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         };
         heartbeat.Tick += async (_, _) => await PulseAsync();
+        npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
         clock.Start();
@@ -261,10 +281,12 @@ public partial class MainWindow : Window
         RenderReaderButton();
     }
     // Compact toggle beside the reader status: mint to start or connect, quiet while reading.
+    // While the server pauses readers there is nothing to start.
     private void RenderReaderButton()
     {
         ReportButton.Content = capture is not null ? T("Stop") : api is not null ? T("Start") : T("Connect");
         if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
+        ReportButton.IsEnabled = !busy && !(readerPaused && api is not null && capture is null);
     }
 
     // ----- Presentation -----
@@ -279,10 +301,17 @@ public partial class MainWindow : Window
             ReaderState.Midstream => ("Amber", "Amber"),
             ReaderState.Live => ("Mint", "Text"),
             ReaderState.Stale => ("Amber", "Muted"),
+            ReaderState.Paused => ("Amber", "Amber"),
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text); PacketStateLabel.Text = message;
-        if (message != lastReaderLog) { lastReaderLog = message; Log.Info($"Reader {state}: {message}"); }
+        // The Npcap link belongs to the line that says Npcap is missing or restricted (ShowNpcapProblem).
+        NpcapLink.Visibility = Visibility.Collapsed;
+        if (message != lastReaderLog)
+        {
+            lastReaderLog = message; Log.Info($"Reader {state}: {message}");
+            readerHistory.Enqueue($"{DateTime.Now:HH:mm:ss} {state} · {message}"); while (readerHistory.Count > 10) readerHistory.Dequeue();
+        }
     }
     private void SetPill(string dot, string text, string background, string label)
     {
@@ -311,6 +340,7 @@ public partial class MainWindow : Window
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
+        else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
         else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
         // A snapshot waits for the loading screen to end before the game names its character.
@@ -320,9 +350,13 @@ public partial class MainWindow : Window
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
         ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
-            : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("Relog or change channel once so the game names the character.") : T("Waiting for the game to name the character."))
-            : reading is not null ? publishFailure ?? ""
-            : capture is not null ? (character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
+            // The operators' announcement, when there is one, says why; it moves into the card meanwhile.
+            : readerPaused ? (announcement is { } reason ? T("Paused by the server · {0}", reason.Text) : T("Paused by the server · reading resumes by itself when the operators allow it again."))
+            : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
+            : reading is not null ? (adapterOutdated ? OutdatedHint : publishFailure ?? "")
+            // The game's snapshot of the named character has no Odyle record; it is thought to unlock at level 22.
+            : capture is not null ? (odyleMissingKey.Length > 0 && odyleMissingKey == gameCharacterKey ? T("No Odyle on {0} yet · it may unlock at level 22.", gameCharacterName)
+                : character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
             : character is null ? T("Start the reader, then log into your character.")
             : character.Confirmed ? T("Last saved value · start the reader for live values.")
             : T("No reading yet · start the reader before logging in.");
@@ -333,6 +367,7 @@ public partial class MainWindow : Window
         var tip = !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
     }
+    private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character)
     {
@@ -385,7 +420,7 @@ public partial class MainWindow : Window
     // ----- Operations -----
     private void SetBusy(bool value)
     {
-        busy = value; ReportButton.IsEnabled = !value; settings.Body.IsEnabled = !value;
+        busy = value; settings.Body.IsEnabled = !value; RenderReaderButton();
     }
     private async Task ExecuteAsync(Func<Task> action)
     {
@@ -407,6 +442,8 @@ public partial class MainWindow : Window
         // The update check does not wait for the server. Its first tick also removes the
         // Odyle.exe.old of the build that installed this one, which by then has exited.
         if (Updater.IsReleaseBuild && !App.Headless) updateTimer.Start();
+        // Npcap missing shows in the reader row from the start, also before the app is paired.
+        if (!Npcap.Probe()) ShowNpcapProblem(null);
         await ExecuteAsync(RestoreAsync);
         if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
         {
@@ -498,6 +535,8 @@ public partial class MainWindow : Window
     {
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
+        // A fresh connection: a backend without the switch never pauses readers.
+        NoteReaderPause(session.ReaderPaused ?? false);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
@@ -505,6 +544,7 @@ public partial class MainWindow : Window
         Status(T("Connected to your account."));
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start(); StartRealtime();
+        await FollowReaderPauseAsync();
     }
     // Listens to the account's topic and its rooms'; rooms joined or left later change the
     // topics (RefreshPartyAsync).
@@ -559,7 +599,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; ShowAnnouncement(listed.Announcement);
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -622,7 +662,7 @@ public partial class MainWindow : Window
                 var listed = await current.GetRoomsAsync();
                 var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
                 if (api != current) return;
-                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); ShowAnnouncement(listed.Announcement);
+                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
                 if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
                 RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
                 if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
@@ -639,7 +679,8 @@ public partial class MainWindow : Window
     {
         if (next is { } shown && shown.Text != announcement?.Text) Log.Info("Announcement from the server: " + shown.Text);
         announcement = next is { Text.Length: > 0 } ? next : null;
-        if (announcement is not { } current || current.Text == hiddenAnnouncement) { AnnouncementBar.Visibility = Visibility.Collapsed; return; }
+        // While the server pauses readers the card itself shows the announcement (RenderHero).
+        if (announcement is not { } current || current.Text == hiddenAnnouncement || readerPaused && api is not null) { AnnouncementBar.Visibility = Visibility.Collapsed; return; }
         AnnouncementText.Text = current.Text;
         AnnouncementBar.Background = Brush(current.IsWarning ? "PillAmber" : "PillLive");
         AnnouncementBar.BorderBrush = Brush(current.IsWarning ? "Amber" : "LineStrong");
@@ -727,7 +768,8 @@ public partial class MainWindow : Window
         if (!IsVisible || WindowState != WindowState.Normal || double.IsNaN(Left) || double.IsNaN(Top) || preferences is { Left: var l, Top: var t } && l == Left && t == Top) return;
         PreferencesStore.Save(preferences = preferences with { Left = Left, Top = Top });
     }
-    // Settings → Start with Windows writes or removes the Run entry ("<Odyle.exe>" --tray).
+    // Settings → Start with Windows writes or removes the Run entry ("<Odyle.exe>" --tray). Either
+    // choice also answers the one-time offer below.
     private void SetAutostart(bool on)
     {
         try { Autostart.Set(on); Log.Info(on ? "Start with Windows is on." : "Start with Windows is off."); }
@@ -736,12 +778,79 @@ public partial class MainWindow : Window
             Log.Error("Start with Windows could not be changed", error); Status(T("Start with Windows could not be changed: {0}", error.Message));
         }
         settings.AutostartToggle.IsChecked = Autostart.Enabled;
+        AutostartOffer.Visibility = Visibility.Collapsed;
+        if (!preferences.AutostartOffered) PreferencesStore.Save(preferences = preferences with { AutostartOffered = true });
+    }
+    // After the first live reading, once per PC: started with Windows, Odyle waits in the tray and
+    // reads the login snapshot. Answered (here or in Settings), it is not offered again.
+    private void OfferAutostart()
+    {
+        if (preferences.AutostartOffered || AutostartOffer.Visibility == Visibility.Visible || Autostart.Enabled) return;
+        AutostartOffer.Visibility = Visibility.Visible; Log.Info("Offered Start with Windows after the first live reading.");
+    }
+    private void AcceptAutostart_Click(object sender, RoutedEventArgs e) => SetAutostart(true);
+    private void DeclineAutostart_Click(object sender, RoutedEventArgs e)
+    {
+        AutostartOffer.Visibility = Visibility.Collapsed; PreferencesStore.Save(preferences = preferences with { AutostartOffered = true });
+        Log.Info("Start with Windows was declined; it stays in Settings.");
+    }
+    // Settings → Copy diagnostics: what helps with a reader that does not read, on the clipboard
+    // only. Nothing is sent; the person decides where to paste it.
+    private void CopyDiagnostics()
+    {
+        try { System.Windows.Clipboard.SetText(DiagnosticsReport()); }
+        catch (ExternalException) { settings.DiagnosticsLabel.Text = T("The clipboard is busy · try again in a moment."); return; }
+        settings.DiagnosticsLabel.Text = T("Diagnostics copied · paste them into your bug report or message. Nothing was sent.");
+        Log.Info("Diagnostics were copied to the clipboard.");
+    }
+    private string DiagnosticsReport()
+    {
+        string adapters;
+        try { var found = PacketCapture.Adapters(); adapters = found.Length + (found.Length > 0 ? " · " + string.Join("; ", found) : ""); }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { adapters = "unavailable · " + error.Message; }
+        var npcap = !Npcap.Probe() ? "not found" : $"installed{(Npcap.Version() is { } version ? " " + version : "")}{(Npcap.Restricted() ? " · administrators only" : "")}";
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (Exception error) when (error is ArgumentException or UriFormatException) { host = "unknown server"; }
+        var account = api is not null ? $"paired · {host} · {(realtime?.IsConnected == true ? "realtime" : "polling")}" : retryAt is not null ? $"paired · {host} · not reached yet" : "not paired";
+        var reader = capture is { } running ? $"running · {readerState} · {running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game" : $"stopped · {readerState}";
+        return Diagnostics.Report(DateTimeOffset.Now, [
+            ("App", $"Odyle {Updater.Current} · {Updater.Runtime} · {(Updater.SelfContained ? "self-contained" : "small")} package · {(Updater.IsReleaseBuild ? "release" : "development")} build"),
+            ("Windows", $"{Environment.OSVersion} · language {Localizer.Language} ({Localizer.Culture.Name})"),
+            ("Npcap", npcap), ("Capture interfaces", adapters), ("Account", account), ("Reader", reader),
+            ("Adapter", ExperimentalOdyleDecoder.Version + (adapterOutdated ? " · refused by the server" : "")),
+            ("Server", readerPaused ? "packet readers paused by the operators" : "packet readers allowed")], readerHistory, Log.Tail(80));
     }
     private void RenderNpcap()
     {
+        var installed = Npcap.Probe(); var usable = installed && !Npcap.Restricted();
+        settings.NpcapLabel.Text = usable ? T("Npcap installed") : installed ? T("Npcap installed · only administrators may capture") : T("Npcap not found · install it to read the game");
+        settings.NpcapDot.Fill = Brush(usable ? "Mint" : "Amber"); settings.NpcapLabel.Foreground = Brush(usable ? "Text" : "Amber");
+    }
+    // The reader cannot start without a working Npcap (error null: found missing at start). The reader
+    // line says why, with a link to the download page, and Npcap is looked for every 10 seconds.
+    private void ShowNpcapProblem(Exception? error)
+    {
         var installed = Npcap.Probe();
-        settings.NpcapLabel.Text = installed ? T("Npcap installed") : T("Npcap not found · install it to read the game");
-        settings.NpcapDot.Fill = Brush(installed ? "Mint" : "Amber"); settings.NpcapLabel.Foreground = Brush(installed ? "Text" : "Amber");
+        var message = !installed ? T("Npcap is not installed · Odyle needs it to read the game.")
+            : error is InvalidOperationException && Npcap.Restricted() ? T("Npcap lets only administrators capture · reinstall it without “Restrict Npcap driver's access to Administrators only”.")
+            : error is InvalidOperationException ? T("Npcap shows this Windows account no network interface · if it was installed for administrators only, reinstall it without that option.")
+            : error is not null ? T(error.Message) : T("Npcap is not installed · Odyle needs it to read the game.");
+        if (error is not null && message != lastReaderLog) Log.Warn("The reader could not start: " + error.Message);
+        SetReaderState(ReaderState.Problem, message);
+        NpcapLink.Content = installed ? T("Npcap setup ↗") : T("Install Npcap ↗"); NpcapLink.Visibility = Visibility.Visible;
+        npcapTimer.Stop(); npcapTimer.Start();
+        if (settings.IsVisible) RenderNpcap();
+    }
+    private void NpcapLink_Click(object sender, RoutedEventArgs e) => OpenLink(Npcap.DownloadPage);
+    // Every 10 seconds while Npcap is missing or unusable: once it is installed, the reader starts by
+    // itself (an Npcap still restricted fails again and keeps the link).
+    private async Task NpcapTickAsync()
+    {
+        if (busy || !Npcap.Probe()) return;
+        npcapTimer.Stop(); if (settings.IsVisible) RenderNpcap();
+        if (readerWanted && api is not null && capture is null && !readerPaused) { await ExecuteAsync(StartReaderAsync); return; }
+        if (readerState == ReaderState.Problem && capture is null)
+            // A saved pairing still being retried is no reason to pair again: the reader starts once the server answers.
+            SetReaderState(ReaderState.Stopped, api is not null ? T("Stopped · start the reader before logging in.") : retryAt is not null ? T("Npcap is installed · the reader starts once the server is reached.") : T("Npcap is installed · pair Odyle in settings to read the game."));
     }
 
     // ----- Daily & weekly tasks -----
@@ -818,7 +927,9 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; ownerEntity = null; }
+    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; }
+    // `latest` belongs to the character the game named: its updates follow it from now on.
+    private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
     // invalidate is false when a restart hands the live character over (QuitAsync).
     private async Task StopCaptureAsync(bool invalidate)
@@ -836,43 +947,95 @@ public partial class MainWindow : Window
         if (api is null && capture is null) { OpenSettings(); return; }
         await ExecuteAsync(async () =>
         {
-            if (capture is not null) await StopReaderAsync();
+            if (capture is not null) { readerWanted = false; await StopReaderAsync(); }
             else if (api is not null) await StartReaderAsync();
         });
     }
+    // Notes what an answer of the server says about the reader pause (null: the backend does not
+    // know the switch). A change is followed once the operations lock is free; callers that hold
+    // it follow at once.
+    private void NoteReaderPause(bool? paused)
+    {
+        if (paused is not { } now || now == readerPaused) return;
+        readerPaused = now;
+        if (now) Log.Warn("The server's operators paused packet readers; the capture stops until they resume them.");
+        else Log.Info("The server's operators resumed packet readers.");
+        ShowAnnouncement(announcement); RenderReaderButton(); RenderHero();
+        Dispatcher.BeginInvoke(async () => await FollowReaderPauseLaterAsync());
+    }
+    private async Task FollowReaderPauseLaterAsync()
+    {
+        await operations.WaitAsync();
+        try { await FollowReaderPauseAsync(); }
+        catch (Exception error) { Log.Error("The reader could not follow the server's pause", error); }
+        finally { operations.Release(); }
+    }
+    // Caller holds the operations lock. While the server pauses readers the capture stops, which
+    // closes Npcap, and the reader line says so; once the pause is over the reader starts again by
+    // itself, unless it was stopped by hand.
+    private async Task FollowReaderPauseAsync()
+    {
+        if (quitting || api is null) return;
+        if (readerPaused)
+        {
+            if (capture is not null) await StopCaptureAsync(invalidate: true);
+            if (readerState != ReaderState.Paused) ShowPaused();
+            return;
+        }
+        if (readerState != ReaderState.Paused) return;
+        if (readerWanted && capture is null) await StartReaderAsync();
+        else SetReaderState(ReaderState.Stopped, T("Stopped · start the reader before logging in."));
+    }
+    private void ShowPaused()
+    {
+        SetReaderState(ReaderState.Paused, T("Paused by the server's operators · the capture is off until they resume it."));
+        RenderReaderButton(); RenderHero();
+    }
     private async Task StartReaderAsync()
     {
+        readerWanted = true;
+        // Paused by the server: the reader starts by itself once the pause is over (FollowReaderPauseAsync).
+        if (readerPaused) { ShowPaused(); return; }
+        if (!Npcap.Probe()) { ShowNpcapProblem(null); RenderHero(); return; }
         var next = new PacketCapture();
-        // Owners confirmed by earlier snapshots let a reader started after login trust live updates.
-        foreach (var owner in OwnerStore.Load(accountId)) next.TrustOwner(owner);
         next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
         {
             if (capture != next) return;
             // A reading the game never attributed belongs to its connection; a new connection starts over.
             if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
-            // A new game connection while a reading is live keeps the live line, and so does joining
-            // one midstream while the character is known (taken over after a restart).
-            if (kind is CaptureStatus.Listening or CaptureStatus.Midstream && readerState == ReaderState.Live) return;
-            SetReaderState(kind switch { CaptureStatus.Listening => ReaderState.Listening, CaptureStatus.Midstream => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
+            if (kind == CaptureStatus.Resyncing) OnResync();
+            // A new game connection while a reading is live keeps the live line, and so do joining
+            // one midstream while the character is known (taken over after a restart) and a resync.
+            if (kind is CaptureStatus.Listening or CaptureStatus.Midstream or CaptureStatus.Resyncing or CaptureStatus.Resumed && readerState == ReaderState.Live) { Log.Info("Reader stays live: " + message); return; }
+            SetReaderState(kind switch { CaptureStatus.Listening or CaptureStatus.Resumed => ReaderState.Listening, CaptureStatus.Midstream or CaptureStatus.Resyncing => ReaderState.Midstream, CaptureStatus.Problem => ReaderState.Problem, _ => ReaderState.Waiting }, message);
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
+        next.SnapshotWithoutOdyle += () => Dispatcher.BeginInvoke(() => OnSnapshotWithoutOdyle(next));
         next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await CharacterChangedAsync(next, character));
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
-        // Decoder diagnostics for a value that is wrong or missing: every Odyle update and
-        // identity, and each distinct stat frame layout once per run (not every frame).
-        var layouts = new HashSet<OdyleFrameLayout>();
-        next.UpdateObserved += u => Log.Info($"Decoder: Odyle update, mode {u.Mode}, direction {u.Direction}, values {u.First}{(u.Second is { } second ? " + " + second : "")}, {u.TrailerBytes} trailer bytes.");
-        next.SnapshotObserved += s => Log.Info($"Decoder: stat snapshot, {s.PayloadBytes} bytes, {(s.Fields.Length == 0 ? "no Odyle-shaped field" : string.Join("; ", s.Fields.Select(f => $"owner {f.Id} = {f.Base} + {f.Total - f.Base} at {f.Offset}")))}, {(s.ReadOwner is { } owner ? $"read owner {owner}" : "not read")}.");
-        next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
-        next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}).");
-        try
+        // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
+        // snapshot and identity, and once per run each distinct stat frame layout and each other
+        // stat resource that sends updates (not every frame).
+        var layouts = new HashSet<OdyleFrameLayout>(); var resources = new HashSet<uint>();
+        next.UpdateObserved += u =>
         {
-            next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
-            RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
-            SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
-            Status(T("Reader running · log into your character to read its Odyle."));
-        }
+            var odyle = u.Resource == ExperimentalOdyleDecoder.OdyleResource;
+            if (!odyle) lock (resources) if (resources.Count >= 64 || !resources.Add(u.Resource)) return;
+            Log.Info($"Decoder: {(odyle ? "Odyle update" : "stat update, not Odyle (once per run)")}, resource {u.Resource}, tag {u.Tag:X2}, direction {u.Direction}, values {u.Base} + {u.Bonus}, {u.TrailerBytes} trailer bytes.");
+        };
+        next.SnapshotObserved += s => Log.Info($"Decoder: stat snapshot, {s.PayloadBytes} bytes, {(s.Records is { } count ? $"{count} records" : "layout not walked")}, {(s.Fields.Length == 0 ? "no Odyle record" : string.Join("; ", s.Fields.Select(f => $"Odyle {f.Base} + {f.Bonus} (tag {f.Tag:X2} at {f.Offset})")))}, {(s.Read ? "read" : "not read")}.");
+        next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
+        next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}), class {identity.Class}.");
+        try { next.Start(); }
+        // Npcap missing, not loading or showing no interface: the reader row says why and links to
+        // its download page, and the reader starts by itself once Npcap works (NpcapTickAsync).
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { await next.DisposeAsync(); ShowNpcapProblem(error); RenderHero(); return; }
         catch { await next.DisposeAsync(); throw; }
+        npcapTimer.Stop();
+        capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
+        RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
+        SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
+        Status(T("Reader running · log into your character to read its Odyle."));
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
@@ -886,32 +1049,45 @@ public partial class MainWindow : Window
         // screen. Hold every snapshot until the game names its owner so it can never be
         // saved to the previous character. Updates keep the owner of their snapshot; one
         // read without any snapshot waits for an owner the same way.
-        if (observation.Source == CandidateSource.Snapshot && !duplicate) { readingOwnerKey = ""; nameDue = true; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); OwnerStore.Remember(accountId, observation.EntityId); }
+        // After a resync the lost bytes may have held a switch, so the next reading waits the same way.
+        if ((observation.Source == CandidateSource.Snapshot || identityDue) && !duplicate) { identityDue = false; readingOwnerKey = ""; nameDue = true; odyleMissingDue = false; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
         else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
         if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle from the game · saving…", observation.Total));
         RenderHero();
         if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
     }
+    // A complete snapshot without an Odyle record: the character the game loads has no Odyle yet.
+    // Like any snapshot it waits for the game to name its character; a reading still waiting for
+    // a name belonged to the character the game left.
+    private void OnSnapshotWithoutOdyle(PacketCapture source)
+    {
+        if (capture != source) return;
+        odyleMissingDue = true;
+        if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
+        RenderHero();
+    }
+    // A game connection resynced: the bytes it lost may have held a switch to another character
+    // (its snapshot and identity), so the next reading waits for the game to name its character,
+    // and an unnamed snapshot no longer goes to the named one after 30 seconds. The reading on the
+    // card stays where it is.
+    private void OnResync() { identityDue = true; namedHasReading = false; }
     // Runs when a reading has had no owner for the publish delay. Without any named character
     // the reading keeps waiting for the identity message.
     private void AttributePending()
     {
-        if (capture is null || latest is not { } reading || readingOwnerKey.Length > 0 || gameCharacterKey.Length == 0 || gameCharacterKey == UnknownOwner) return;
-        var waiting = DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30);
+        if (capture is null || latest is null || readingOwnerKey.Length > 0 || gameCharacterKey.Length == 0 || gameCharacterKey == UnknownOwner) return;
         if (nameDue)
         {
             // After a snapshot the identity the game sends next names the owner, however long the
             // loading screen takes: the character named before it may be the one just left. One still
             // unnamed after 30 seconds came without a world load, and only goes to the named character
-            // if that character's readings already came from its stat owner.
+            // if that character's Odyle was already read this run.
+            var waiting = DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30);
             if (waiting) publishDelay.Start();
-            if (waiting || ownerEntity != reading.EntityId) return;
+            if (waiting || !namedHasReading) return;
             nameDue = false;
         }
-        // A stat owner other than the named character's: give the game longer to name it.
-        else if (ownerEntity is { } known && known != reading.EntityId && waiting) { publishDelay.Start(); return; }
-        readingOwnerKey = gameCharacterKey;
-        if (reading.OwnerConfirmed) ownerEntity = reading.EntityId;
+        Attribute(gameCharacterKey);
     }
     private async Task PublishLatestAsync()
     {
@@ -926,9 +1102,10 @@ public partial class MainWindow : Window
         if (api is null || capture is null || latest is not { } reading) return;
         if (readingOwnerKey.Length == 0)
         {
-            // Without any identity this run (a start after login) only a relog or channel change names
-            // the character; after a snapshot the game names it by itself once the loading screen ends.
-            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 && !nameDue ? T("Read {0:N0} Odyle · relog or change channel once so the game names your character.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
+            // Without any identity this run (a start after login) the game names the character when it
+            // repeats its identity every few minutes, or at once at a relog or channel change; after a
+            // snapshot it names it by itself once the loading screen ends.
+            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 && !nameDue ? T("Read {0:N0} Odyle · the game names your character within a few minutes, or at once after a relog or channel change.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
         }
         if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
         {
@@ -945,15 +1122,41 @@ public partial class MainWindow : Window
         {
             var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id));
             if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
-            activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null;
+            activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; adapterOutdated = false;
             UpdateCharacterInList(saved);
             SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
+            OfferAutostart();
+        }
+        // The server's operators paused packet readers: the capture stops below until they resume them.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.ServiceUnavailable && error.Message == PartyApi.ReadersPaused)
+        {
+            publishFailure = null; NoteReaderPause(true);
         }
         // The server asked to wait: the reading is sent again once it may.
         catch (ServerBusyException error)
         {
             publishFailure = T("Server busy"); publishBlockedUntil = error.Until;
             SetReaderState(ReaderState.Problem, T("Server busy · the reading is sent again in {0}.", Wait(error.Until - DateTimeOffset.UtcNow)));
+        }
+        // The server no longer lists this build's adapter: a newer Odyle reads differently, or the
+        // operators switched this one off. The update is looked for at once instead of at the daily
+        // check, and the reading is tried again quietly every ten minutes in case the server takes
+        // the adapter back.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused && reading.ParserVersion == ExperimentalOdyleDecoder.Version)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (!adapterOutdated) Log.Warn($"The server does not accept the adapter {reading.ParserVersion}; Odyle {Updater.Current} needs an update to keep reading.");
+            adapterOutdated = true; publishFailure = OutdatedHint; publishBlockedUntil = now.AddMinutes(10);
+            SetReaderState(ReaderState.Problem, T("The server no longer accepts readings from this Odyle version."));
+            if (now - outdatedCheckAt >= TimeSpan.FromHours(1)) { outdatedCheckAt = now; _ = CheckForUpdatesAsync(manual: false); }
+        }
+        // A reading the build before an update decoded with another adapter, handed over by the restart,
+        // that the server no longer takes: it is dropped, and this build reads the next Odyle change.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused)
+        {
+            Log.Info($"The reading handed over from the adapter {reading.ParserVersion} was refused; the next Odyle change is read again.");
+            if (ReferenceEquals(latest, reading)) latest = null;
+            publishFailure = null; SetReaderState(ReaderState.Listening, T("Updated · the value is read again at the next Odyle change."));
         }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
         {
@@ -963,6 +1166,7 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
         RenderHero();
+        if (readerPaused) await FollowReaderPauseAsync();
     }
     private async Task CharacterChangedAsync(PacketCapture source, ulong character)
     {
@@ -972,10 +1176,10 @@ public partial class MainWindow : Window
         {
             // Two capture interfaces can see the same connection, and each reports the switch.
             // Once the game named the new character the second report changes nothing.
-            if (capture != source || (character != 0 && character == gameCharacterId)) return;
+            if (capture != source || character == gameCharacterId) return;
             // The game switched characters on this connection. Until it names the
             // new one, no reading may be attributed to either character.
-            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; ownerEntity = null;
+            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = "";
             if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
             await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
         }
@@ -992,11 +1196,18 @@ public partial class MainWindow : Window
             {
                 // The game now plays a different character. A reading the previous
                 // one owns must not move over to it.
-                gameCharacterKey = key; gameCharacterName = identity.CharacterName; detectedCharacterKey = ""; ownerEntity = null;
+                gameCharacterKey = key; gameCharacterName = identity.CharacterName; detectedCharacterKey = ""; namedHasReading = false; odyleMissingKey = "";
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
-            gameCharacterId = identity.Id; nameDue = false;
+            gameCharacterId = identity.Id; nameDue = false; identityDue = false;
+            // A snapshot without Odyle that waited for a name belongs to this character, unless its
+            // Odyle was read already (the reading is kept).
+            if (odyleMissingDue)
+            {
+                odyleMissingDue = false;
+                if (latest is null) { odyleMissingKey = key; SetReaderState(ReaderState.Listening, T("Listening to AION2 · {0} has no Odyle yet.", identity.CharacterName)); }
+            }
             if (detectedCharacterKey != key)
             {
                 if (identity.Server is null || identity.Region is null)
@@ -1009,11 +1220,7 @@ public partial class MainWindow : Window
                 Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
             }
             // A snapshot still waiting for its owner belongs to the character just named.
-            if (latest is not null && readingOwnerKey.Length == 0)
-            {
-                readingOwnerKey = key; publishDelay.Stop();
-                if (latest.OwnerConfirmed) ownerEntity = latest.EntityId;
-            }
+            if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
             if (latest is not null) await PublishCoreAsync();
             RenderHero();
         }
@@ -1032,20 +1239,21 @@ public partial class MainWindow : Window
     {
         if (api is null || capture is null || latest is not { } reading || activeCharacterId.Length == 0 || readingOwnerKey.Length == 0
             || readingOwnerKey != detectedCharacterKey || readingOwnerKey != gameCharacterKey || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
-        return new Handover(api.Endpoint, accountId, character.Id, readingOwnerKey, character.CharacterName, reading.Total, reading.EntityId, reading.OwnerConfirmed, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
+        return new Handover(api.Endpoint, accountId, character.Id, readingOwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
     }
     // The first start after an update or language restart takes over the character the previous
     // build was reading, for the same server and account. Sending its reading again ties it to this
     // start's session, so the heartbeat keeps it live without a relog; a game that stopped in the
     // meantime sends nothing and the reading turns stale after 20 seconds as usual (PulseAsync).
+    // The reading keeps the adapter name that read it, also after an update that changed the decoder.
     // Caller holds the operations lock.
     private async Task TakeOverAsync()
     {
         if (api is null || capture is null || HandoverStore.Take(DateTimeOffset.UtcNow) is not { } handed) return;
         if (handed.Endpoint != api.Endpoint || handed.AccountId != accountId || Array.Find(characters, c => c.Id == handed.CharacterId) is not { } character) return;
-        currentCharacterId = character.Id; gameCharacterKey = detectedCharacterKey = readingOwnerKey = handed.CharacterKey; gameCharacterName = handed.CharacterName;
-        ownerEntity = handed.OwnerConfirmed ? handed.EntityId : null;
-        latest = new PacketCandidate(handed.Total, handed.EntityId, handed.ParserVersion, handed.Source) { OwnerConfirmed = handed.OwnerConfirmed }; latestAt = DateTimeOffset.UtcNow;
+        currentCharacterId = character.Id; gameCharacterKey = detectedCharacterKey = handed.CharacterKey; gameCharacterName = handed.CharacterName;
+        Attribute(handed.CharacterKey);
+        latest = new PacketCandidate(handed.Total, handed.ParserVersion, handed.Source); latestAt = DateTimeOffset.UtcNow;
         Log.Info($"Took over {handed.CharacterName} ({handed.Total} Odyle) from before the restart.");
         await PublishCoreAsync();
         if (activeCharacterId == character.Id) Status(T("Reader running · {0} stays live after the restart.", character.CharacterName));
@@ -1135,7 +1343,8 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account."));
+        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account.")); NoteReaderPause(session.ReaderPaused);
+        if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
     }
@@ -1158,7 +1367,9 @@ public partial class MainWindow : Window
                 if (alive) await PublishCoreAsync();
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
-            await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            // The pause switch reaches every paired app within one heartbeat, both ways.
+            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync();
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
             if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
@@ -1176,7 +1387,8 @@ public partial class MainWindow : Window
     private async Task DisconnectAsync(string message, bool clearSaved)
     {
         await StopReaderAsync();
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; if (clearSaved) SessionStore.Clear();
+        // The pause is the server's: without a connection there is none.
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
@@ -1194,6 +1406,8 @@ public partial class MainWindow : Window
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
+    // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
+    public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await QuitAsync(); }
     private async Task QuitAsync(bool restart = false)
     {
         // Quitting already (an update found at start while the user quits) is not repeated.
@@ -1201,7 +1415,7 @@ public partial class MainWindow : Window
         quitting = true;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
-        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); await operations.WaitAsync();
+        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }

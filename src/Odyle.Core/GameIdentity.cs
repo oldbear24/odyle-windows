@@ -3,7 +3,8 @@ using System.Text;
 
 namespace Odyle.Core;
 
-public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerId, string? Server, string? Region)
+// Class is the wire class id, logged to confirm new classes; it is never sent anywhere.
+public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerId, string? Server, string? Region, uint Class = 0)
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
     // Game server names and their numeric order are protocol data, not a
@@ -12,7 +13,8 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
     private static readonly string[] Asmodian = "Israphel,Zikel,Triniel,Lumiel,Marchutan,Azphel,Ereshkigal,Beritra,Nemon,Hadala,Ludra,Ulgorn,Munin,Odar,Zemurru,Kromede,Quai,Baba,Fafnir,Indnath,Ishalgen,Altgard,Agnita,Atiel,Valdemar,Lagta,Gerod,Urd,Ecco,Giselle,Kashapa,Stof,Berk,Nuakum,Grisilla,Santras,Reuben,Hugo,Kraki,Hystan,Rathman,Sigebert,Nazmun,Gelcos,Paton,Pelleir,Elvida,Ketu,Pydeon,Notun".Split(',');
 
     // Own-character 3336 payload: varint id, u32 mask, u8 mask,
-    // u8 UTF-8 byte count, name, u16 server, u32 class.
+    // u8 UTF-8 byte count, name, u16 server, u32 class. Class ids 5 to 48 are accepted: the
+    // reference decoder maps 45 to 48 to the Brawler.
     public static GameIdentity? Read(ReadOnlySpan<byte> payload)
     {
         var offset = 0;
@@ -27,11 +29,11 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
         offset += count;
         var server = BinaryPrimitives.ReadUInt16LittleEndian(payload[offset..]);
         var job = BinaryPrimitives.ReadUInt32LittleEndian(payload[(offset + 2)..]);
-        if (job is < 5 or > 40 || server is < 1000 or >= 3000) return null;
+        if (job is < 5 or > 48 || server is < 1000 or >= 3000) return null;
         var region = (server / 100 % 10) switch { 1 or 2 => "GLOBAL_NA", 3 => "GLOBAL_EU", 4 => "GLOBAL_SA", 5 => "GLOBAL_ASIA", _ => null };
         var index = server % 100 - 1;
         var names = server / 1000 == 1 ? Elyos : Asmodian;
         var label = index >= 0 && index < names.Length ? names[index] : null;
-        return new(id, name, server, label, region);
+        return new(id, name, server, label, region, job);
     }
 }

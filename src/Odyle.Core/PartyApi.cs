@@ -17,7 +17,9 @@ public sealed record Announcement(string Text, string Level = "info")
 {
     public bool IsWarning => Level == "warning";
 }
-public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null);
+// ReaderPaused: the server's operators paused every packet reader (Server controls); the rooms,
+// session and heartbeat answers carry it. Backends from before the switch leave it out (null).
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
@@ -30,11 +32,18 @@ public sealed record RoomMember(string Id, string User, string Role, string Disp
 // A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
 public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
-public sealed record PublisherSession(string SessionId, long Sequence);
+public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null);
+public sealed record HeartbeatResponse(bool? ReaderPaused = null);
 public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
 public sealed record ReportResponse(Character Character);
 public sealed class PartyApi : IDisposable
 {
+    // The backend's 400 answer to a reading whose adapter its registry does not list
+    // (backend/odyle/validation.go); the app recognises it by this exact text.
+    public const string AdapterRefused = "This packet adapter has not been validated for Global. No reading was saved.";
+    // The backend's 503 answer to a reading while its operators pause packet readers; the app then
+    // stops capturing until the rooms, session or heartbeat answer says readerPaused is false.
+    public const string ReadersPaused = "Packet readers are paused by the server operators.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;
@@ -129,7 +138,7 @@ public sealed class PartyApi : IDisposable
     // The account's private daily and weekly checklist; a change answers with the whole list again.
     public Task<TasksResponse> GetTasksAsync() => GetAsync<TasksResponse>("api/odyle/tasks");
     public Task<TasksResponse> SetTaskDoneAsync(string id, bool done) => PostAsync<TasksResponse>("api/odyle/task", new { id, done });
-    public Task HeartbeatAsync(string sessionId, string? characterId) => PostAsync<JsonElement>("api/odyle/heartbeat", new { sessionId, characterId });
+    public Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId) => PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {

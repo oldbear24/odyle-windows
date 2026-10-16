@@ -41,7 +41,8 @@
    <TextBlock Style="{StaticResource Section}" Text="PACKET READER"/>
    <!-- Npcap is checked each time settings open -->
    <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><Ellipse x:Name="NpcapDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,1,7,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="11.5" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
-   <TextBlock Style="{StaticResource Hint}" Text="Reads the game's own packets. Nothing is injected." Margin="2,4,0,0"/>
+   <!-- Scope notice, the same text as on the installer's welcome page and the dashboard -->
+   <TextBlock Style="{StaticResource Hint}" Text="Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic, automates play or collects combat data. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk." Margin="2,6,0,0"/>
 
    <!-- Window: how the card is shown on this PC; the header buttons toggle the same -->
    <TextBlock Style="{StaticResource Section}" Text="WINDOW"/>
@@ -70,8 +71,10 @@
      <Button x:Name="InstallUpdateButton" Style="{StaticResource Secondary}" Content="Restart &amp; update" Visibility="Collapsed" MinHeight="24" Padding="10,2" FontSize="11" ToolTip="Stops the reader, installs the downloaded version and starts it"/>
     </StackPanel>
    </DockPanel>
-   <!-- Troubleshooting: a small log on this PC, never with tokens, device keys or pairing codes -->
-   <DockPanel Margin="0,2,0,0"><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><TextBlock Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC." VerticalAlignment="Center" Margin="2,0,0,0"/></DockPanel>
+   <!-- Troubleshooting: a small log on this PC, never with tokens, device keys or pairing codes; diagnostics go to the clipboard only -->
+   <TextBlock Style="{StaticResource Section}" Text="TROUBLESHOOTING"/>
+   <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard. Tokens, device keys, pairing codes, your account id, this PC's name and your Windows user name are left out; character names and the server address stay in." Margin="2,0,0,4"/>
+   <DockPanel><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><Button x:Name="DiagnosticsButton" HorizontalAlignment="Left" Style="{StaticResource Ghost}" Content="Copy diagnostics" Margin="-6,0,0,0" VerticalAlignment="Center" ToolTip="A short report for a bug report · nothing is sent until you paste it somewhere"/></DockPanel>
   </StackPanel>
  </ScrollViewer>
 </Window>
