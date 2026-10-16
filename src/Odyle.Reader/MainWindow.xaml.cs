@@ -344,7 +344,7 @@ public partial class MainWindow : Window
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         // The game's two numbers: the natural pool and what items added, and the last change it made.
-        var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Base, character?.Bonus);
+        var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
         var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;

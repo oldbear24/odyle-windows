@@ -15,7 +15,9 @@ static class RealtimeChecks
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");
         Check(RealtimeNews.Parse(Json("""{"refresh":true,"removed":true}""")) is { Refresh: true, Removed: true }, "a removed member");
         var changed = RealtimeNews.Parse(Json("""{"refresh":true,"characters":[""" + Lumina.Replace("\"value\":180", "\"value\":220").Replace("}", ",\"shared\":true}") + """]}"""));
-        Check(changed.Characters.Single() is { Id: "c", Value: 220 }, "changed characters with their snapshot fields");
+        Check(changed.Characters.Single() is { Id: "c", Value: 220, Parts: null }, "changed characters with their snapshot fields");
+        var split = RealtimeNews.Parse(Json("""{"characters":[""" + Lumina.Replace("}", ",\"parts\":{\"base\":90,\"bonus\":990}}") + """]}"""));
+        Check(split.Characters.Single().Parts == new OdyleParts(90, 990), "a character carries the game's two numbers when its last reading sent them");
         var seen = RealtimeNews.Parse(Json("""{"seen":{"c":"2026-10-12T12:00:10.000Z","x":5}}"""));
         Check(seen is { Refresh: false } && seen.Seen.Count == 1 && seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");

@@ -20,12 +20,15 @@ public sealed record Announcement(string Text, string Level = "info")
 // ReaderPaused: the server's operators paused every packet reader (Server controls); the rooms,
 // session and heartbeat answers carry it. Backends from before the switch leave it out (null).
 public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", int? Base = null, int? Bonus = null)
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string Location => $"{Server} · {RegionLabel}";
 }
+// The game's two numbers of a character's last reading: its natural pool and what items added
+// (null when that reading did not send them, or the backend is older).
+public sealed record OdyleParts(int Base, int Bonus);
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters);
