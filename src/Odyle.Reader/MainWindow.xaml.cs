@@ -492,9 +492,11 @@ public partial class MainWindow : Window
         cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
         var seen = !live && Readiness.Parse(c.LastSeenAt) is { } at ? " · " + T("seen {0}", Age(at)) : "";
-        return new PartyMate(c.CharacterName, c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}",
+        // The class leads the detail, so a narrow row trims the server rather than the class.
+        var where = c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}";
+        return new PartyMate(c.CharacterName, c.ClassLine.Length > 0 ? $"{c.ClassLine} · {where}" : where,
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale") + seen), Brush(live ? "Mint" : "Amber"),
-            live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName));
+            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)));
     }
     // The Odyle clock under the split: from the reading on screen, or the saved character's last
     // one (an estimate then), with the operators' rules. Ticked every second with the age.

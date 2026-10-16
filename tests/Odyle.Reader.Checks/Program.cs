@@ -191,6 +191,7 @@ static class ReaderChecks
                 Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible && party.Length == 1 && party[0].Name == "Evening", "a connected account sees the party of its rooms");
                 Check(party[0].Mates.Select(m => m.Name).SequenceEqual(new[] { "Lumina", "KaelenAlt" }), "only others' online characters are listed, live first");
                 Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && System.Text.RegularExpressions.Regex.IsMatch(party[0].Mates[1].Cubes, @" · stale · seen \d+s ago$"), "each mate shows Odyle, cubes and staleness, with when it was last seen: " + party[0].Mates[1].Cubes);
+                Check(party[0].Mates[0] is { Detail: "Chanter · Lv 45 · Lumiel · EU", Hint: "Chanter · Lv 45 · Lumina · live from the game" } && party[0].Mates[1].Detail == "Kaelen · Lumiel", "a mate PLAYNC listed leads with its class and level, others as before: " + party[0].Mates[0].Detail);
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
@@ -743,7 +744,7 @@ static class ReaderChecks
         Character Hero(string id, string user, string name, int value, bool valid, int seen) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet");
         return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), [
             new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2)]),
-            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5)]),
+            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5) with { Level = 45, ClassName = "Chanter" }]),
             new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
             new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
     }

@@ -17,6 +17,8 @@ public static class Czech
         ["Hide the daily & weekly tasks"] = "Skrýt denní a týdenní úkoly", ["Show your daily & weekly tasks beside the card"] = "Ukázat denní a týdenní úkoly vedle karty",
         ["Hide until the message changes"] = "Skrýt, dokud se zpráva nezmění",
         ["Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard."] = "Přirozená zásoba měla {0:N0}, víc než {1:N0}: začalo členství? Odpověz na dashboardu.",
+        // Class and level from PLAYNC
+        ["Lv {0}"] = "Úr. {0}",
         // Offline: paired, the server not reachable yet
         ["OFFLINE"] = "OFFLINE", ["{0} · offline"] = "{0} · offline", ["Odyle · Offline"] = "Odyle · Offline",
         ["Offline · {0:N0} Odyle read here, sent when the server is back."] = "Offline · {0:N0} Odyle přečteno tady, odešle se, až bude server zpět.",

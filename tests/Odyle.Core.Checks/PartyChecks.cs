@@ -60,6 +60,12 @@ static class PartyChecks
             Check(RunChip.Line(next, now) == "Fire Temple · za 1 h 30 min · jde 2 · Evening" && RunChip.PartyLine(mates, "u") == "Parta · 1 kostka · nejnižší Kaelen · 1 není živě", "the run and party lines in Czech");
         }
         finally { Localizer.Use("en"); }
+        // Class and level as the dashboard keeps them from PLAYNC (#25); older backends send neither.
+        var web = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        const string bare = """{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","lastReadingAt":"","value":905,"confirmed":true,"valid":true""";
+        Check(JsonSerializer.Deserialize<Character>(bare + ""","level":45,"className":"Chanter","classId":36,"officialId":"x"}""", web) is { Level: 45, ClassLine: "Chanter · Lv 45" }, "a character carries its class and level");
+        Check(JsonSerializer.Deserialize<Character>(bare + ""","level":12,"className":""}""", web)!.ClassLine == "Lv 12", "a class not named yet shows the level alone");
+        Check(JsonSerializer.Deserialize<Character>(bare + "}", web)!.ClassLine == "", "an older backend sends neither");
         Console.WriteLine($"Party readiness, {cases} shared cases with the dashboard, room snapshots, the party line and the next run passed.");
     }
     static string RepositoryRoot()
