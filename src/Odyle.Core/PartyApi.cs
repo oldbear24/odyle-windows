@@ -138,7 +138,10 @@ public sealed class PartyApi : IDisposable
     // The account's private daily and weekly checklist; a change answers with the whole list again.
     public Task<TasksResponse> GetTasksAsync() => GetAsync<TasksResponse>("api/odyle/tasks");
     public Task<TasksResponse> SetTaskDoneAsync(string id, bool done) => PostAsync<TasksResponse>("api/odyle/task", new { id, done });
-    public Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId) => PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId });
+    // reader is what the packet reader is doing (waiting, listening, midstream, reading, problem, npcap,
+    // two-clients, paused, stopped) and game the Steam build it reads; the backend's reader health
+    // keeps both in memory to warn its operator when a game patch breaks reading. Older backends ignore them.
+    public Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId, string? reader = null, string? game = null) => PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId, reader, game });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {

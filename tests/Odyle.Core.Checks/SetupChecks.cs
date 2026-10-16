@@ -63,7 +63,11 @@ static class SetupChecks
         for (var i = 0; i < DecoderTrace.Kept + 50; i++) busy.Update(new(80000001, 0x0C, i, 0, 1, 0));
         using (var parsed = System.Text.Json.JsonDocument.Parse(busy.ToJson("x", "y")))
             Check(parsed.RootElement.GetProperty("updates").GetProperty("total").GetInt64() == DecoderTrace.Kept + 50 && parsed.RootElement.GetProperty("updates").GetProperty("kept").GetArrayLength() == DecoderTrace.Kept, "the trace keeps its first entries and counts the rest");
-        Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail, --unpair and the decoder trace passed.");
+        // The game build comes from Steam's files: its library list and AION 2's app manifest.
+        const string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"apps\" { \"228980\" \"1\" }\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\" { \"3393110\" \"2\" }\n\t}\n}\n";
+        Check(SteamManifest.Libraries(vdf).SequenceEqual([@"C:\Program Files (x86)\Steam", @"D:\SteamLibrary"]) && SteamManifest.Libraries("").Length == 0, "Steam's library folders, with escaped backslashes undone");
+        Check(SteamManifest.BuildId("\"AppState\"\n{\n\t\"appid\"\t\t\"3393110\"\n\t\"buildid\"\t\t\"25800038\"\n}") == "25800038" && SteamManifest.BuildId("\"AppState\" { \"buildid\" \"x1\" }") is null && SteamManifest.ManifestName == "appmanifest_3393110.acf" && SteamManifest.Label("25800038") == "Steam build 25800038", "the build id from AION 2's app manifest");
+        Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail, --unpair, the decoder trace and the Steam build passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Setup check failed: " + message); }
 }

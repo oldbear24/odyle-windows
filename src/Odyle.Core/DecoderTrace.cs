@@ -17,7 +17,7 @@ public sealed class DecoderTrace
     private readonly HashSet<OdyleFrameLayout> layoutsSeen = [];
     private long snapshotCount, updateCount;
     public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
-    // The game client's file version, read from its executable (never from its memory).
+    // The game build from Steam's app manifest (never from the game's process or files).
     public string? GameVersion { get; set; }
 
     public void Frame(ushort opcode, int bytes)

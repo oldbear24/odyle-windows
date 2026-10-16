@@ -1002,6 +1002,7 @@ public partial class MainWindow : Window
         {
             if (capture != next) return;
             if (kind == CaptureStatus.TwoClients) OnTwoClients();
+            if (kind is CaptureStatus.Listening or CaptureStatus.Waiting or CaptureStatus.TwoClients) connectionRead = false;
             // One of two game clients closed: start over like a new connection, the next identity names the character.
             else if (twoClients) { twoClients = false; latest = null; publishDelay.Stop(); ResetAttribution(); Log.Info("One game client is left; reading again."); }
             // A reading the game never attributed belongs to its connection; a new connection starts over.
@@ -1049,6 +1050,7 @@ public partial class MainWindow : Window
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
         if (capture != source || twoClients) return;
+        connectionRead = true;
         // The same frame can arrive on two capture interfaces within milliseconds.
         var duplicate = latest is not null && latest.Total == observation.Total && DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(2);
         if (duplicate && readingOwnerKey.Length > 0) { latestAt = DateTimeOffset.UtcNow; return; }
@@ -1071,7 +1073,7 @@ public partial class MainWindow : Window
     private void OnSnapshotWithoutOdyle(PacketCapture source)
     {
         if (capture != source || twoClients) return;
-        odyleMissingDue = true;
+        odyleMissingDue = true; connectionRead = true;
         if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
         RenderHero();
     }
@@ -1084,6 +1086,13 @@ public partial class MainWindow : Window
     // Odyle could be saved under the other. Nothing is read or published until one closes, and
     // the live reading turns stale meanwhile.
     private bool twoClients;
+    // Whether this game connection gave an Odyle reading or a full snapshot without Odyle (a character
+    // under level 22): a reader that listens for long without either is what a game patch looks like.
+    private bool connectionRead;
+    // What the heartbeat tells the backend's reader health about this PC's reader.
+    private string ReaderStatus() =>
+        readerPaused ? "paused" : twoClients ? "two-clients" : capture is null ? (npcapTimer.IsEnabled ? "npcap" : "stopped")
+        : readerState switch { ReaderState.Waiting => "waiting", ReaderState.Midstream => "midstream", ReaderState.Problem => "problem", ReaderState.Live => "reading", _ => connectionRead ? "reading" : "listening" };
     private void OnTwoClients()
     {
         if (twoClients) return;
@@ -1386,7 +1395,7 @@ public partial class MainWindow : Window
                 if (alive) await PublishCoreAsync();
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
-            var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
             NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync();
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
@@ -1443,8 +1452,9 @@ public partial class MainWindow : Window
         try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), ExperimentalOdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn("The decoder trace could not be written: " + error.Message); }
     }
-    // The game client's file version, logged whenever a game connection starts with another
-    // version than before: a game patch then shows in the log beside what the decoder read.
+    // The game build Steam installed (GameClient), logged whenever a game connection starts with
+    // another build than before: a game patch then shows in the log beside what the decoder read.
+    // The heartbeat sends it too.
     private string? gameVersion;
     private async Task NoteGameVersionAsync()
     {

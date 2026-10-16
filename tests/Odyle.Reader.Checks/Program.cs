@@ -95,7 +95,13 @@ static class ReaderChecks
                 Call(window, "OnCandidate", inert, new PacketCandidate(999, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
                 Call(window, "OnSnapshotWithoutOdyle", inert);
                 Check(Field("latest").GetValue(window) is null && Owner() == "" && (string)Field("gameCharacterKey").GetValue(window)! == "" && !(bool)Field("odyleMissingDue").GetValue(window)!, "with two game clients nothing is read, attributed or named");
+                Check((string)Call(window, "ReaderStatus")! == "two-clients", "the heartbeat reports two game clients");
                 Field("twoClients").SetValue(window, false);
+                // The heartbeat's reader state: listening until this connection gave a reading, then reading.
+                Field("connectionRead").SetValue(window, false); Call(window, "SetReaderState", Enum.Parse(Field("readerState").FieldType, "Listening"), "Listening to AION2 · waiting for the Odyle snapshot.");
+                var listening = (string)Call(window, "ReaderStatus")!;
+                Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 }); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+                Check(listening == "listening" && (string)Call(window, "ReaderStatus")! == "reading", "the heartbeat reports listening until Odyle is read on this connection, then reading");
                 // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
                 Call(window, "ResetAttribution");
                 Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });

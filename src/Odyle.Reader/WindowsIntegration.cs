@@ -1,9 +1,8 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
+using System.Linq;
 using System.Security;
-using System.Text;
 using Microsoft.Win32;
 using Odyle.Core;
 
@@ -74,34 +73,29 @@ public static class Npcap
         return false;
     }
 }
-// The running game client's file version, for the log and the patch-day trace: the path of its
-// executable (QueryFullProcessImageName, which also works for a game running as administrator)
-// and that file's version resource. File metadata only, never the game's memory.
+// The game build Steam installed (SteamManifest), for the log, the heartbeat and the patch-day
+// trace: Steam's path from the per-user registry, its library list and AION 2's app manifest.
+// Only Steam's own files are read; the game's process is never opened. Null for a game
+// installed outside Steam, or when Steam's files cannot be read.
 public static class GameClient
 {
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, int processId);
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref uint size);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
-    private const uint QueryLimitedInformation = 0x1000;
     public static string? Version()
     {
-        foreach (var process in Process.GetProcesses())
+        try
         {
-            using (process)
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            if (key?.GetValue("SteamPath") is not string { Length: > 0 } steam) return null;
+            var steamapps = Path.Combine(steam.Replace('/', Path.DirectorySeparatorChar), "steamapps");
+            var libraries = new List<string> { steamapps };
+            var list = Path.Combine(steamapps, "libraryfolders.vdf");
+            if (File.Exists(list)) libraries.AddRange(SteamManifest.Libraries(File.ReadAllText(list)).Select(library => Path.Combine(library, "steamapps")));
+            foreach (var library in libraries)
             {
-                try { if (!GameConnection.IsGameProcess(process.ProcessName)) continue; } catch (InvalidOperationException) { continue; }
-                if (ImagePath(process.Id) is not { } path) continue;
-                try { var info = FileVersionInfo.GetVersionInfo(path); if ((info.FileVersion ?? info.ProductVersion) is { Length: > 0 } version) return version.Trim(); }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+                var manifest = Path.Combine(library, SteamManifest.ManifestName);
+                if (File.Exists(manifest) && SteamManifest.BuildId(File.ReadAllText(manifest)) is { } build) return SteamManifest.Label(build);
             }
         }
+        catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException or ArgumentException) { }
         return null;
-    }
-    private static string? ImagePath(int processId)
-    {
-        var handle = OpenProcess(QueryLimitedInformation, false, processId);
-        if (handle == IntPtr.Zero) return null;
-        try { var name = new StringBuilder(1024); var size = (uint)name.Capacity; return QueryFullProcessImageName(handle, 0, name, ref size) ? name.ToString(0, (int)size) : null; }
-        finally { CloseHandle(handle); }
     }
 }
