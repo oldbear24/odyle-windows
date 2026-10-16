@@ -55,4 +55,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $assets = (Get-ChildItem artifacts/*.zip, artifacts/*.exe, artifacts/*.sha256).FullName
-          gh release create "v$env:VERSION" @assets --target $env:GITHUB_SHA --title "Odyle $env:VERSION" --generate-notes --latest
+          # The notes start with what the version changed, from CHANGELOG.md, between the markers the
+          # dashboard's What's new reads back; GitHub adds the merged pull requests.
+          ./scripts/changelog.ps1 notes -Version $env:VERSION | Set-Content -Encoding utf8 notes.md
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          gh release create "v$env:VERSION" @assets --target $env:GITHUB_SHA --title "Odyle $env:VERSION" --notes-file notes.md --generate-notes --latest

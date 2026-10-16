@@ -1,0 +1,9 @@
+<Window x:Class="Odyle.Reader.WhatsNewWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="What's new in Odyle" Width="380" Height="520" MinWidth="300" MinHeight="260" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+ Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
+ Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
+ <!-- What changed in each version, newest first, from the CHANGELOG.md built into the app -->
+ <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+  <StackPanel x:Name="Entries" Margin="14,6,14,14"/>
+ </ScrollViewer>
+</Window>

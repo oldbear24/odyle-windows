@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>Odyle</AssemblyName><Version>0.9.0</Version><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>Assets/odyle.ico</ApplicationIcon></PropertyGroup>
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><AssemblyName>Odyle</AssemblyName><Version>0.10.0</Version><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>Assets/odyle.ico</ApplicationIcon></PropertyGroup>
   <ItemGroup><ProjectReference Include="../Odyle.Core/Odyle.Core.csproj"/></ItemGroup>
   <ItemGroup><Resource Include="Assets/odyle.ico"/></ItemGroup>
+  <!-- What's new reads the changelog built into the app. -->
+  <ItemGroup><EmbeddedResource Include="../../CHANGELOG.md" LogicalName="CHANGELOG.md"/></ItemGroup>
   <!-- The publish script sets SelfContained; the updater reads it to fetch the same package kind. A release
        build (publish -Version, the release workflow) is marked OdyleRelease: only those update themselves. -->
   <ItemGroup><AssemblyMetadata Include="SelfContained" Value="$(SelfContained)"/><AssemblyMetadata Include="OdyleRelease" Value="$(OdyleRelease)"/></ItemGroup>
