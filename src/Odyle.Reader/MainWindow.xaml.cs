@@ -52,7 +52,7 @@ public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropert
 }
 public partial class MainWindow : Window
 {
-    private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem }
+    private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem, Paused }
     private PartyApi? api;
     private PacketCapture? capture;
     private readonly SettingsWindow settings = new();
@@ -77,6 +77,16 @@ public partial class MainWindow : Window
     // does, an update check runs at most once an hour (outdatedCheckAt).
     private bool adapterOutdated;
     private DateTimeOffset outdatedCheckAt = DateTimeOffset.MinValue;
+    // The server's operators paused every packet reader (Server controls): the rooms, session and
+    // heartbeat answers carry the switch, and a reading sent meanwhile answers 503. The capture stops
+    // and Npcap is closed until the switch is off again; then the reader starts by itself.
+    // readerWanted: the reader should run whenever it can (started, and not stopped by hand).
+    private bool readerPaused, readerWanted;
+    // Without a working Npcap the reader row links to its download page and Npcap is looked for every
+    // 10 seconds; once it is there, the reader starts by itself.
+    private readonly DispatcherTimer npcapTimer = new() { Interval = TimeSpan.FromSeconds(10) };
+    // The reader line's last states, for Copy diagnostics.
+    private readonly Queue<string> readerHistory = new();
     private Character[] characters = [];
     private Room[] rooms = [];
     // Server-wide Odyle per cube: the cost shown while the account has no room yet.
@@ -150,7 +160,8 @@ public partial class MainWindow : Window
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
-        settings.NpcapButton.Click += (_, _) => OpenLink("https://npcap.com/#download"); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
@@ -187,6 +198,7 @@ public partial class MainWindow : Window
             else if (preferences.RemindRuns && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         };
         heartbeat.Tick += async (_, _) => await PulseAsync();
+        npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); };
         clock.Start();
@@ -267,10 +279,12 @@ public partial class MainWindow : Window
         RenderReaderButton();
     }
     // Compact toggle beside the reader status: mint to start or connect, quiet while reading.
+    // While the server pauses readers there is nothing to start.
     private void RenderReaderButton()
     {
         ReportButton.Content = capture is not null ? T("Stop") : api is not null ? T("Start") : T("Connect");
         if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
+        ReportButton.IsEnabled = !busy && !(readerPaused && api is not null && capture is null);
     }
 
     // ----- Presentation -----
@@ -285,10 +299,17 @@ public partial class MainWindow : Window
             ReaderState.Midstream => ("Amber", "Amber"),
             ReaderState.Live => ("Mint", "Text"),
             ReaderState.Stale => ("Amber", "Muted"),
+            ReaderState.Paused => ("Amber", "Amber"),
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text); PacketStateLabel.Text = message;
-        if (message != lastReaderLog) { lastReaderLog = message; Log.Info($"Reader {state}: {message}"); }
+        // The Npcap link belongs to the line that says Npcap is missing or restricted (ShowNpcapProblem).
+        NpcapLink.Visibility = Visibility.Collapsed;
+        if (message != lastReaderLog)
+        {
+            lastReaderLog = message; Log.Info($"Reader {state}: {message}");
+            readerHistory.Enqueue($"{DateTime.Now:HH:mm:ss} {state} · {message}"); while (readerHistory.Count > 10) readerHistory.Dequeue();
+        }
     }
     private void SetPill(string dot, string text, string background, string label)
     {
@@ -317,6 +338,7 @@ public partial class MainWindow : Window
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
+        else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
         else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
         // A snapshot waits for the loading screen to end before the game names its character.
@@ -326,6 +348,8 @@ public partial class MainWindow : Window
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
         ReadingLabel.Text = !connected ? T("Open settings to pair with the dashboard.")
+            // The operators' announcement, when there is one, says why; it moves into the card meanwhile.
+            : readerPaused ? (announcement is { } reason ? T("Paused by the server · {0}", reason.Text) : T("Paused by the server · reading resumes by itself when the operators allow it again."))
             : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
             : reading is not null ? (adapterOutdated ? OutdatedHint : publishFailure ?? "")
             // The game's snapshot of the named character has no Odyle record; it is thought to unlock at level 22.
@@ -394,7 +418,7 @@ public partial class MainWindow : Window
     // ----- Operations -----
     private void SetBusy(bool value)
     {
-        busy = value; ReportButton.IsEnabled = !value; settings.Body.IsEnabled = !value;
+        busy = value; settings.Body.IsEnabled = !value; RenderReaderButton();
     }
     private async Task ExecuteAsync(Func<Task> action)
     {
@@ -416,6 +440,8 @@ public partial class MainWindow : Window
         // The update check does not wait for the server. Its first tick also removes the
         // Odyle.exe.old of the build that installed this one, which by then has exited.
         if (Updater.IsReleaseBuild && !App.Headless) updateTimer.Start();
+        // Npcap missing shows in the reader row from the start, also before the app is paired.
+        if (!Npcap.Probe()) ShowNpcapProblem(null);
         await ExecuteAsync(RestoreAsync);
         if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
         {
@@ -507,6 +533,8 @@ public partial class MainWindow : Window
     {
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
+        // A fresh connection: a backend without the switch never pauses readers.
+        NoteReaderPause(session.ReaderPaused ?? false);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
@@ -514,6 +542,7 @@ public partial class MainWindow : Window
         Status(T("Connected to your account."));
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start(); StartRealtime();
+        await FollowReaderPauseAsync();
     }
     // Listens to the account's topic and its rooms'; rooms joined or left later change the
     // topics (RefreshPartyAsync).
@@ -568,7 +597,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; ShowAnnouncement(listed.Announcement);
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -631,7 +660,7 @@ public partial class MainWindow : Window
                 var listed = await current.GetRoomsAsync();
                 var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
                 if (api != current) return;
-                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); ShowAnnouncement(listed.Announcement);
+                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
                 if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
                 RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
                 if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
@@ -648,7 +677,8 @@ public partial class MainWindow : Window
     {
         if (next is { } shown && shown.Text != announcement?.Text) Log.Info("Announcement from the server: " + shown.Text);
         announcement = next is { Text.Length: > 0 } ? next : null;
-        if (announcement is not { } current || current.Text == hiddenAnnouncement) { AnnouncementBar.Visibility = Visibility.Collapsed; return; }
+        // While the server pauses readers the card itself shows the announcement (RenderHero).
+        if (announcement is not { } current || current.Text == hiddenAnnouncement || readerPaused && api is not null) { AnnouncementBar.Visibility = Visibility.Collapsed; return; }
         AnnouncementText.Text = current.Text;
         AnnouncementBar.Background = Brush(current.IsWarning ? "PillAmber" : "PillLive");
         AnnouncementBar.BorderBrush = Brush(current.IsWarning ? "Amber" : "LineStrong");
@@ -736,7 +766,8 @@ public partial class MainWindow : Window
         if (!IsVisible || WindowState != WindowState.Normal || double.IsNaN(Left) || double.IsNaN(Top) || preferences is { Left: var l, Top: var t } && l == Left && t == Top) return;
         PreferencesStore.Save(preferences = preferences with { Left = Left, Top = Top });
     }
-    // Settings → Start with Windows writes or removes the Run entry ("<Odyle.exe>" --tray).
+    // Settings → Start with Windows writes or removes the Run entry ("<Odyle.exe>" --tray). Either
+    // choice also answers the one-time offer below.
     private void SetAutostart(bool on)
     {
         try { Autostart.Set(on); Log.Info(on ? "Start with Windows is on." : "Start with Windows is off."); }
@@ -745,12 +776,78 @@ public partial class MainWindow : Window
             Log.Error("Start with Windows could not be changed", error); Status(T("Start with Windows could not be changed: {0}", error.Message));
         }
         settings.AutostartToggle.IsChecked = Autostart.Enabled;
+        AutostartOffer.Visibility = Visibility.Collapsed;
+        if (!preferences.AutostartOffered) PreferencesStore.Save(preferences = preferences with { AutostartOffered = true });
+    }
+    // After the first live reading, once per PC: started with Windows, Odyle waits in the tray and
+    // reads the login snapshot. Answered (here or in Settings), it is not offered again.
+    private void OfferAutostart()
+    {
+        if (preferences.AutostartOffered || AutostartOffer.Visibility == Visibility.Visible || Autostart.Enabled) return;
+        AutostartOffer.Visibility = Visibility.Visible; Log.Info("Offered Start with Windows after the first live reading.");
+    }
+    private void AcceptAutostart_Click(object sender, RoutedEventArgs e) => SetAutostart(true);
+    private void DeclineAutostart_Click(object sender, RoutedEventArgs e)
+    {
+        AutostartOffer.Visibility = Visibility.Collapsed; PreferencesStore.Save(preferences = preferences with { AutostartOffered = true });
+        Log.Info("Start with Windows was declined; it stays in Settings.");
+    }
+    // Settings → Copy diagnostics: what helps with a reader that does not read, on the clipboard
+    // only. Nothing is sent; the person decides where to paste it.
+    private void CopyDiagnostics()
+    {
+        try { System.Windows.Clipboard.SetText(DiagnosticsReport()); }
+        catch (ExternalException) { settings.DiagnosticsLabel.Text = T("The clipboard is busy · try again in a moment."); return; }
+        settings.DiagnosticsLabel.Text = T("Diagnostics copied · paste them into your bug report or message. Nothing was sent.");
+        Log.Info("Diagnostics were copied to the clipboard.");
+    }
+    private string DiagnosticsReport()
+    {
+        string adapters;
+        try { var found = PacketCapture.Adapters(); adapters = found.Length + (found.Length > 0 ? " · " + string.Join("; ", found) : ""); }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { adapters = "unavailable · " + error.Message; }
+        var npcap = !Npcap.Probe() ? "not found" : $"installed{(Npcap.Version() is { } version ? " " + version : "")}{(Npcap.Restricted() ? " · administrators only" : "")}";
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (Exception error) when (error is ArgumentException or UriFormatException) { host = "unknown server"; }
+        var account = api is not null ? $"paired · {host} · {(realtime?.IsConnected == true ? "realtime" : "polling")}" : retryAt is not null ? $"paired · {host} · not reached yet" : "not paired";
+        var reader = capture is { } running ? $"running · {readerState} · {running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game" : $"stopped · {readerState}";
+        return Diagnostics.Report(DateTimeOffset.Now, [
+            ("App", $"Odyle {Updater.Current} · {Updater.Runtime} · {(Updater.SelfContained ? "self-contained" : "small")} package · {(Updater.IsReleaseBuild ? "release" : "development")} build"),
+            ("Windows", $"{Environment.OSVersion} · language {Localizer.Language} ({Localizer.Culture.Name})"),
+            ("Npcap", npcap), ("Capture interfaces", adapters), ("Account", account), ("Reader", reader),
+            ("Adapter", ExperimentalOdyleDecoder.Version + (adapterOutdated ? " · refused by the server" : "")),
+            ("Server", readerPaused ? "packet readers paused by the operators" : "packet readers allowed")], readerHistory, Log.Tail(80));
     }
     private void RenderNpcap()
     {
+        var installed = Npcap.Probe(); var usable = installed && !Npcap.Restricted();
+        settings.NpcapLabel.Text = usable ? T("Npcap installed") : installed ? T("Npcap installed · only administrators may capture") : T("Npcap not found · install it to read the game");
+        settings.NpcapDot.Fill = Brush(usable ? "Mint" : "Amber"); settings.NpcapLabel.Foreground = Brush(usable ? "Text" : "Amber");
+    }
+    // The reader cannot start without a working Npcap (error null: found missing at start). The reader
+    // line says why, with a link to the download page, and Npcap is looked for every 10 seconds.
+    private void ShowNpcapProblem(Exception? error)
+    {
         var installed = Npcap.Probe();
-        settings.NpcapLabel.Text = installed ? T("Npcap installed") : T("Npcap not found · install it to read the game");
-        settings.NpcapDot.Fill = Brush(installed ? "Mint" : "Amber"); settings.NpcapLabel.Foreground = Brush(installed ? "Text" : "Amber");
+        var message = !installed ? T("Npcap is not installed · Odyle needs it to read the game.")
+            : error is InvalidOperationException && Npcap.Restricted() ? T("Npcap lets only administrators capture · reinstall it without “Restrict Npcap driver's access to Administrators only”.")
+            : error is InvalidOperationException ? T("Npcap shows this Windows account no network interface · if it was installed for administrators only, reinstall it without that option.")
+            : error is not null ? T(error.Message) : T("Npcap is not installed · Odyle needs it to read the game.");
+        if (error is not null && message != lastReaderLog) Log.Warn("The reader could not start: " + error.Message);
+        SetReaderState(ReaderState.Problem, message);
+        NpcapLink.Content = installed ? T("Npcap setup ↗") : T("Install Npcap ↗"); NpcapLink.Visibility = Visibility.Visible;
+        npcapTimer.Stop(); npcapTimer.Start();
+        if (settings.IsVisible) RenderNpcap();
+    }
+    private void NpcapLink_Click(object sender, RoutedEventArgs e) => OpenLink(Npcap.DownloadPage);
+    // Every 10 seconds while Npcap is missing or unusable: once it is installed, the reader starts by
+    // itself (an Npcap still restricted fails again and keeps the link).
+    private async Task NpcapTickAsync()
+    {
+        if (busy || !Npcap.Probe()) return;
+        npcapTimer.Stop(); if (settings.IsVisible) RenderNpcap();
+        if (readerWanted && api is not null && capture is null && !readerPaused) { await ExecuteAsync(StartReaderAsync); return; }
+        if (readerState == ReaderState.Problem && capture is null)
+            SetReaderState(ReaderState.Stopped, api is null ? T("Npcap is installed · pair Odyle in settings to read the game.") : T("Stopped · start the reader before logging in."));
     }
 
     // ----- Daily & weekly tasks -----
@@ -847,12 +944,56 @@ public partial class MainWindow : Window
         if (api is null && capture is null) { OpenSettings(); return; }
         await ExecuteAsync(async () =>
         {
-            if (capture is not null) await StopReaderAsync();
+            if (capture is not null) { readerWanted = false; await StopReaderAsync(); }
             else if (api is not null) await StartReaderAsync();
         });
     }
+    // Notes what an answer of the server says about the reader pause (null: the backend does not
+    // know the switch). A change is followed once the operations lock is free; callers that hold
+    // it follow at once.
+    private void NoteReaderPause(bool? paused)
+    {
+        if (paused is not { } now || now == readerPaused) return;
+        readerPaused = now;
+        if (now) Log.Warn("The server's operators paused packet readers; the capture stops until they resume them.");
+        else Log.Info("The server's operators resumed packet readers.");
+        ShowAnnouncement(announcement); RenderReaderButton(); RenderHero();
+        Dispatcher.BeginInvoke(async () => await FollowReaderPauseLaterAsync());
+    }
+    private async Task FollowReaderPauseLaterAsync()
+    {
+        await operations.WaitAsync();
+        try { await FollowReaderPauseAsync(); }
+        catch (Exception error) { Log.Error("The reader could not follow the server's pause", error); }
+        finally { operations.Release(); }
+    }
+    // Caller holds the operations lock. While the server pauses readers the capture stops, which
+    // closes Npcap, and the reader line says so; once the pause is over the reader starts again by
+    // itself, unless it was stopped by hand.
+    private async Task FollowReaderPauseAsync()
+    {
+        if (quitting || api is null) return;
+        if (readerPaused)
+        {
+            if (capture is not null) await StopCaptureAsync(invalidate: true);
+            if (readerState != ReaderState.Paused) ShowPaused();
+            return;
+        }
+        if (readerState != ReaderState.Paused) return;
+        if (readerWanted && capture is null) await StartReaderAsync();
+        else SetReaderState(ReaderState.Stopped, T("Stopped · start the reader before logging in."));
+    }
+    private void ShowPaused()
+    {
+        SetReaderState(ReaderState.Paused, T("Paused by the server's operators · the capture is off until they resume it."));
+        RenderReaderButton(); RenderHero();
+    }
     private async Task StartReaderAsync()
     {
+        readerWanted = true;
+        // Paused by the server: the reader starts by itself once the pause is over (FollowReaderPauseAsync).
+        if (readerPaused) { ShowPaused(); return; }
+        if (!Npcap.Probe()) { ShowNpcapProblem(null); RenderHero(); return; }
         var next = new PacketCapture();
         next.Status += (kind, message) => Dispatcher.BeginInvoke(() =>
         {
@@ -881,14 +1022,16 @@ public partial class MainWindow : Window
         next.SnapshotObserved += s => Log.Info($"Decoder: stat snapshot, {s.PayloadBytes} bytes, {(s.Records is { } count ? $"{count} records" : "layout not walked")}, {(s.Fields.Length == 0 ? "no Odyle record" : string.Join("; ", s.Fields.Select(f => $"Odyle {f.Base} + {f.Bonus} (tag {f.Tag:X2} at {f.Offset})")))}, {(s.Read ? "read" : "not read")}.");
         next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
         next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}), class {identity.Class}.");
-        try
-        {
-            next.Start(); capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
-            RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
-            SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
-            Status(T("Reader running · log into your character to read its Odyle."));
-        }
+        try { next.Start(); }
+        // Npcap missing, not loading or showing no interface: the reader row says why and links to
+        // its download page, and the reader starts by itself once Npcap works (NpcapTickAsync).
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { await next.DisposeAsync(); ShowNpcapProblem(error); RenderHero(); return; }
         catch { await next.DisposeAsync(); throw; }
+        npcapTimer.Stop();
+        capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
+        RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
+        SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
+        Status(T("Reader running · log into your character to read its Odyle."));
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
@@ -972,6 +1115,12 @@ public partial class MainWindow : Window
             activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; adapterOutdated = false;
             UpdateCharacterInList(saved);
             SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
+            OfferAutostart();
+        }
+        // The server's operators paused packet readers: the capture stops below until they resume them.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.ServiceUnavailable && error.Message == PartyApi.ReadersPaused)
+        {
+            publishFailure = null; NoteReaderPause(true);
         }
         // The server asked to wait: the reading is sent again once it may.
         catch (ServerBusyException error)
@@ -1007,6 +1156,7 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
         RenderHero();
+        if (readerPaused) await FollowReaderPauseAsync();
     }
     private async Task CharacterChangedAsync(PacketCapture source, ulong character)
     {
@@ -1183,7 +1333,8 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account."));
+        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account.")); NoteReaderPause(session.ReaderPaused);
+        if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
     }
@@ -1206,7 +1357,9 @@ public partial class MainWindow : Window
                 if (alive) await PublishCoreAsync();
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
-            await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null); lastTick = DateTimeOffset.UtcNow;
+            // The pause switch reaches every paired app within one heartbeat, both ways.
+            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync();
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
             if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
@@ -1224,7 +1377,8 @@ public partial class MainWindow : Window
     private async Task DisconnectAsync(string message, bool clearSaved)
     {
         await StopReaderAsync();
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; if (clearSaved) SessionStore.Clear();
+        // The pause is the server's: without a connection there is none.
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
@@ -1242,6 +1396,8 @@ public partial class MainWindow : Window
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
+    // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
+    public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await QuitAsync(); }
     private async Task QuitAsync(bool restart = false)
     {
         // Quitting already (an update found at start while the user quits) is not repeated.
@@ -1249,7 +1405,7 @@ public partial class MainWindow : Window
         quitting = true;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
-        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); await operations.WaitAsync();
+        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }

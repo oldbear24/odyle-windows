@@ -16,4 +16,5 @@ public static class Log
     public static void Info(string message) => file.Write("INFO", message);
     public static void Warn(string message) => file.Write("WARN", message);
     public static void Error(string message, Exception? error = null) => file.Write("ERROR", error is null ? message : message + ": " + error);
+    public static string[] Tail(int count) => file.Tail(count);
 }

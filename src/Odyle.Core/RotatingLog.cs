@@ -28,6 +28,24 @@ public sealed class RotatingLog(string path, long limit = 1024 * 1024)
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
     }
+    // The last lines of the log, the previous file's first (Copy diagnostics).
+    public string[] Tail(int count)
+    {
+        var lines = new List<string>();
+        lock (sync)
+            foreach (var file in new[] { PreviousPath, path })
+            {
+                try
+                {
+                    if (!File.Exists(file)) continue;
+                    using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    for (var line = reader.ReadLine(); line is not null; line = reader.ReadLine()) { lines.Add(line); if (lines.Count > count * 2) lines.RemoveRange(0, lines.Count - count); }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            }
+        return lines.Skip(Math.Max(0, lines.Count - count)).ToArray();
+    }
     private static readonly (Regex Pattern, string Mask)[] Secrets = [
         (new(@"eyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}", RegexOptions.CultureInvariant), "[token]"),
         (new(@"(?i)\bbearer\s+\S+", RegexOptions.CultureInvariant), "Bearer [token]"),

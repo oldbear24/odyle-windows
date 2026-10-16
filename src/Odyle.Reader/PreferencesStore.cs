@@ -7,10 +7,11 @@ namespace Odyle.Reader;
 // How the window is shown on this PC: pinned above other windows, with the daily and
 // weekly checklist beside the card, in which language ("auto" follows Windows) and
 // where it was last (WPF units). RemindRuns switches the planned-run reminders;
-// RemindedRuns and NotifiedUpdate keep notifications from repeating after a restart.
+// RemindedRuns and NotifiedUpdate keep notifications from repeating after a restart;
+// AutostartOffered, once the one-time offer to start with Windows was answered.
 // Everything else is configured on the dashboard.
 public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null,
-    bool RemindRuns = true, string[]? RemindedRuns = null, string NotifiedUpdate = "");
+    bool RemindRuns = true, string[]? RemindedRuns = null, string NotifiedUpdate = "", bool AutostartOffered = false);
 public static class PreferencesStore
 {
     // Checks point this at a temporary file so they never touch the user's preferences.

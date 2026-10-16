@@ -6,6 +6,7 @@ ChecklistChecks.Run();
 LocalizationChecks.Run();
 await ConnectionChecks.Run();
 DesktopChecks.Run();
+SetupChecks.Run();
 RealtimeChecks.Run();
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var auth = JsonSerializer.Deserialize<AuthResponse>("""{"token":"sample","record":{"id":"discord-user","displayName":"Player"}}""", options)!;

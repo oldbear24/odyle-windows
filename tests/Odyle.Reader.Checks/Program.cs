@@ -107,6 +107,26 @@ static class ReaderChecks
                 Field("staged").SetValue(window, null);
                 server.Refusal = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); await (Task)Call(window, "PublishLatestAsync")!;
                 Check(server.Reports == 2 && !(bool)Field("adapterOutdated").GetValue(window)! && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
+                // The first live reading offers to start with Windows (answered below, with Start with Windows).
+                Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Visible, "the first live reading offers to start with Windows");
+                // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
+                // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
+                server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
+                await (Task)Call(window, "PublishLatestAsync")!; await Task.Delay(100);
+                Check((bool)Field("readerPaused").GetValue(window)! && Field("capture").GetValue(window) is null && Control<TextBlock>(window, "PacketStateLabel").Text == "Paused by the server's operators · the capture is off until they resume it." && Control<TextBlock>(window, "StateText").Text == "Paused" && !Control<Button>(window, "ReportButton").IsEnabled, "a reading refused for the pause stops the capture");
+                Check(Control<TextBlock>(window, "ReadingLabel").Text == "Paused by the server · reading resumes by itself when the operators allow it again.", "the card says the server paused reading");
+                Call(window, "ShowAnnouncement", new Announcement("Readers are off while we check the new game patch.", "warning")); Call(window, "RenderHero");
+                Check(Control<TextBlock>(window, "ReadingLabel").Text == "Paused by the server · Readers are off while we check the new game patch." && Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "the operators' announcement moves into the card");
+                await (Task)Call(window, "StartReaderAsync")!;
+                Check(Field("capture").GetValue(window) is null && Control<TextBlock>(window, "StateText").Text == "Paused", "nothing starts while readers are paused");
+                // The heartbeat says the pause is over: the reader starts again by itself (here it finds no Npcap and says so).
+                server.Paused = false; Npcap.Probe = () => false; Field("sessionId").SetValue(window, "s"); Field("needsReconnect").SetValue(window, false);
+                Field("tokenRenewedAt").SetValue(window, DateTimeOffset.UtcNow); Field("lastTick").SetValue(window, DateTimeOffset.UtcNow);
+                await (Task)Call(window, "PulseAsync")!; await Task.Delay(100);
+                var npcapTimer = (DispatcherTimer)Field("npcapTimer").GetValue(window)!;
+                Check(!(bool)Field("readerPaused").GetValue(window)! && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is not installed · Odyle needs it to read the game." && Control<Button>(window, "NpcapLink").Visibility == Visibility.Visible && npcapTimer.IsEnabled, "once the pause is over the reader starts again by itself");
+                Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "StateText").Text != "Paused" && Control<Button>(window, "ReportButton").IsEnabled, "the announcement returns above the card");
+                npcapTimer.Stop(); Npcap.Probe = Npcap.Installed; Call(window, "ShowAnnouncement", new object[] { null! }); Field("readerWanted").SetValue(window, false);
                 Call(window, "ResetAttribution"); Field("latest").SetValue(window, null); Field("activeCharacterId").SetValue(window, ""); Field("publishedTotal").SetValue(window, -1);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 // The party list shows other members' live and stale characters, never your own or offline ones.
@@ -193,6 +213,12 @@ static class ReaderChecks
                 language.SelectedValue = "cs";
                 Check(PreferencesStore.Load().Language == "cs" && ((FrameworkElement)settings.FindName("LanguageRestartPanel")).Visibility == Visibility.Visible && Localizer.Language == "en", "choosing Czech is remembered and offers a restart");
                 language.SelectedValue = Localizer.Automatic; Check(PreferencesStore.Load().Language == Localizer.Automatic, "automatic can be chosen again");
+                // The offer after the first live reading waits for one answer; declining is remembered on this PC.
+                Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Visible && !PreferencesStore.Load().AutostartOffered, "the offer waits for an answer");
+                Call(window, "DeclineAutostart_Click", window, new RoutedEventArgs());
+                Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Collapsed && PreferencesStore.Load().AutostartOffered && runKey.Values.Count == 0, "declining the offer is remembered and writes nothing");
+                Call(window, "OfferAutostart");
+                Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Collapsed, "an answered offer does not come back");
                 // Start with Windows: "<Odyle.exe>" --tray in the Run key, removed again when switched off.
                 Call(window, "SetAutostart", true);
                 Check(runKey.Values.Single() is { Key: "Odyle", Value: "\"C:\\Odyle\\Odyle.exe\" --tray" } && ((CheckBox)settings.FindName("AutostartToggle")).IsChecked == true && Autostart.Enabled, "Start with Windows writes the Run entry for a start in the tray");
@@ -202,10 +228,48 @@ static class ReaderChecks
                 Check(runKey.Values["Odyle"] == "\"C:\\Odyle\\Odyle.exe\" --tray", "an entry for an executable that is gone starts this one");
                 runKey.Values["Odyle"] = StartupCommand.For(Environment.ProcessPath!); Autostart.Repair();
                 Check(runKey.Values["Odyle"] == StartupCommand.For(Environment.ProcessPath!), "an entry for another existing Odyle is left alone"); runKey.Values.Clear();
+                Field("preferences").SetValue(window, (Preferences)Field("preferences").GetValue(window)! with { AutostartOffered = false }); Call(window, "OfferAutostart");
+                Call(window, "AcceptAutostart_Click", window, new RoutedEventArgs());
+                Check(runKey.Values.Single() is { Key: "Odyle", Value: "\"C:\\Odyle\\Odyle.exe\" --tray" } && PreferencesStore.Load().AutostartOffered && Control<Border>(window, "AutostartOffer").Visibility == Visibility.Collapsed, "accepting the offer starts Odyle with Windows");
+                runKey.Values.Clear();
                 // Npcap is checked whenever settings open.
                 Npcap.Probe = () => false; Call(window, "RenderNpcap");
                 Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap not found · install it to read the game" && ((Button)settings.FindName("NpcapButton")).Visibility == Visibility.Visible, "a missing Npcap is pointed out with its download");
                 Npcap.Probe = () => true; Call(window, "RenderNpcap"); Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap installed", "an installed Npcap is confirmed");
+                // Npcap restricted to administrators is explained in settings and on the reader line.
+                Npcap.Restricted = () => true; Call(window, "RenderNpcap");
+                Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap installed · only administrators may capture", "settings say Npcap only lets administrators capture");
+                Call(window, "ShowNpcapProblem", new InvalidOperationException("No Npcap capture interfaces available."));
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap lets only administrators capture · reinstall it without “Restrict Npcap driver's access to Administrators only”." && Control<Button>(window, "NpcapLink") is { Visibility: Visibility.Visible, Content: "Npcap setup ↗" }, "a reader that finds no interface explains the administrators-only option");
+                Npcap.Restricted = () => false;
+                // Without Npcap the reader line links to its download and Npcap is looked for every 10 seconds;
+                // once it is there an unpaired app only clears the line (a paired one starts the reader).
+                var paired = Field("api").GetValue(window); Field("api").SetValue(window, null);
+                Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is not installed · Odyle needs it to read the game." && Control<Button>(window, "NpcapLink") is { Visibility: Visibility.Visible, Content: "Install Npcap ↗" } && npcapTimer.IsEnabled, "a missing Npcap shows in the reader row with its download");
+                await (Task)Call(window, "NpcapTickAsync")!;
+                Check(npcapTimer.IsEnabled && Control<Button>(window, "NpcapLink").Visibility == Visibility.Visible, "a missing Npcap is looked for again");
+                Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
+                Check(!npcapTimer.IsEnabled && Control<Button>(window, "NpcapLink").Visibility == Visibility.Collapsed && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is installed · pair Odyle in settings to read the game.", "an installed Npcap clears the line");
+                // Copy diagnostics: version, Npcap, interfaces, the reader's last states and the end of the log,
+                // with the account and this PC's name masked (built here without touching the clipboard).
+                Log.Info("Connected to http://127.0.0.1:8090 as account abcdefghij12345 on device \"DESKTOP-CHECK\".");
+                var diagnostics = (string)Call(window, "DiagnosticsReport")!;
+                Check(diagnostics.StartsWith("Odyle diagnostics · ") && diagnostics.Contains("Npcap: installed") && diagnostics.Contains("Capture interfaces: ") && diagnostics.Contains("Account: not paired") && diagnostics.Contains("Problem · Npcap is not installed"), "diagnostics list the version, Npcap and the reader's last states");
+                Check(diagnostics.Contains("account [account] on device \"[this PC]\"") && !diagnostics.Contains("abcdefghij12345") && !diagnostics.Contains("DESKTOP-CHECK") && !diagnostics.Contains("device-key"), "diagnostics mask the account and this PC's name");
+                Field("api").SetValue(window, paired);
+                // --unpair (the uninstaller): a running Odyle is asked to quit and waited for, then the pairing is
+                // forgotten on this PC also when the server cannot be reached. A made-up user keeps the real Odyle out of it.
+                var someone = "odyle-check-" + Guid.NewGuid().ToString("N");
+                using (var asked = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + someone))
+                using (var ready = new ManualResetEventSlim())
+                {
+                    var running = new Thread(() => { using var owned = new Mutex(true, "Local\\Odyle-" + someone); ready.Set(); asked.WaitOne(TimeSpan.FromSeconds(30)); owned.ReleaseMutex(); });
+                    running.Start(); ready.Wait();
+                    SessionStore.Save(new SavedSession("http://127.0.0.1:1", "token", "device-key"));
+                    typeof(App).GetMethod("Unpair", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [someone]);
+                    Check(running.Join(TimeSpan.FromSeconds(5)) && !File.Exists(SessionStore.FilePath) && File.ReadAllText(Log.FilePath).Contains("The server could not be told to forget this PC"), "--unpair asks a running Odyle to quit, then forgets the pairing on this PC");
+                }
                 // The window reopens where it was, while that is on a connected screen.
                 var kept = Field("preferences").GetValue(window)!;
                 var area = System.Windows.SystemParameters.WorkArea;
@@ -340,7 +404,7 @@ static class ReaderChecks
                     Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
-                Console.WriteLine("Windows UI compact window, separate settings, reading card, party list and narrow layout passed.");
+                Console.WriteLine("Windows UI compact window, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
@@ -446,8 +510,16 @@ static class ReaderChecks
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
         Call(window, "ShowAnnouncement", new Announcement("Server maintenance on Thursday 10:00–11:00 UTC. Readings pause meanwhile.", "warning"));
         Snapshot(window, Path.Combine(directory, "announcement-preview.png"));
-        Call(window, "ShowAnnouncement", new object[] { null! });
-        Field("capture").SetValue(window, null);
+        // The operators pause packet readers: the announcement moves into the card.
+        Field("capture").SetValue(window, null); Field("readerPaused").SetValue(window, true);
+        Call(window, "ShowAnnouncement", new Announcement("Readers are off while we check today's game patch.", "warning")); Call(window, "ShowPaused");
+        Snapshot(window, Path.Combine(directory, "paused-preview.png"));
+        Field("readerPaused").SetValue(window, false); Call(window, "ShowAnnouncement", new object[] { null! });
+        // Npcap missing: the reader line links to its download; after the first live reading, the Start with Windows offer.
+        var probe = Npcap.Probe; Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! }); Npcap.Probe = probe; Call(window, "RenderReaderButton");
+        ((System.Windows.Threading.DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Control<Border>(window, "AutostartOffer").Visibility = Visibility.Visible; Call(window, "RenderHero");
+        Snapshot(window, Path.Combine(directory, "setup-preview.png"));
+        Control<Border>(window, "AutostartOffer").Visibility = Visibility.Collapsed; Call(window, "RenderReaderButton");
         Console.WriteLine("Rendered previews to " + directory);
     }
     static void Snapshot(Window window, string path, int width = 280)
@@ -481,22 +553,27 @@ static class ReaderChecks
             new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
     }
     // Answers like the backend for the offline checks: the character the game names, the account's
-    // characters and rooms, and readings, refused for their adapter while Refusal is set.
+    // characters and rooms, and readings, refused for their adapter while Refusal is set. Paused is
+    // the operators' reader pause: the rooms and heartbeat answers carry it, and readings answer 503.
     sealed class FakeServer : HttpMessageHandler
     {
         public int Reports;
         public string? Refusal = PartyApi.AdapterRefused;
+        public bool? Paused;
         const string Saved = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
         const string Read = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":15,"confirmed":true,"valid":true,"lastReadingAt":"2026-10-15 12:00:00.000Z"}""";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var route = request.RequestUri!.AbsolutePath;
             if (route == "/api/odyle/report") Reports++;
+            var pause = Paused is { } paused ? $$""","readerPaused":{{(paused ? "true" : "false")}}""" : "";
             var (status, body) = route switch
             {
                 "/api/odyle/character" => (HttpStatusCode.OK, $$"""{"character":{{Saved}}}"""),
                 "/api/collections/characters/records" => (HttpStatusCode.OK, $$"""{"items":[{{Saved}}]}"""),
-                "/api/odyle/rooms" => (HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":null}"""),
+                "/api/odyle/rooms" => (HttpStatusCode.OK, $$"""{"rooms":[],"odylePerCube":40,"announcement":null{{pause}}}"""),
+                "/api/odyle/heartbeat" => (HttpStatusCode.OK, $$"""{"serverNow":"2026-10-15 20:00:00.000Z"{{pause}}}"""),
+                "/api/odyle/report" when Paused == true => (HttpStatusCode.ServiceUnavailable, System.Text.Json.JsonSerializer.Serialize(new { message = PartyApi.ReadersPaused, data = new { } })),
                 "/api/odyle/report" when Refusal is { } message => (HttpStatusCode.BadRequest, System.Text.Json.JsonSerializer.Serialize(new { message, data = new { } })),
                 "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{Read}}}"""),
                 _ => (HttpStatusCode.OK, "{}"),

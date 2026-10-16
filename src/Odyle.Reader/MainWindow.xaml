@@ -46,14 +46,28 @@
     </Border>
 
     <!-- Packet reader: status line with a compact start/stop toggle -->
-    <!-- Packet counts sit in the status tooltip while the reader runs -->
+    <!-- Packet counts sit in the status tooltip while the reader runs; without a working Npcap the line links to its download -->
     <DockPanel Margin="0,7,0,0">
      <Button x:Name="ReportButton" DockPanel.Dock="Right" Content="Connect" Click="Reader_Click" Margin="8,0,0,0" MinHeight="22" Padding="10,2" FontSize="11" VerticalAlignment="Center" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
-     <DockPanel x:Name="ReaderRow" Background="Transparent" ToolTipService.IsEnabled="False" VerticalAlignment="Center">
-      <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
-      <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
-     </DockPanel>
+     <StackPanel VerticalAlignment="Center">
+      <DockPanel x:Name="ReaderRow" Background="Transparent" ToolTipService.IsEnabled="False">
+       <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
+       <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+      </DockPanel>
+      <Button x:Name="NpcapLink" Style="{StaticResource Ghost}" Content="Install Npcap ↗" Visibility="Collapsed" Click="NpcapLink_Click" HorizontalAlignment="Left" Margin="10,1,0,0" Padding="4,1" FontSize="10.5" Foreground="{StaticResource Mint}" ToolTip="Opens npcap.com · Odyle starts reading by itself once Npcap is installed"/>
+     </StackPanel>
     </DockPanel>
+
+    <!-- After the first live reading, once per PC: an offer to start with Windows (remembered in preferences.json) -->
+    <Border x:Name="AutostartOffer" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,6,6,6" Margin="0,7,0,0">
+     <StackPanel>
+      <TextBlock Text="Start Odyle with Windows? It waits in the tray, so the reader runs before you log into the game." TextWrapping="Wrap" FontSize="11"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,5,0,0">
+       <Button Style="{StaticResource Ghost}" Content="No thanks" Click="DeclineAutostart_Click" VerticalAlignment="Center" Margin="0,0,4,0"/>
+       <Button Style="{StaticResource Secondary}" Content="Start with Windows" Click="AcceptAutostart_Click" MinHeight="22" Padding="10,2" FontSize="11" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
+      </StackPanel>
+     </StackPanel>
+    </Border>
 
     <!-- Party: other members' characters that are online in your rooms, one header per room -->
     <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">

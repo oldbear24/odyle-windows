@@ -15,9 +15,10 @@ public partial class App : System.Windows.Application
     // the single-instance guard and create their own window.
     public static bool Headless { get; set; }
     private Mutex? instance;
-    // A second start signals the running one to bring its window forward, then ends.
-    private EventWaitHandle? showSignal;
-    private RegisteredWaitHandle? showWait;
+    // A second start signals the running one to bring its window forward, then ends; a start
+    // with --unpair signals it to quit.
+    private EventWaitHandle? showSignal, quitSignal;
+    private RegisteredWaitHandle? showWait, quitWait;
     private bool primary;
     private DateTimeOffset failuresSince, lastNotice = DateTimeOffset.MinValue;
     private int failures;
@@ -36,6 +37,7 @@ public partial class App : System.Windows.Application
         TaskScheduler.UnobservedTaskException += (_, args) => { Log.Error("Unobserved task exception", args.Exception); args.SetObserved(); };
         // --tray (Start with Windows) opens only the tray icon.
         var tray = StartupCommand.InTray(e.Args); var user = WindowsIdentity.GetCurrent().User!.Value;
+        if (StartupCommand.Unpairs(e.Args)) { Unpair(user); Shutdown(); return; }
         instance = new Mutex(true, "Local\\Odyle-" + user, out primary);
         // Already running: a start by hand brings that window forward; a start with Windows just ends.
         if (!primary) { if (!tray) ShowRunning(user); Shutdown(); return; }
@@ -47,8 +49,39 @@ public partial class App : System.Windows.Application
         var window = new MainWindow(); MainWindow = window;
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
+        quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + user);
+        quitWait = ThreadPool.RegisterWaitForSingleObject(quitSignal, (_, _) => window.Dispatcher.BeginInvoke(window.QuitOnRequest), null, Timeout.Infinite, executeOnlyOnce: true);
         if (!tray) window.Show();
         _ = window.StartAsync(tray);
+    }
+    // "Odyle.exe --unpair", run by the uninstaller when asked to disconnect this PC: a running Odyle
+    // quits first (it marks its reading stale and lets the uninstaller remove its files), then the
+    // device key is forgotten on the server and the saved pairing on this PC. Nothing is shown, and
+    // a running Odyle is not brought forward. Offline, only this PC forgets the pairing; the PC can
+    // still be removed on the dashboard.
+    private static void Unpair(string user)
+    {
+        Log.Info("Disconnecting this PC from its account (--unpair).");
+        if (EventWaitHandle.TryOpenExisting("Local\\Odyle-Quit-" + user, out var quit))
+        {
+            using (quit) quit.Set();
+            using var running = new Mutex(false, "Local\\Odyle-" + user);
+            try { if (running.WaitOne(TimeSpan.FromSeconds(15))) running.ReleaseMutex(); else Log.Warn("The running Odyle did not quit within 15 seconds."); }
+            catch (AbandonedMutexException) { running.ReleaseMutex(); }
+        }
+        var saved = SessionStore.Load(out _);
+        if (saved is null) { Log.Info("No pairing is saved on this PC."); return; }
+        try
+        {
+            using var api = new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey);
+            Task.Run(api.UnpairAsync).GetAwaiter().GetResult();
+            Log.Info(saved.DeviceKey is null ? "The pairing had no device key; it is forgotten on this PC." : "The server forgot this PC's device key.");
+        }
+        catch (Exception error) when (error is System.Net.Http.HttpRequestException or TaskCanceledException or ArgumentException)
+        {
+            Log.Warn("The server could not be told to forget this PC: " + error.Message);
+        }
+        SessionStore.Clear();
     }
     // Builds before the global-reference-v2 decoder kept stat owner ids in stat-owners.json. Odyle
     // is now read by its resource id, so the file is no longer used and is removed.
@@ -97,6 +130,10 @@ public partial class App : System.Windows.Application
         try { Updater.Relaunch(tray); } catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException) { Updater.LastFailure = error.Message; Log.Error("Odyle could not start again", error); }
         Shutdown();
     }
-    private void Release() { showWait?.Unregister(null); showWait = null; showSignal?.Dispose(); showSignal = null; instance?.Dispose(); instance = null; }
+    private void Release()
+    {
+        showWait?.Unregister(null); showWait = null; showSignal?.Dispose(); showSignal = null;
+        quitWait?.Unregister(null); quitWait = null; quitSignal?.Dispose(); quitSignal = null; instance?.Dispose(); instance = null;
+    }
     protected override void OnExit(ExitEventArgs e) { if (primary) Log.Info("Odyle stops."); Release(); base.OnExit(e); }
 }
