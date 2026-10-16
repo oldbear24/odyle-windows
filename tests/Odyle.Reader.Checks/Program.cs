@@ -355,9 +355,26 @@ static class ReaderChecks
                 Check(Notice() is null && PreferencesStore.Load().RemindedRuns is [var reminded] && reminded.StartsWith("run1|"), "a run is announced once, also across restarts, and runs others joined are not");
                 Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(3))) }); Call(window, "CheckReminders");
                 Check(Notice() is { Title: "Fire Temple starts in 13 minutes" }, "a run moved to another time is announced again");
-                ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(1))) }); ((CheckBox)settings.FindName("RemindersToggle")).IsChecked = false;
-                Field("preferences").SetValue(window, PreferencesStore.Load() with { RemindRuns = false }); Call(window, "CheckReminders");
-                Check(Notice() is null, "reminders can be switched off");
+                // The account's notification settings (the dashboard's Account & data): no tray reminders, quiet hours.
+                ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(1))) });
+                Field("notifications").SetValue(window, NotificationSettings.Default with { Channels = new(Tray: false) }); Call(window, "CheckReminders");
+                Check(Notice() is null, "reminders can be switched off for the tray on the dashboard");
+                string Hhmm(DateTimeOffset at) => at.UtcDateTime.ToString("HH:mm");
+                Field("notifications").SetValue(window, NotificationSettings.Default with { Quiet = new(Hhmm(DateTimeOffset.UtcNow.AddMinutes(-30)), Hhmm(DateTimeOffset.UtcNow.AddMinutes(30)), "UTC") }); Call(window, "CheckReminders");
+                Check(Notice() is null && PreferencesStore.Load().RemindedRuns!.Contains(Reminders.Key(new PlannedRun("run1", "Fire Temple", RunAt(soon.AddMinutes(1)), "", "u", []), 15)), "quiet hours show no reminder, and it does not come later");
+                ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(2))) }); Field("notifications").SetValue(window, NotificationSettings.Default with { LeadMinutes = [5] }); Call(window, "CheckReminders");
+                Check(Notice() is null, "a run beyond the account's reminder times waits");
+                // The settings move to the dashboard: Settings links there, and an old local "off" moves to the account once.
+                Check(settings.FindName("RemindersToggle") is null && settings.FindName("NotificationsButton") is Button, "settings link to the dashboard's notification settings");
+                var moving = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, moving));
+                Field("preferences").SetValue(window, PreferencesStore.Load() with { RemindRuns = false, RemindRunsMoved = false });
+                await (Task)Call(window, "FollowNotificationsAsync", NotificationSettings.Default)!;
+                Check(moving.LastNotifications.Contains("\"tray\":false") && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false, Saved: true } && PreferencesStore.Load().RemindRunsMoved, "an old local switch-off moves to the account");
+                moving.LastNotifications = ""; await (Task)Call(window, "FollowNotificationsAsync", NotificationSettings.Default)!;
+                Check(moving.LastNotifications == "" && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: true }, "once: from then on the account's settings count");
+                await (Task)Call(window, "FollowNotificationsAsync", new object[] { null! })!;
+                Check(Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false }, "a backend without them keeps the local choice");
+                Field("notifications").SetValue(window, NotificationSettings.Default);
                 Field("preferences").SetValue(window, PreferencesStore.Load()); Field("accountId").SetValue(window, ""); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>());
                 Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");
                 if (args.Length == 2)
@@ -613,6 +630,7 @@ static class ReaderChecks
     {
         public int Reports;
         public string LastReport = "";
+        public string LastNotifications = "";
         public string? Refusal = PartyApi.AdapterRefused;
         public bool? Paused;
         const string Saved = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
@@ -621,6 +639,7 @@ static class ReaderChecks
         {
             var route = request.RequestUri!.AbsolutePath;
             if (route == "/api/odyle/report") { Reports++; LastReport = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult(); }
+            if (route == "/api/odyle/notifications") LastNotifications = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult();
             var pause = Paused is { } paused ? $$""","readerPaused":{{(paused ? "true" : "false")}}""" : "";
             var (status, body) = route switch
             {
@@ -631,6 +650,7 @@ static class ReaderChecks
                 "/api/odyle/report" when Paused == true => (HttpStatusCode.ServiceUnavailable, System.Text.Json.JsonSerializer.Serialize(new { message = PartyApi.ReadersPaused, data = new { } })),
                 "/api/odyle/report" when Refusal is { } message => (HttpStatusCode.BadRequest, System.Text.Json.JsonSerializer.Serialize(new { message, data = new { } })),
                 "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{Read}}}"""),
+                "/api/odyle/notifications" => (HttpStatusCode.OK, "{\"notifications\":" + LastNotifications[..LastNotifications.LastIndexOf('}')] + ",\"saved\":true}}"),
                 _ => (HttpStatusCode.OK, "{}"),
             };
             return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });

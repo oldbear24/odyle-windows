@@ -86,7 +86,7 @@ A snapshot's `runs` list the room's planned runs until three hours after they st
 [{ "id": "run-id", "dungeon": "Fire Temple", "startsAt": "2026-10-14 19:00:00.000Z", "note": "Bring potions", "planner": "user-id-1", "attendees": ["user-id-1", "user-id-2"] }]
 ```
 
-`planner` and `attendees` are account ids. For each run whose `attendees` contain the signed-in account, the app shows one notification 15 minutes before `startsAt` (dungeon, room name, local start time, note), once per run id and start time, so a re-timed run is announced again (`Odyle.Core.Reminders`). Newer backends also offer `GET /api/odyle/upcoming`; the app reads the snapshots instead, which every backend version provides.
+`planner` and `attendees` are account ids. For each run whose `attendees` contain the signed-in account, the app shows a notification at the account's reminder times before `startsAt` (dungeon, room name, local start time, note), once per run id, start time and reminder time, so a re-timed run is announced again (`Odyle.Core.Reminders`). The reminder times, the tray switch and the quiet hours come from `notifications` in `GET /api/odyle/rooms` (`{ channels: { tray, browser, push }, leadMinutes, kinds: { runs, cap }, quiet: { from, to, timeZone }, saved }`) and from `{ notifications }` news on the account's topic; without them (older backends) the app reminds 15 minutes ahead unless its old local switch is off. `POST /api/odyle/notifications` saves them as a whole; the app calls it once, to move that switch. Newer backends also offer `GET /api/odyle/upcoming`; the app reads the snapshots instead, which every backend version provides.
 
 ## Daily and weekly tasks
 

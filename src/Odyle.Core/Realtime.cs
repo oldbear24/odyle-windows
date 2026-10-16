@@ -10,11 +10,13 @@ namespace Odyle.Core;
 // (character id → lastSeenAt) and Removed that the account left the room. News for everyone
 // comes on the account's topic too: Release is the version of a newer Windows release, and
 // AnnouncementChanged says the announcement changed to Announcement (null when cleared).
+// Notifications are the account's notification settings, saved meanwhile on the dashboard.
 public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Characters, IReadOnlyDictionary<string, string> Seen)
 {
     public Version? Release { get; init; }
     public bool AnnouncementChanged { get; init; }
     public Announcement? Announcement { get; init; }
+    public NotificationSettings? Notifications { get; init; }
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     // A message the app cannot read means "fetch again".
     public static RealtimeNews Parse(JsonElement data)
@@ -38,7 +40,10 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
             try { announcement = message.Deserialize<Announcement>(Json); } catch (JsonException) { changed = false; }
             if (announcement is not { Text.Length: > 0 }) announcement = null;
         }
-        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, AnnouncementChanged = changed, Announcement = announcement };
+        NotificationSettings? notifications = null;
+        if (data.TryGetProperty("notifications", out var settings) && settings.ValueKind == JsonValueKind.Object)
+            try { notifications = settings.Deserialize<NotificationSettings>(Json); } catch (JsonException) { }
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications };
     }
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's

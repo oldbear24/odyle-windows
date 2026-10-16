@@ -21,6 +21,8 @@ static class RealtimeChecks
         var seen = RealtimeNews.Parse(Json("""{"seen":{"c":"2026-10-12T12:00:10.000Z","x":5}}"""));
         Check(seen is { Refresh: false } && seen.Seen.Count == 1 && seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");
+        var saved = RealtimeNews.Parse(Json("""{"notifications":{"channels":{"tray":true,"browser":false,"push":false},"leadMinutes":[30],"kinds":{"runs":false,"cap":true},"quiet":{"from":"23:00","to":"06:00","timeZone":"Europe/Prague"},"saved":true}}"""));
+        Check(saved is { Refresh: false, Notifications: { RunsInTray: false, Saved: true } } && saved.Notifications.Leads.SequenceEqual([30]) && saved.Notifications.Quiet!.From == "23:00", "notification settings saved on the dashboard");
         // News for everyone on the account's topic: a new release and a changed announcement.
         var release = RealtimeNews.Parse(Json("""{"release":{"version":"0.6.0.16","publishedAt":"2026-10-16T15:19:32Z","url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.6.0.16"}}"""));
         Check(release is { Refresh: false, AnnouncementChanged: false } && release.Release == new Version(0, 6, 0, 16), "a new release names its version and fetches nothing");
