@@ -22,11 +22,14 @@ public sealed record Announcement(string Text, string Level = "info")
 // as they leave out Clock, the Odyle clock's rules (OdyleClock.cs).
 public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null);
 public sealed record NotificationsResponse(NotificationSettings Notifications);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null, int? AnsweredCap = null)
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null, int? AnsweredCap = null, int Level = 0, string? ClassName = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string Location => $"{Server} · {RegionLabel}";
+    // Class and level as PLAYNC's official search lists them (the dashboard's daily lookup, #25):
+    // "Chanter · Lv 45", either alone, or "" until the character was found. Never typed in (R1).
+    public string ClassLine => string.Join(" · ", new[] { ClassName ?? "", Level > 0 ? Localizer.T("Lv {0}", Level) : "" }.Where(part => part.Length > 0));
 }
 // The game's two numbers of a character's last reading: its natural pool and what items added
 // (null when that reading did not send them, or the backend is older). RegenTick and NaturalMax

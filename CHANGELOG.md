@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.12.0 · 2026-10-16
+
+### New
+- The party list shows each mate's class and level as PLAYNC lists them, such as **Chanter · Lv 45**, once the dashboard has found the character.
+
 ## 0.11.0 · 2026-10-16
 
 ### New
