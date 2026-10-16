@@ -1,0 +1,58 @@
+{
+  "about": "Party readiness cases for src/readiness.js (tests/readiness.test.cjs) and its future Go and C# ports. Times are relative to now; an entry without characterName is a member with no character in the room.",
+  "now": "2026-10-15T12:00:00.000Z",
+  "parties": [
+    {
+      "name": "each player brings their best live character and the lowest player sets the cubes",
+      "cost": 40,
+      "entries": [
+        { "id": "a1", "user": "A", "role": "owner", "characterName": "Ayla", "value": 265, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:58.000Z", "lastReadingAt": "2026-10-15 11:30:00.000Z" },
+        { "id": "a2", "user": "A", "role": "owner", "characterName": "AylaAlt", "value": 80, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15T11:59:50.000Z", "lastReadingAt": "2026-10-15T11:59:50.000Z" },
+        { "id": "b1", "user": "B", "role": "reporter", "characterName": "Bram", "value": 180, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:31.000Z", "lastReadingAt": "2026-10-15 10:00:00.000Z" },
+        { "id": "c1", "user": "C", "role": "reporter", "characterName": "Cass", "value": 35, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 11:59:59.000Z" },
+        { "id": "", "user": "D", "role": "reporter", "characterName": "", "value": 0, "confirmed": false, "sharing": false, "lastSeenAt": "", "lastReadingAt": "" },
+        { "id": "e1", "user": "E", "role": "reporter", "characterName": "Esk", "value": 500, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:00.000Z", "lastReadingAt": "2026-10-15 11:58:00.000Z" },
+        { "id": "", "user": "V", "role": "viewer", "characterName": "", "value": 0, "confirmed": false, "sharing": false, "lastSeenAt": "", "lastReadingAt": "" }
+      ],
+      "expect": { "characters": ["a1", "a2", "b1", "c1", "e1"], "live": ["a1", "a2", "b1", "c1"], "ready": ["a1", "a2", "b1"], "players": ["a1", "b1", "c1"], "lowest": "c1", "cubes": 0, "uncounted": ["D", "E"] }
+    },
+    {
+      "name": "without a live character nobody counts and the party does no cubes",
+      "cost": 40,
+      "entries": [
+        { "id": "a1", "user": "A", "role": "owner", "characterName": "Gone", "value": 300, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:58:00.000Z", "lastReadingAt": "2026-10-15 11:00:00.000Z" },
+        { "id": "b1", "user": "B", "role": "reporter", "characterName": "Unread", "value": 0, "confirmed": false, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "" },
+        { "id": "c1", "user": "C", "role": "reporter", "characterName": "Hidden", "value": 200, "confirmed": true, "valid": true, "source": "packet", "sharing": false, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 11:59:59.000Z" }
+      ],
+      "expect": { "characters": ["a1", "b1", "c1"], "live": [], "ready": [], "players": [], "lowest": null, "cubes": 0, "uncounted": ["A", "B", "C"] }
+    },
+    {
+      "name": "ties go to the character and the player listed first",
+      "cost": 40,
+      "entries": [
+        { "id": "a1", "user": "A", "role": "reporter", "characterName": "First", "value": 120, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:50.000Z", "lastReadingAt": "2026-10-15 11:00:00.000Z" },
+        { "id": "a2", "user": "A", "role": "reporter", "characterName": "Second", "value": 120, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:50.000Z", "lastReadingAt": "2026-10-15 11:00:00.000Z" },
+        { "id": "b1", "user": "B", "role": "owner", "characterName": "Third", "value": 120, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:50.000Z", "lastReadingAt": "2026-10-15 11:00:00.000Z" }
+      ],
+      "expect": { "characters": ["a1", "a2", "b1"], "live": ["a1", "a2", "b1"], "ready": ["a1", "a2", "b1"], "players": ["a1", "b1"], "lowest": "a1", "cubes": 3, "uncounted": [] }
+    },
+    {
+      "name": "invalidated and legacy manual values are stale, a confirmed zero is live but not ready",
+      "cost": 50,
+      "entries": [
+        { "id": "a1", "user": "A", "role": "reporter", "characterName": "Invalid", "value": 400, "confirmed": true, "valid": false, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 11:59:59.000Z" },
+        { "id": "a2", "user": "A", "role": "reporter", "characterName": "Zero", "value": 0, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 11:59:59.000Z" },
+        { "id": "b1", "user": "B", "role": "reporter", "characterName": "Typed", "value": 900, "confirmed": true, "valid": true, "source": "manual", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 11:59:59.000Z" },
+        { "id": "c1", "user": "C", "role": "reporter", "characterName": "Full", "value": 149, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:20.000Z", "lastReadingAt": "2026-10-15 09:00:00.000Z" }
+      ],
+      "expect": { "characters": ["a1", "a2", "b1", "c1"], "live": ["a2", "c1"], "ready": ["c1"], "players": ["a2", "c1"], "lowest": "a2", "cubes": 0, "uncounted": ["B"] }
+    }
+  ],
+  "characters": [
+    { "name": "live with enough for two cubes", "cost": 40, "character": { "value": 85, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 08:00:00.000Z" }, "expect": { "state": "live", "known": true, "cubes": 2, "ready": true } },
+    { "name": "live below one cube", "cost": 40, "character": { "value": 39, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "2026-10-15 08:00:00.000Z" }, "expect": { "state": "live", "known": true, "cubes": 0, "ready": false } },
+    { "name": "stale keeps its saved cubes", "cost": 40, "character": { "value": 85, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:10.000Z", "lastReadingAt": "2026-10-15 08:00:00.000Z" }, "expect": { "state": "stale", "known": true, "cubes": 2, "ready": false } },
+    { "name": "offline keeps its saved cubes", "cost": 40, "character": { "value": 300, "confirmed": true, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:50:00.000Z", "lastReadingAt": "2026-10-15 08:00:00.000Z" }, "expect": { "state": "offline", "known": true, "cubes": 7, "ready": false } },
+    { "name": "never read is unknown, not zero", "cost": 40, "character": { "value": 0, "confirmed": false, "valid": true, "source": "packet", "sharing": true, "lastSeenAt": "2026-10-15 11:59:59.000Z", "lastReadingAt": "" }, "expect": { "state": "unknown", "known": false, "cubes": 0, "ready": false } }
+  ]
+}

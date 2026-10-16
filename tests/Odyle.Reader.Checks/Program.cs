@@ -174,7 +174,7 @@ static class ReaderChecks
                 var party = (PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource;
                 Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible && party.Length == 1 && party[0].Name == "Evening", "a connected account sees the party of its rooms");
                 Check(party[0].Mates.Select(m => m.Name).SequenceEqual(new[] { "Lumina", "KaelenAlt" }), "only others' online characters are listed, live first");
-                Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && party[0].Mates[1].Cubes.EndsWith("stale"), "each mate shows Odyle, cubes and staleness");
+                Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && System.Text.RegularExpressions.Regex.IsMatch(party[0].Mates[1].Cubes, @" · stale · seen \d+s ago$"), "each mate shows Odyle, cubes and staleness, with when it was last seen: " + party[0].Mates[1].Cubes);
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
@@ -380,6 +380,23 @@ static class ReaderChecks
                 Check(Notice() is null, "cap alerts stay off until the account turns them on");
                 Field("notifications").SetValue(window, NotificationSettings.Default with { Kinds = new(Cap: true) }); await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
                 Check(Notice() is { Title: "Lumina is losing Odyle", Text: "Its natural pool is full: each tick of 15 is lost until you spend some." }, "a cap alert shows in the tray");
+                // The party line of each room, the next run with Going, and a run of yours that was cancelled.
+                var seenNow = Stamp(DateTimeOffset.UtcNow);
+                Character Member(string id, string user, string name, int value) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, true, Stamp(DateTimeOffset.UtcNow.AddHours(-1)), seenNow, "packet", Shared: true);
+                RoomSnapshot Room(params PlannedRun[] runs) => new(new Room("r1", "Evening", 40, "owner", true), [new RoomMember("m1", "u", "owner", "You", [Member("c1", "u", "Ayla", 130)], true), new RoomMember("m2", "k", "reporter", "Kaelen", [Member("c2", "k", "Kael", 85)], true), new RoomMember("m3", "n", "reporter", "Nyx", [], false)], DateTime.UtcNow.ToString("O"), runs);
+                var planned = new PlannedRun("run9", "Fire Temple", RunAt(DateTimeOffset.UtcNow.AddMinutes(50)), "", "u", ["u", "k"]);
+                var planServer = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, planServer)); Field("accountId").SetValue(window, "u");
+                Field("snapshots").SetValue(window, new[] { Room(planned) }); Call(window, "RenderParty");
+                var partyRooms = (PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource;
+                Check(partyRooms is [{ Summary: "Party · 2 cubes · lowest Kaelen · 1 not live", Mates.Length: 1 }], "a room's party line counts your character with your mates': " + partyRooms.FirstOrDefault()?.Summary);
+                Check(Control<Border>(window, "RunChipBox").Visibility == Visibility.Visible && System.Text.RegularExpressions.Regex.IsMatch(Control<TextBlock>(window, "RunChipLabel").Text, @"^Fire Temple · in (49|50)m · 2 going · Evening$") && (string)Control<Button>(window, "RunGoingButton").Content == "Going ✓", "the next run you go to, with its countdown: " + Control<TextBlock>(window, "RunChipLabel").Text);
+                Call(window, "RunGoing_Click", Control<Button>(window, "RunGoingButton"), new RoutedEventArgs()); await Task.Delay(300);
+                Check(planServer.LastPlan.Contains("\"roomId\":\"r1\"") && planServer.LastPlan.Contains("\"id\":\"run9\"") && planServer.LastPlan.Contains("\"going\":false"), "Going ✓ leaves the run: " + planServer.LastPlan);
+                Field("snapshots").SetValue(window, new[] { Room() }); Call(window, "RenderRunChip");
+                Check(Control<TextBlock>(window, "RunChipNotice") is { Visibility: Visibility.Visible, Text: var cancelled } && cancelled.StartsWith("Fire Temple at ") && cancelled.EndsWith(" was cancelled") && Control<TextBlock>(window, "RunChipLabel").Visibility == Visibility.Collapsed, "a cancelled run of yours says so");
+                Field("chipNoticeUntil").SetValue(window, DateTimeOffset.MinValue); Call(window, "RenderRunChip");
+                Check(Control<Border>(window, "RunChipBox").Visibility == Visibility.Collapsed, "no run, no chip");
+                Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("api").SetValue(window, null);
                 Field("notifications").SetValue(window, NotificationSettings.Default);
                 Field("preferences").SetValue(window, PreferencesStore.Load()); Field("accountId").SetValue(window, ""); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>());
                 Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");
@@ -637,6 +654,7 @@ static class ReaderChecks
         public int Reports;
         public string LastReport = "";
         public string LastNotifications = "";
+        public string LastPlan = "";
         public string? Refusal = PartyApi.AdapterRefused;
         public bool? Paused;
         const string Saved = """{"id":"c9","user":"u","characterName":"Newcomer","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
@@ -646,6 +664,7 @@ static class ReaderChecks
             var route = request.RequestUri!.AbsolutePath;
             if (route == "/api/odyle/report") { Reports++; LastReport = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult(); }
             if (route == "/api/odyle/notifications") LastNotifications = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult();
+            if (route == "/api/odyle/plan") LastPlan = request.Content!.ReadAsStringAsync(token).GetAwaiter().GetResult();
             var pause = Paused is { } paused ? $$""","readerPaused":{{(paused ? "true" : "false")}}""" : "";
             var (status, body) = route switch
             {

@@ -22,7 +22,7 @@ public sealed record Announcement(string Text, string Level = "info")
 // as they leave out Clock, the Odyle clock's rules (OdyleClock.cs).
 public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null);
 public sealed record NotificationsResponse(NotificationSettings Notifications);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null)
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
@@ -35,7 +35,8 @@ public sealed record Character(string Id, string User, string CharacterName, str
 public sealed record OdyleParts(int Base, int Bonus);
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
-public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters);
+// Sharing (the member-wide switch) and each character's Shared say what the room sees (null: older backends).
+public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters, bool? Sharing = null);
 // A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
 public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
@@ -156,6 +157,8 @@ public sealed class PartyApi : IDisposable
     // old local "remind me of planned runs" switch to the account).
     public async Task<NotificationSettings> SaveNotificationsAsync(NotificationSettings settings) =>
         (await PostAsync<NotificationsResponse>("api/odyle/notifications", new { channels = settings.Where, leadMinutes = settings.Leads, kinds = settings.What, capTicks = settings.CapTicks ?? 1, quiet = settings.Quiet ?? new QuietHours() })).Notifications;
+    // Going to a planned run or not: the card's one run action (planning stays on the dashboard).
+    public Task GoingAsync(string roomId, string runId, bool going) => PostAsync<System.Text.Json.JsonElement>("api/odyle/plan", new { roomId, id = runId, going });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
