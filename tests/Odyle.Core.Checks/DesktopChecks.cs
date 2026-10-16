@@ -8,6 +8,9 @@ static class DesktopChecks
         const string exe = @"C:\Users\Player\AppData\Local\Programs\Odyle\Odyle.exe";
         Check(StartupCommand.For(exe) == "\"" + exe + "\" --tray" && StartupCommand.ValueName == "Odyle", "the Run entry starts this executable in the tray");
         Check(StartupCommand.PathOf(StartupCommand.For(exe)) == exe && StartupCommand.PathOf(@"C:\Odyle\Odyle.exe --tray") == @"C:\Odyle\Odyle.exe" && StartupCommand.PathOf("\"broken") is null && StartupCommand.PathOf(" ") is null, "the executable of a Run entry");
+        // --build-info <file>: the publish script asks a package what it is, and releases only one that updates itself.
+        Check(StartupCommand.BuildInfoPath(["--build-info", "build.json"]) == "build.json" && StartupCommand.BuildInfoPath(["--build-info"]) is null && StartupCommand.BuildInfoPath(["--tray"]) is null, "the build-info argument names its file");
+        Check(StartupCommand.BuildInfo(new Version(0, 8, 1, 0), true, false, "win-x64") == """{"version":"0.8.1","release":true,"selfContained":false,"runtime":"win-x64"}""", "a build says its version, whether it updates itself and its package kind");
         Check(StartupCommand.InTray(["--TRAY"]) && !StartupCommand.InTray([]) && !StartupCommand.InTray(["--update-probe"]), "the tray argument");
         Check(StartupCommand.ShowsWindow(tray: false, paired: true) && StartupCommand.ShowsWindow(tray: true, paired: false) && !StartupCommand.ShowsWindow(tray: true, paired: true), "a paired start with Windows stays in the tray");
         // Two screens side by side; the right one is shorter.

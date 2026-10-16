@@ -27,6 +27,13 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         if (Headless) return;
+        // --build-info <file>: what this build is, for the publish script; nothing else starts.
+        if (StartupCommand.BuildInfoPath(e.Args) is { } infoPath)
+        {
+            try { System.IO.File.WriteAllText(infoPath, StartupCommand.BuildInfo(Updater.Current, Updater.Released, Updater.SelfContained, Updater.Runtime)); }
+            finally { Shutdown(); }
+            return;
+        }
         // The language chosen in settings, else the Windows display language; numbers
         // and dates follow it (Localizer.Culture).
         Localizer.Use(PreferencesStore.Load().Language);
