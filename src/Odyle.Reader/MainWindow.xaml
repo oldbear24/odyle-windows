@@ -41,6 +41,8 @@
        <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="26" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,6" VerticalAlignment="Bottom"/></StackPanel>
       </DockPanel>
       <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>
+      <TextBlock x:Name="SplitLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+      <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
       <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
      </StackPanel>
     </Border>

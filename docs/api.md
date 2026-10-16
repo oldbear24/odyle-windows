@@ -57,9 +57,15 @@ Every sign-in answer refreshes the account's display name shown in the app. Acco
   "value": 390,
   "parserVersion": "global-reference-v2",
   "source": "packet",
-  "confirmed": true
+  "confirmed": true,
+  "base": 0,
+  "bonus": 390,
+  "kind": "snapshot",
+  "delta": null
 }
 ```
+
+`base` is the natural pool (it regenerates up to a cap) and `bonus` what items added; they add up to `value`. `kind` says what changed since the reading the app saved before it on this live streak: `snapshot` (the game sent the whole value: login, channel change), `update` (no reading before it), `regen` (the natural pool alone rose: the game's three-hourly tick), `spend` (the total fell) or `item` (anything else that raised it), and `delta` the change of the total (`null` for a snapshot or the first update). All four are optional: backends from before them ignore them, and the total in `value` is what every backend stores.
 
 **Reader pause.** `readerPaused` in the rooms, session and heartbeat answers is the superusers' **Server controls → Pause packet readers** switch (`odyle_settings.readerPaused`). While it is `true` the app stops capturing and closes Npcap, says so on the card and keeps its heartbeat and invalidations; a reading sent meanwhile answers 503 with *Packet readers are paused by the server operators.*, which the app treats the same. The first answer with `false` starts the reader again by itself, unless it was stopped by hand. Backends from before the switch leave the field out, which changes nothing; a new connection without it counts as not paused.
 
@@ -69,7 +75,7 @@ An existing `characterId` must belong to the account and keeps its saved identit
 
 | Method / route | Answer and use |
 | --- | --- |
-| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, announcement, readerPaused, serverNow }`; `announcement` is the server's message `{ text, level }` (`info` or `warning`) or `null`, shown above the card (inside it while readers are paused); `readerPaused` is the reader pause above; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
+| GET `/api/odyle/rooms` | `{ rooms, odylePerCube, announcement, readerPaused, clock, serverNow }`; `clock` is the Odyle clock's rules `{ tickHours, tick, caps, paused }` (the defaults when an older backend leaves it out), and characters carry `parts`, `regenTick` and `naturalMax`, from which the card projects the natural pool; `announcement` is the server's message `{ text, level }` (`info` or `warning`) or `null`, shown above the card (inside it while readers are paused); `readerPaused` is the reader pause above; each room has `id`, `name`, `cost`, `role`, `sharing` and `sharedCharacters` (the character ids this account shares there). Settings summarizes where each character is shared; the card's cube cost is the first sharing room's |
 | GET `/api/odyle/snapshot/{id}` | `{ room, members, wishlist, runs, dungeons, serverNow }`; members have `id`, `user`, `role`, `displayName` and `characters`. The app lists other members' live and stale characters, corrects its clock with `serverNow` and reads `runs` for reminders; it ignores `wishlist` and `dungeons` |
 
 The app reads the rooms and their snapshots when it connects and listens to realtime news (below); it reads them again on news it cannot apply in place, when the realtime connection comes back and every five minutes. Without a realtime connection it reads them every 15 seconds while its window is open and, while run reminders are on (they are by default), every minute while it waits in the tray. Sharing, rooms, invitations, the wishlist and planning are managed on the dashboard.
@@ -80,7 +86,7 @@ A snapshot's `runs` list the room's planned runs until three hours after they st
 [{ "id": "run-id", "dungeon": "Fire Temple", "startsAt": "2026-10-14 19:00:00.000Z", "note": "Bring potions", "planner": "user-id-1", "attendees": ["user-id-1", "user-id-2"] }]
 ```
 
-`planner` and `attendees` are account ids. For each run whose `attendees` contain the signed-in account, the app shows one notification 15 minutes before `startsAt` (dungeon, room name, local start time, note), once per run id and start time, so a re-timed run is announced again (`Odyle.Core.Reminders`). Newer backends also offer `GET /api/odyle/upcoming`; the app reads the snapshots instead, which every backend version provides.
+`planner` and `attendees` are account ids. For each run whose `attendees` contain the signed-in account, the app shows a notification at the account's reminder times before `startsAt` (dungeon, room name, local start time, note), once per run id, start time and reminder time, so a re-timed run is announced again (`Odyle.Core.Reminders`). The reminder times, the tray switch and the quiet hours come from `notifications` in `GET /api/odyle/rooms` (`{ channels: { tray, browser, push }, leadMinutes, kinds: { runs, cap }, quiet: { from, to, timeZone }, saved }`) and from `{ notifications }` news on the account's topic; without them (older backends) the app reminds 15 minutes ahead unless its old local switch is off. `POST /api/odyle/notifications` saves them as a whole; the app calls it once, to move that switch. `{ capAlerts: [{ characterId, characterName, state, base, cap, settled, tick, at? }] }` on the account's topic are the server's cap alerts (`Odyle.Core.CapAlert`): shown in the tray when `channels.tray` and `kinds.cap` are on. Newer backends also offer `GET /api/odyle/upcoming`; the app reads the snapshots instead, which every backend version provides.
 
 ## Daily and weekly tasks
 

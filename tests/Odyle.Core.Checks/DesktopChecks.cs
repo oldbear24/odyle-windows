@@ -22,13 +22,30 @@ static class DesktopChecks
         var at = (string stamp) => Readiness.Parse(stamp)!.Value; var none = new HashSet<string>();
         Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:40:00Z"), none).Select(d => d.Run.Id).SequenceEqual(["c"]), "only joined runs within 15 minutes are due");
         var due = Reminders.Due([snapshot], "u", at("2026-10-14T18:46:00Z"), none);
-        Check(due.Select(d => d.Run.Id).SequenceEqual(["c", "a"]) && due[1] is { Room.Name: "Evening", StartsAt.Hour: 19, Key: "a|2026-10-14 19:00:00.000Z" }, "due runs come soonest first with their room");
+        Check(due.Select(d => d.Run.Id).SequenceEqual(["c", "a"]) && due[1] is { Room.Name: "Evening", StartsAt.Hour: 19, Key: "a|2026-10-14 19:00:00.000Z|15", Lead: 15 }, "due runs come soonest first with their room");
         Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:46:00Z"), new HashSet<string>(due.Select(d => d.Key))).Length == 0, "a run is reminded once");
         var moved = snapshot with { Runs = [snapshot.Runs![0] with { StartsAt = "2026-10-14 18:58:00.000Z" }] };
         Check(Reminders.Due([moved], "u", at("2026-10-14T18:46:00Z"), new HashSet<string>(due.Select(d => d.Key))).Single().Run.Id == "a", "a re-timed run reminds again");
         Check(Reminders.Due([snapshot], "u", at("2026-10-14T19:00:00Z"), none).Length == 0 && Reminders.Due([snapshot], "", at("2026-10-14T18:50:00Z"), none).Length == 0 && Reminders.Due([snapshot with { Runs = null }], "u", at("2026-10-14T18:50:00Z"), none).Length == 0, "started runs, no account or no runs remind nothing");
-        Check(Reminders.Prune(["a|2026-10-14 19:00:00.000Z", "old|2026-10-12 19:00:00.000Z", "a|2026-10-14 19:00:00.000Z"], at("2026-10-14T20:00:00Z")).SequenceEqual(["a|2026-10-14 19:00:00.000Z"]), "reminders of old runs are forgotten");
-        Console.WriteLine("Start with Windows command, tray start, saved window position, keep-on-screen and planned-run reminders passed.");
+        Check(Reminders.Prune(["a|2026-10-14 19:00:00.000Z|15", "old|2026-10-12 19:00:00.000Z|15", "a|2026-10-14 19:00:00.000Z|15", "b|2026-10-14 19:00:00.000Z"], at("2026-10-14T20:00:00Z")).SequenceEqual(["a|2026-10-14 19:00:00.000Z|15", "b|2026-10-14 19:00:00.000Z"]), "reminders of old runs are forgotten");
+        // The account's reminder times: a run within 2 hours and 15 minutes when first seen is
+        // reminded once, at 15; a run 1 hour away at 2 hours, then again at 15 minutes.
+        var times = new[] { 120, 15 };
+        var early = Reminders.Due([snapshot], "u", at("2026-10-14T18:00:00Z"), none, times);
+        Check(early.Select(r => (r.Run.Id, r.Lead)).SequenceEqual([("c", 120), ("a", 120)]) && early[1].Marks!.SequenceEqual(["a|2026-10-14 19:00:00.000Z|120"]), "a run within a larger reminder time is due at it");
+        var marked = new HashSet<string>(early.SelectMany(r => r.Marks!));
+        Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:10:00Z"), marked, times).Length == 0, "each reminder time reminds once");
+        var late = Reminders.Due([snapshot], "u", at("2026-10-14T18:50:00Z"), none, times);
+        Check(late.Single(r => r.Run.Id == "a") is { Lead: 15, Marks.Length: 2 }, "a run first seen within 15 minutes is reminded once, at the smallest time");
+        Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:50:00Z"), new HashSet<string>(["a|2026-10-14 19:00:00.000Z"]), times).All(r => r.Run.Id != "a"), "a run reminded by an older app is not reminded again");
+        // Quiet hours in the account's time zone, over midnight.
+        var quiet = NotificationSettings.Default with { Quiet = new("22:00", "07:00", "Europe/Prague") };
+        Check(!quiet.QuietAt(at("2026-10-15T19:59:00Z")) && quiet.QuietAt(at("2026-10-15T20:00:00Z")) && quiet.QuietAt(at("2026-10-16T04:59:00Z")) && !quiet.QuietAt(at("2026-10-16T05:00:00Z")), "quiet hours wrap midnight in their time zone");
+        Check(!NotificationSettings.Default.QuietAt(at("2026-10-15T20:00:00Z")) && !(quiet with { Quiet = new("22:00", "07:00", "Mars/Olympus") }).QuietAt(at("2026-10-15T20:00:00Z")), "no quiet hours, or an unknown zone, keep reminders on");
+        var listed = System.Text.Json.JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[],"notifications":{"channels":{"tray":false,"browser":true,"push":true},"leadMinutes":[120,15],"kinds":{"runs":true,"cap":false},"quiet":{"from":"","to":"","timeZone":""},"saved":true}}""", options)!;
+        Check(listed.Notifications is { Saved: true, RunsInTray: false } n && n.Leads.SequenceEqual([120, 15]), "the rooms answer carries the account's notification settings");
+        Check(System.Text.Json.JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.Notifications is null && NotificationSettings.Default is { RunsInTray: true } && NotificationSettings.Default.Leads.SequenceEqual([15]), "older backends send none, and the defaults remind 15 minutes ahead");
+        Console.WriteLine("Start with Windows command, tray start, saved window position, keep-on-screen and planned-run reminders at the account's times and quiet hours passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Desktop check failed: " + message); }
 }

@@ -18,14 +18,21 @@ public sealed record Announcement(string Text, string Level = "info")
     public bool IsWarning => Level == "warning";
 }
 // ReaderPaused: the server's operators paused every packet reader (Server controls); the rooms,
-// session and heartbeat answers carry it. Backends from before the switch leave it out (null).
-public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null);
-public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "")
+// session and heartbeat answers carry it. Backends from before the switch leave it out (null),
+// as they leave out Clock, the Odyle clock's rules (OdyleClock.cs).
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null);
+public sealed record NotificationsResponse(NotificationSettings Notifications);
+public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string Location => $"{Server} · {RegionLabel}";
 }
+// The game's two numbers of a character's last reading: its natural pool and what items added
+// (null when that reading did not send them, or the backend is older). RegenTick and NaturalMax
+// are what the character's readings showed for the Odyle clock: its last regeneration tick and
+// its fullest natural pool of the last 30 days.
+public sealed record OdyleParts(int Base, int Bonus);
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters);
@@ -34,7 +41,10 @@ public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, stri
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null);
 public sealed record HeartbeatResponse(bool? ReaderPaused = null);
-public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true);
+// Base is the natural pool (it regenerates up to a cap), Bonus what items added; Kind and Delta
+// say what changed since the reading before it (OdyleChange). All four are optional: older
+// backends ignore them, and the total in Value is what they store.
+public sealed record PacketReading(string SessionId, long Sequence, string CharacterName, string Server, string Region, int Value, string ParserVersion, string? CharacterId = null, string Source = "packet", bool Confirmed = true, int? Base = null, int? Bonus = null, string? Kind = null, int? Delta = null);
 public sealed record ReportResponse(Character Character);
 public sealed class PartyApi : IDisposable
 {
@@ -142,6 +152,10 @@ public sealed class PartyApi : IDisposable
     // two-clients, paused, stopped) and game the Steam build it reads; the backend's reader health
     // keeps both in memory to warn its operator when a game patch breaks reading. Older backends ignore them.
     public Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId, string? reader = null, string? game = null) => PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId, reader, game });
+    // Saves the account's notification settings as a whole (the app does it once, to move its
+    // old local "remind me of planned runs" switch to the account).
+    public async Task<NotificationSettings> SaveNotificationsAsync(NotificationSettings settings) =>
+        (await PostAsync<NotificationsResponse>("api/odyle/notifications", new { channels = settings.Where, leadMinutes = settings.Leads, kinds = settings.What, capTicks = settings.CapTicks ?? 1, quiet = settings.Quiet ?? new QuietHours() })).Notifications;
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {

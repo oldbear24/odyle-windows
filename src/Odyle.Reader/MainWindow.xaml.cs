@@ -117,6 +117,10 @@ public partial class MainWindow : Window
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
     private PacketCandidate? latest;
     private int publishedTotal = -1;
+    // The natural pool of the reading saved last, and the last change the game made (a spend, a
+    // regeneration tick or an item), for the reading's kind (OdyleChange) and the card's split line.
+    private int? publishedBase;
+    private (int Delta, string Kind, DateTimeOffset At, string CharacterId)? lastChange;
     private string? publishFailure;
     private ReaderState readerState = ReaderState.Stopped;
     private bool exit, quitting, busy, needsReconnect, busyShown;
@@ -133,6 +137,10 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
+    // The Odyle clock's rules from the server; null from older backends (the defaults apply).
+    private ClockRules? clockRules;
+    // The account's notification settings (the dashboard's Account & data → Notifications).
+    private NotificationSettings notifications = NotificationSettings.Default;
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     // An update check a few seconds after every start that installs what it finds, then once a
     // day while the app runs (UpdateSchedule). The timer looks every hour, so a day spent asleep
@@ -169,7 +177,7 @@ public partial class MainWindow : Window
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
-        settings.RemindersToggle.Click += (_, _) => { PreferencesStore.Save(preferences = preferences with { RemindRuns = settings.RemindersToggle.IsChecked == true }); CheckReminders(); };
+        settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
         restoreTimer.Tick += async (_, _) =>
@@ -197,7 +205,7 @@ public partial class MainWindow : Window
                 else CheckReminders();
             }
             else if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
-            else if (preferences.RemindRuns && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
+            else if (notifications.RunsInTray && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         };
         heartbeat.Tick += async (_, _) => await PulseAsync();
         npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
@@ -206,7 +214,6 @@ public partial class MainWindow : Window
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
-        settings.RemindersToggle.IsChecked = preferences.RemindRuns;
         // Automatic follows the Windows display language; a change applies when the app restarts.
         settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
         settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
@@ -339,6 +346,12 @@ public partial class MainWindow : Window
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        // The game's two numbers: the natural pool and what items added, and the last change it made.
+        var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
+        var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
+        if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
+        SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RenderOdyleClock();
         if (!connected) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
@@ -408,6 +421,20 @@ public partial class MainWindow : Window
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale")), Brush(live ? "Mint" : "Amber"),
             live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName));
     }
+    // The Odyle clock under the split: from the reading on screen, or the saved character's last
+    // one (an estimate then), with the operators' rules. Ticked every second with the age.
+    private void RenderOdyleClock()
+    {
+        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
+        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        ClockState? state = null;
+        if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
+            state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax);
+        else if (api is not null && reading is null && character is { Confirmed: true, Parts: { } parts } && Readiness.Parse(character.LastReadingAt) is { } saved)
+            state = OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, character.RegenTick, character.NaturalMax);
+        var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
+        OdyleClockLabel.Text = line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
     private void RenderClock()
     {
         var character = CurrentCharacter;
@@ -415,6 +442,7 @@ public partial class MainWindow : Window
             : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
         if (capture is { } running)
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
+        RenderOdyleClock();
     }
 
     // ----- Operations -----
@@ -589,6 +617,10 @@ public partial class MainWindow : Window
             if (news.Announcement is { IsWarning: true } warning && warning.Text != announcement?.Text) Notify(T("Message from the server's operators"), warning.Text);
             ShowAnnouncement(news.Announcement); RenderHero();
         }
+        // Notification settings saved on the dashboard apply at once.
+        if (news.Notifications is { } saved) { notifications = saved; CheckReminders(); }
+        // Cap alerts of the account's characters (the server checked the quiet hours).
+        if (notifications.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
         if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
         if (!news.Refresh && news.Characters.Length > 0)
         {
@@ -607,7 +639,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -670,7 +702,7 @@ public partial class MainWindow : Window
                 var listed = await current.GetRoomsAsync();
                 var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
                 if (api != current) return;
-                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; await FollowNotificationsAsync(listed.Notifications); snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
                 if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
                 RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
                 if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
@@ -703,21 +735,41 @@ public partial class MainWindow : Window
         // Windows keeps 63 characters of a notification title and 255 of its text.
         if (tray.Visible) tray.ShowBalloonTip(10000, title.Length > 63 ? title[..62] + "…" : title, text.Length > 255 ? text[..254] + "…" : text, Forms.ToolTipIcon.Info);
     }
-    // Planned runs the account joined on the dashboard: one notification 15 minutes before
-    // each start, with the dungeon, room, local time and note. Reminded runs are kept in
-    // preferences.json, so a restart does not repeat them; a run moved to another time reminds again.
+    // The account's notification settings from the rooms answer. A backend without them keeps
+    // the old local switch; with them, an old "off" moves to the account once (only while the
+    // account never saved any), and Settings links to the dashboard from then on.
+    private async Task FollowNotificationsAsync(NotificationSettings? listed)
+    {
+        if (listed is null) { notifications = NotificationSettings.Default with { Channels = new(Tray: preferences.RemindRuns) }; return; }
+        notifications = listed;
+        if (preferences.RemindRunsMoved || api is not { } current) return;
+        if (!listed.Saved && !preferences.RemindRuns)
+        {
+            try { notifications = await current.SaveNotificationsAsync(listed with { Channels = listed.Where with { Tray = false } }); Log.Info("Moved the local choice to show no run reminders to the account's notification settings."); }
+            catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { Log.Warn("Could not move the run reminder choice to the account yet: " + error.Message); return; }
+        }
+        PreferencesStore.Save(preferences = preferences with { RemindRunsMoved = true });
+    }
+    // Planned runs the account joined on the dashboard: a notification at each of the account's
+    // reminder times before each start (Account & data → Notifications on the dashboard), with the
+    // dungeon, room, local time and note, unless the tray is off for them or it is quiet hours.
+    // Reminded runs are kept in preferences.json, so a restart does not repeat them; a run moved
+    // to another time reminds again.
     private void CheckReminders()
     {
-        if (!preferences.RemindRuns || accountId.Length == 0) return;
+        if (!notifications.RunsInTray || accountId.Length == 0) return;
         var now = DateTimeOffset.UtcNow + serverOffset; var reminded = new HashSet<string>(preferences.RemindedRuns ?? []);
-        var due = Reminders.Due(snapshots, accountId, now, reminded);
+        var due = Reminders.Due(snapshots, accountId, now, reminded, notifications.Leads);
         if (due.Length == 0) return;
+        var quiet = notifications.QuietAt(now);
         foreach (var run in due)
         {
+            foreach (var key in run.Marks ?? [run.Key]) reminded.Add(key);
+            if (quiet) { Log.Info($"Skipped the reminder of the planned run {run.Run.Id} in the account's quiet hours."); continue; }
             var minutes = Math.Max(1, (long)Math.Ceiling((run.StartsAt - now).TotalMinutes));
             var details = T("{0} · starts at {1:t}", run.Room.Name, run.StartsAt.ToLocalTime().DateTime) + (run.Run.Note.Length > 0 ? "\n" + run.Run.Note : "");
             Notify(Tn(minutes, "{1} starts in {0} minute", "{1} starts in {0} minutes", run.Run.Dungeon), details);
-            reminded.Add(run.Key); Log.Info($"Reminded of the planned run {run.Run.Id} ({run.Run.Dungeon}) at {run.StartsAt:u}.");
+            Log.Info($"Reminded of the planned run {run.Run.Id} ({run.Run.Dungeon}) at {run.StartsAt:u}, {run.Lead} minutes ahead.");
         }
         PreferencesStore.Save(preferences = preferences with { RemindedRuns = Reminders.Prune(reminded, now) });
     }
@@ -1156,7 +1208,12 @@ public partial class MainWindow : Window
         }
         try
         {
-            var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id));
+            // What changed since the reading saved before it on this live streak (none after a snapshot).
+            var streak = publishedTotal >= 0 && activeCharacterId == character.Id;
+            var (kind, delta) = OdyleChange.Of(reading.Source, reading.Total, reading.Base, streak ? publishedTotal : null, streak ? publishedBase : null);
+            var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id, Base: reading.Base, Bonus: reading.Bonus, Kind: kind, Delta: delta));
+            publishedBase = reading.Base;
+            if (delta is { } change && kind is OdyleChange.Spend or OdyleChange.Regen or OdyleChange.Item) lastChange = (change, kind, DateTimeOffset.Now, saved.Id);
             if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
             activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; adapterOutdated = false;
             UpdateCharacterInList(saved);

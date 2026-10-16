@@ -15,10 +15,17 @@ static class RealtimeChecks
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");
         Check(RealtimeNews.Parse(Json("""{"refresh":true,"removed":true}""")) is { Refresh: true, Removed: true }, "a removed member");
         var changed = RealtimeNews.Parse(Json("""{"refresh":true,"characters":[""" + Lumina.Replace("\"value\":180", "\"value\":220").Replace("}", ",\"shared\":true}") + """]}"""));
-        Check(changed.Characters.Single() is { Id: "c", Value: 220 }, "changed characters with their snapshot fields");
+        Check(changed.Characters.Single() is { Id: "c", Value: 220, Parts: null }, "changed characters with their snapshot fields");
+        var split = RealtimeNews.Parse(Json("""{"characters":[""" + Lumina.Replace("}", ",\"parts\":{\"base\":90,\"bonus\":990}}") + """]}"""));
+        Check(split.Characters.Single().Parts == new OdyleParts(90, 990), "a character carries the game's two numbers when its last reading sent them");
         var seen = RealtimeNews.Parse(Json("""{"seen":{"c":"2026-10-12T12:00:10.000Z","x":5}}"""));
         Check(seen is { Refresh: false } && seen.Seen.Count == 1 && seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");
+        var saved = RealtimeNews.Parse(Json("""{"notifications":{"channels":{"tray":true,"browser":false,"push":false},"leadMinutes":[30],"kinds":{"runs":false,"cap":true},"capTicks":2,"quiet":{"from":"23:00","to":"06:00","timeZone":"Europe/Prague"},"saved":true}}"""));
+        var capped = RealtimeNews.Parse(Json("""{"capAlerts":[{"characterId":"c","characterName":"Lumina","state":"soon","base":545,"cap":560,"settled":false,"tick":15,"at":"2026-10-15T19:00:00.000Z"},{"characterId":"x","characterName":"","state":"soon"},{"characterId":"y","characterName":"Odd","state":"later"}]}"""));
+        Check(capped is { Refresh: false, CapAlerts: [{ CharacterName: "Lumina", Cap: 560, Settled: false }] } && capped.CapAlerts[0].Notice() is ("Lumina caps soon", var body) && body.StartsWith("Its natural pool reaches 560 ≈ ") && body.EndsWith(", full if that is its cap."), "cap alerts of the account's characters");
+        Check(new CapAlert("c", "Lumina", "full", 840, 840, true, 15).Notice() == ("Lumina is losing Odyle", "Its natural pool is full: each tick of 15 is lost until you spend some."), "a full pool loses each tick");
+        Check(saved is { Refresh: false, Notifications: { RunsInTray: false, Saved: true } } && saved.Notifications.Leads.SequenceEqual([30]) && saved.Notifications.Quiet!.From == "23:00" && saved.Notifications is { CapInTray: true, CapTicks: 2 }, "notification settings saved on the dashboard");
         // News for everyone on the account's topic: a new release and a changed announcement.
         var release = RealtimeNews.Parse(Json("""{"release":{"version":"0.6.0.16","publishedAt":"2026-10-16T15:19:32Z","url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.6.0.16"}}"""));
         Check(release is { Refresh: false, AnnouncementChanged: false } && release.Release == new Version(0, 6, 0, 16), "a new release names its version and fetches nothing");
