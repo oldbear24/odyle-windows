@@ -114,6 +114,17 @@ public partial class MainWindow : Window
     // Pinned above other windows and the checklist beside the card: remembered on this PC.
     private Preferences preferences = new();
     private readonly Forms.ToolStripMenuItem pinItem = new(T("Stay on top")) { CheckOnClick = true };
+    // The super compact strip (CompactWindow): on or off, its tray items, where it was, and the
+    // shortcut registered for it on a window of its own (a message-only window, never shown).
+    private CompactWindow? compact;
+    private bool compactMode;
+    private readonly Forms.ToolStripMenuItem compactItem = new(T("Super compact")) { CheckOnClick = true }, clickThroughItem = new(T("Click-through strip")) { CheckOnClick = true };
+    private readonly DispatcherTimer compactPositionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private HwndSource? hotkeyWindow;
+    private string hotkeyProblem = "";
+    // The value and cube cost the card shows, for the strip.
+    private int? heroValue;
+    private int heroCost = 40;
     private long sequence, lastGameBytes;
     private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
     private PacketCandidate? latest;
@@ -166,6 +177,8 @@ public partial class MainWindow : Window
         tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = T("Odyle · Not connected"), Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
+        compactItem.Click += (_, _) => Dispatcher.Invoke(() => { if (compactItem.Checked) SetCompact(true, persist: true); else ShowWindow(); }); menu.Items.Add(compactItem);
+        clickThroughItem.Click += (_, _) => Dispatcher.Invoke(() => SetClickThrough(clickThroughItem.Checked)); menu.Items.Add(clickThroughItem);
         menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
         menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
@@ -177,6 +190,8 @@ public partial class MainWindow : Window
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
+        settings.ClickThroughToggle.Click += (_, _) => SetClickThrough(settings.ClickThroughToggle.IsChecked == true);
+        compactPositionTimer.Tick += (_, _) => { compactPositionTimer.Stop(); SaveCompactPosition(); };
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
@@ -215,6 +230,11 @@ public partial class MainWindow : Window
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        clickThroughItem.Checked = preferences.CompactClickThrough; settings.ClickThroughToggle.IsChecked = preferences.CompactClickThrough;
+        settings.CompactHotkeyInput.ItemsSource = CompactStrip.Hotkeys.Select(h => new LanguageChoice(h, h.Length > 0 ? h : T("Off"))).ToArray();
+        settings.CompactHotkeyInput.SelectedValue = CompactStrip.Hotkeys.Contains(preferences.CompactHotkey) ? preferences.CompactHotkey : CompactStrip.DefaultHotkey;
+        settings.CompactHotkeyInput.SelectionChanged += (_, _) => ChooseHotkey(settings.CompactHotkeyInput.SelectedValue as string ?? "");
+        UseHotkey(preferences.CompactHotkey);
         // Automatic follows the Windows display language; a change applies when the app restarts.
         settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
         settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
@@ -251,7 +271,7 @@ public partial class MainWindow : Window
         }
         catch { }
     }
-    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
+    private void ShowWindow() { if (compactMode) SetCompact(false, persist: true); Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     // A second start of Odyle signals this one (App) to show its window in front.
     public void BringToFront()
     {
@@ -348,6 +368,8 @@ public partial class MainWindow : Window
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         if (rooms.Length > 1 && HeroRoom(character) is { } costRoom) CubeLabel.Text += " · " + costRoom.Name;
+        // A long room name is trimmed so the value keeps its room; the tooltip has the whole line.
+        CubeLabel.ToolTip = CubeLabel.Text.Length > 0 ? CubeLabel.Text : null;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
         var split = connected && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
@@ -384,6 +406,7 @@ public partial class MainWindow : Window
         var name = character?.CharacterName ?? accountName;
         var tip = !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
         tray.Text = tip.Length > 63 ? tip[..63] : tip;
+        heroValue = value; heroCost = cost; RenderCompact();
     }
     private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
@@ -441,6 +464,7 @@ public partial class MainWindow : Window
         RunGoingButton.Visibility = next is null || viewer ? Visibility.Collapsed : Visibility.Visible;
         RunGoingButton.Content = next is { Going: true } ? T("Going ✓") : T("Join");
         RunGoingButton.ToolTip = next is { Going: true } ? T("You are going · click to leave this run") : T("Go to this run");
+        RenderCompact();
     }
     private async void RunGoing_Click(object sender, RoutedEventArgs e)
     {
@@ -514,7 +538,9 @@ public partial class MainWindow : Window
         await ExecuteAsync(RestoreAsync);
         if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
         {
-            if (!IsVisible) ShowWindow();
+            // The strip comes back as it was left, once the app is paired.
+            if (preferences.CompactMode && api is not null) SetCompact(true, persist: false);
+            else if (!IsVisible) ShowWindow();
             if (api is null) OpenSettings();
         }
     }
@@ -829,6 +855,107 @@ public partial class MainWindow : Window
         if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
     }
     private void Pin_Click(object sender, RoutedEventArgs e) => SetStayOnTop(!Topmost, persist: true);
+    // The super compact strip in place of the card: from the header button, the tray menu or the
+    // shortcut; a double-click on the strip, the tray or the shortcut brings the card back.
+    private void SetCompact(bool on, bool persist)
+    {
+        compactItem.Checked = on;
+        if (persist) PreferencesStore.Save(preferences = preferences with { CompactMode = on });
+        if (on == compactMode) { if (on) RenderCompact(); return; }
+        compactMode = on;
+        if (on)
+        {
+            compact ??= CreateCompact();
+            SavePosition(); Hide(); settings.Hide();
+            PlaceCompact(); RenderCompact();
+            if (!App.Headless) compact.Show();
+            Log.Info("Switched to the super compact strip.");
+        }
+        else if (compact is not null) { SaveCompactPosition(); compact.Hide(); Log.Info("Switched back to the card."); }
+        CompactButton.Foreground = Brush(on ? "Mint" : "Muted");
+    }
+    private void Compact_Click(object sender, RoutedEventArgs e) => SetCompact(true, persist: true);
+    private void ToggleCompact() { if (compactMode) ShowWindow(); else SetCompact(true, persist: true); }
+    private CompactWindow CreateCompact()
+    {
+        var strip = new CompactWindow { ClickThrough = preferences.CompactClickThrough };
+        strip.Expand += ShowWindow;
+        strip.Moved += () => { if (strip.IsVisible) { compactPositionTimer.Stop(); compactPositionTimer.Start(); } };
+        return strip;
+    }
+    // Where it was last, while that is still on a connected screen; else the top right corner.
+    private void PlaceCompact()
+    {
+        if (compact is null) return;
+        var scale = Forms.Screen.PrimaryScreen is { } primary && SystemParameters.PrimaryScreenWidth > 0 ? primary.Bounds.Width / SystemParameters.PrimaryScreenWidth : 1;
+        var areas = Forms.Screen.AllScreens.Select(s => new ScreenArea(s.WorkingArea.Left / scale, s.WorkingArea.Top / scale, s.WorkingArea.Right / scale, s.WorkingArea.Bottom / scale)).ToArray();
+        var (left, top) = preferences is { CompactLeft: { } l, CompactTop: { } t } && !double.IsNaN(l) && !double.IsNaN(t) && Placement.OnScreen(l, t, areas) ? (l, t)
+            : CompactStrip.Corner(Forms.Screen.PrimaryScreen is { } screen ? new ScreenArea(screen.WorkingArea.Left / scale, screen.WorkingArea.Top / scale, screen.WorkingArea.Right / scale, screen.WorkingArea.Bottom / scale) : new ScreenArea(0, 0, SystemParameters.WorkArea.Right, SystemParameters.WorkArea.Bottom));
+        compact.Left = left; compact.Top = top;
+    }
+    private void SaveCompactPosition()
+    {
+        if (compact is not { IsVisible: true } strip || double.IsNaN(strip.Left) || double.IsNaN(strip.Top) || preferences is { CompactLeft: var l, CompactTop: var t } && l == strip.Left && t == strip.Top) return;
+        PreferencesStore.Save(preferences = preferences with { CompactLeft = strip.Left, CompactTop = strip.Top });
+    }
+    // The strip shows the card's value, cubes and state dot, and one line: the server's pause, the
+    // next run, the room's party line, else what the card says to do next.
+    private void RenderCompact()
+    {
+        if (compact is null) return;
+        var now = DateTimeOffset.UtcNow + serverOffset;
+        var cubes = heroValue is { } value && api is not null ? Tn(value / heroCost, "{0} cube", "{0} cubes") : "";
+        var line = CompactStrip.Line(api is not null && readerPaused, chipRun is { } run ? RunChip.Line(run, now) : "", HeroPartyLine(now), ReadingLabel.Visibility == Visibility.Visible ? ReadingLabel.Text : "");
+        compact.Fill(ValueLabel.Text, cubes, StateDot.Fill, line, T("{0} · {1} · double-click for the full card", HeroTitle.Text, StateText.Text));
+    }
+    // The party line of the room the card counts cubes for (HeroRoom), as the party list shows it.
+    private string HeroPartyLine(DateTimeOffset now)
+    {
+        if (HeroRoom(CurrentCharacter) is not { } room || Array.Find(snapshots, s => s.Room.Id == room.Id) is not { } snapshot) return "";
+        var party = PartyReadiness.Party(PartyReadiness.Entries(snapshot), now, snapshot.Room.Cost > 0 ? snapshot.Room.Cost : odylePerCube);
+        return party.Characters.Length > 0 ? RunChip.PartyLine(party, accountId) : "";
+    }
+    // Clicks pass through the strip to the game; the tray menu and the shortcut still switch it.
+    private void SetClickThrough(bool on)
+    {
+        clickThroughItem.Checked = on; settings.ClickThroughToggle.IsChecked = on;
+        if (compact is not null) compact.ClickThrough = on;
+        PreferencesStore.Save(preferences = preferences with { CompactClickThrough = on });
+    }
+    private void ChooseHotkey(string hotkey)
+    {
+        if (hotkey == preferences.CompactHotkey) return;
+        PreferencesStore.Save(preferences = preferences with { CompactHotkey = hotkey }); UseHotkey(hotkey);
+    }
+    // The shortcut is registered for the whole session (RegisterHotKey). One another app holds
+    // already says so in Settings, where another can be chosen.
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
+    private const int HotkeyId = 0x4F44;
+    private void UseHotkey(string hotkey)
+    {
+        hotkeyProblem = "";
+        if (!App.Headless)
+        {
+            if (hotkeyWindow is null)
+            {
+                hotkeyWindow = new HwndSource(new HwndSourceParameters("Odyle shortcut") { ParentWindow = new IntPtr(-3), WindowStyle = 0 });
+                hotkeyWindow.AddHook((IntPtr _, int message, IntPtr id, IntPtr _, ref bool handled) =>
+                {
+                    if (message == 0x0312 && id.ToInt32() == HotkeyId) { handled = true; ToggleCompact(); }
+                    return IntPtr.Zero;
+                });
+            }
+            UnregisterHotKey(hotkeyWindow.Handle, HotkeyId);
+            if (CompactStrip.Parse(hotkey) is { } keys && !RegisterHotKey(hotkeyWindow.Handle, HotkeyId, keys.Modifiers, keys.Key))
+            {
+                hotkeyProblem = T("{0} is taken by another app · choose another shortcut.", hotkey);
+                Log.Warn($"The shortcut {hotkey} could not be registered (error {Marshal.GetLastWin32Error()}).");
+            }
+        }
+        settings.HotkeyProblemLabel.Text = hotkeyProblem; settings.HotkeyProblemLabel.Visibility = hotkeyProblem.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        CompactButton.ToolTip = CompactStrip.Parse(hotkey) is null || hotkeyProblem.Length > 0 ? T("Super compact · a small strip above the game") : T("Super compact · a small strip above the game ({0})", hotkey);
+    }
     // The checklist opens beside the card; the window grows to the right.
     private void SetTasksShown(bool on, bool persist)
     {
@@ -1578,15 +1705,16 @@ public partial class MainWindow : Window
         if (quitting) return;
         quitting = true;
         // A restart from the tray (an update at start with Windows) stays in the tray.
-        var hidden = !IsVisible;
-        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace(); await operations.WaitAsync();
+        var hidden = !IsVisible && !compactMode;
+        SavePosition(); SaveCompactPosition(); compactPositionTimer.Stop(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace(); await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }
         try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); realtime?.Dispose(); api?.Dispose(); }
         finally
         {
-            operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close();
+            operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); compact?.Close();
+            if (hotkeyWindow is not null) { UnregisterHotKey(hotkeyWindow.Handle, HotkeyId); hotkeyWindow.Dispose(); }
             if (restart && System.Windows.Application.Current is App app) app.Restart(tray: hidden); else System.Windows.Application.Current.Shutdown();
         }
     }

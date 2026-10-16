@@ -11,6 +11,7 @@
    <!-- Header: pin above other windows, open the checklist, settings -->
    <DockPanel Margin="12,7,6,2">
     <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="⚙" FontSize="14" Padding="7,1" Click="Settings_Click" VerticalAlignment="Center" ToolTip="Settings · account, rooms and reader setup"/>
+    <Button x:Name="CompactButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73F;" Click="Compact_Click" ToolTip="Super compact · a small strip above the game"/>
     <Button x:Name="TasksButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73A;" Click="Tasks_Click" ToolTip="Show your daily &amp; weekly tasks beside the card"/>
     <Button x:Name="PinButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE718;" Click="Pin_Click" ToolTip="Stay on top of other windows"/>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -37,7 +38,7 @@
        <TextBlock x:Name="HeroTitle" Text="Not connected" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
       </DockPanel>
       <DockPanel>
-       <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,5"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right"/></StackPanel>
+       <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,5" MaxWidth="150"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/></StackPanel>
        <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="26" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,6" VerticalAlignment="Bottom"/></StackPanel>
       </DockPanel>
       <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>

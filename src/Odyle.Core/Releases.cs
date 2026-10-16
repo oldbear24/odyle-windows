@@ -15,9 +15,10 @@ public sealed record AppRelease(Version Version, string Tag, string Url, DateTim
     public ReleaseAsset? Checksum(ReleaseAsset package) => Assets.FirstOrDefault(a => a.Name == package.Name + ".sha256");
     public bool IsNewerThan(Version current) => Version > ReleaseFeed.Normalize(current);
 }
-// The GitHub releases of this repository, where every push to main publishes a
-// release tagged v<Version>.<run number>. Only full versions count as releases, so
-// a tag like "nightly" or a pre-release is never offered as an update.
+// The GitHub releases of this repository, where every push to main that changes what ships
+// publishes a release tagged v<Version>, a semantic version (AGENTS.md); releases before
+// that were v0.6.0.<run number>, and missing parts compare as zero. Only full versions count
+// as releases, so a tag like "nightly" or a pre-release is never offered as an update.
 public static class ReleaseFeed
 {
     public const string Repository = "oldbear24/odyle-windows";
