@@ -481,7 +481,7 @@ static class ReaderChecks
                     var summary = (CharacterSharing[])((ItemsControl)settings.FindName("SharingList")).ItemsSource;
                     Check(summary.Single(g => g.Title.StartsWith("SwitchedHero")).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero")).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
                     Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 3, "the room snapshot is read from the server");
-                    Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource).Length == 0 && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters are not listed as party members");
+                    Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource) is [{ Mates.Length: 0, Summary: var line }] && line.StartsWith("Party · ") && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters count for the room's party but are not listed as party members");
                     // The checklist kept on the dashboard is shown beside the card and ticked off from here.
                     using (var http = new HttpClient { BaseAddress = new Uri(args[0].TrimEnd('/') + "/") })
                     {
