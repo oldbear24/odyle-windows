@@ -1004,6 +1004,7 @@ public partial class MainWindow : Window
             // A reading the game never attributed belongs to its connection; a new connection starts over.
             if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
             if (kind == CaptureStatus.Resyncing) OnResync();
+            if (kind == CaptureStatus.Listening) _ = NoteGameVersionAsync();
             // A new game connection while a reading is live keeps the live line, and so do joining
             // one midstream while the character is known (taken over after a restart) and a resync.
             if (kind is CaptureStatus.Listening or CaptureStatus.Midstream or CaptureStatus.Resyncing or CaptureStatus.Resumed && readerState == ReaderState.Live) { Log.Info("Reader stays live: " + message); return; }
@@ -1015,16 +1016,21 @@ public partial class MainWindow : Window
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
         // snapshot and identity, and once per run each distinct stat frame layout and each other
-        // stat resource that sends updates (not every frame).
-        var layouts = new HashSet<OdyleFrameLayout>(); var resources = new HashSet<uint>();
+        // stat resource that sends updates (not every frame). The patch-day trace counts them all.
+        var layouts = new HashSet<OdyleFrameLayout>(); var resources = new HashSet<uint>(); var limit = trace is null ? 64 : int.MaxValue;
+        if (trace is { } counting)
+        {
+            next.FrameObserved += counting.Frame; next.SnapshotObserved += counting.Snapshot; next.UpdateObserved += counting.Update;
+            next.LayoutObserved += counting.Layout; next.IdentityObserved += counting.Identity;
+        }
         next.UpdateObserved += u =>
         {
             var odyle = u.Resource == ExperimentalOdyleDecoder.OdyleResource;
-            if (!odyle) lock (resources) if (resources.Count >= 64 || !resources.Add(u.Resource)) return;
+            if (!odyle) lock (resources) if (resources.Count >= limit || !resources.Add(u.Resource)) return;
             Log.Info($"Decoder: {(odyle ? "Odyle update" : "stat update, not Odyle (once per run)")}, resource {u.Resource}, tag {u.Tag:X2}, direction {u.Direction}, values {u.Base} + {u.Bonus}, {u.TrailerBytes} trailer bytes.");
         };
         next.SnapshotObserved += s => Log.Info($"Decoder: stat snapshot, {s.PayloadBytes} bytes, {(s.Records is { } count ? $"{count} records" : "layout not walked")}, {(s.Fields.Length == 0 ? "no Odyle record" : string.Join("; ", s.Fields.Select(f => $"Odyle {f.Base} + {f.Bonus} (tag {f.Tag:X2} at {f.Offset})")))}, {(s.Read ? "read" : "not read")}.");
-        next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= 64 || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
+        next.LayoutObserved += l => { lock (layouts) if (layouts.Count >= limit || !layouts.Add(l)) return; Log.Info($"Decoder: stat frame {l.Opcode:X4} {l.Header0:X2} {l.Header1:X2} {l.Header2:X2}, {l.PayloadBytes} bytes."); };
         next.IdentityObserved += identity => Log.Info($"Decoder: own character {identity.CharacterName}, server {identity.ServerId} ({identity.Server ?? "unmapped"}, {identity.Region ?? "unmapped region"}), class {identity.Class}.");
         try { next.Start(); }
         // Npcap missing, not loading or showing no interface: the reader row says why and links to
@@ -1404,6 +1410,37 @@ public partial class MainWindow : Window
     {
         try { await paired.UnpairAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
     }
+    // The patch-day trace ("Odyle.exe --decoder-trace", DecoderTrace): every opcode, stat layout and
+    // stat resource is counted without the usual once-per-run limits, and the numbers are written
+    // to logs\decoder-trace.json every minute and when Odyle quits. Null on a normal start.
+    private DecoderTrace? trace;
+    private DispatcherTimer? traceTimer;
+    public static string TracePath => Path.Combine(Log.Folder, "decoder-trace.json");
+    public void StartTrace()
+    {
+        trace = new DecoderTrace();
+        traceTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        traceTimer.Tick += (_, _) => WriteTrace();
+        traceTimer.Start();
+        Log.Info($"Decoder trace on: every opcode, stat layout and stat resource is counted; the numbers go to {TracePath} every minute and when Odyle quits.");
+    }
+    private void WriteTrace()
+    {
+        if (trace is null) return;
+        try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), ExperimentalOdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn("The decoder trace could not be written: " + error.Message); }
+    }
+    // The game client's file version, logged whenever a game connection starts with another
+    // version than before: a game patch then shows in the log beside what the decoder read.
+    private string? gameVersion;
+    private async Task NoteGameVersionAsync()
+    {
+        var version = await Task.Run(GameClient.Version);
+        if (version is null || version == gameVersion) return;
+        gameVersion = version;
+        if (trace is not null) trace.GameVersion = version;
+        Log.Info($"Game client {version}.");
+    }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
     private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
     // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
@@ -1415,7 +1452,7 @@ public partial class MainWindow : Window
         quitting = true;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
-        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); await operations.WaitAsync();
+        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace(); await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }

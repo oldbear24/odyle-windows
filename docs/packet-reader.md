@@ -49,6 +49,17 @@ Sprint/dash fields and other stat IDs are ignored without disturbing the Odyle r
 
 References: [Aion2 Aether Monitoring](https://github.com/gyu98-mun/Aion2_Aether_Monitoring/blob/main/aion2_core.py) (format observations and the resource ID 60000001; its source has no reusable license and was not copied), [AionMeter for Global](https://github.com/cyberbadger6969/aion2-dps-meter) (Global port, heartbeat framing, transport flag and class IDs; GPL source not incorporated), [Npcap API](https://npcap.com/guide/npcap-devguide.html) through native imports, and [K4os LZ4](https://github.com/MiloszKrajewski/K4os.Compression.LZ4) as the only managed dependency.
 
+## When a game patch breaks reading
+
+The game's weekly maintenance can ship a client that frames, numbers or lays out its messages differently. The signs: readers stay at **Waiting for the snapshot** or **Unsupported or incomplete packets**, Odyle stops changing while players spend, or values look wrong. The log names the game client's file version at every new game connection (*Game client 0.0.4387.0.*, read from its executable, never from its memory), so a patch shows up beside what the decoder read.
+
+1. **Stop the damage.** On the dashboard's superuser **Server controls**, switch the adapter off (readings are refused, nothing wrong is stored) or use **Pause packet readers** (apps also stop capturing), and post a **Warning** announcement so players know.
+2. **Trace.** Quit Odyle and start it with the patch-day trace: `"%LOCALAPPDATA%\Programs\Odyle\Odyle.exe" --decoder-trace` (or the `Odyle.exe` of a ZIP). Log in, change channel once, spend some Odyle and wait for a regeneration tick if possible, then quit. The trace counts every opcode with its frame sizes, logs every stat frame layout and stat resource without the usual once-per-run limits, and writes `%LOCALAPPDATA%\Odyle\logs\decoder-trace.json` every minute and on quit: the game and app versions, the opcodes with counts and sizes, the stat snapshots (record count and the Odyle record's tag, values and offset), the stat updates of every resource (tag, direction, values, trailer size), the frame layouts and the identities by server and class. It holds numbers only: no payload bytes, character names or addresses, and it never leaves the PC.
+3. **Compare** the trace and the log with the last good ones and with the values the game shows: whether `0B61`, `0C61` and `3336` still carry the stat records and the identity, the snapshot's record count, the Odyle record (resource 60000001) and its tags.
+4. **Fix and test.** Change the decoder and turn the trace's numbers into synthetic fixtures in `tests/Odyle.Core.Checks/PacketChecks.cs`; the checks never use captured bytes.
+5. **Ship under a new adapter name** (for example `global-reference-v3`): accept it on the backend first (Server controls → also accept, or `protocols.go` and a deploy), then push the Windows release; apps refused for the old adapter look for the update at once.
+6. **Resume.** Lift the pause or switch the old adapter off for good, and clear the announcement. Delete the trace file when it is no longer needed.
+
 ## Live evidence
 
 On 2026-10-13 the passive diagnostic ran against the author's own AION2 client, Steam build **25800038**, EU Global / Lumiel, with Npcap **1.10.7**. It decoded live heartbeat and gameplay frames, and after a relog observed `0B61` with a 487-byte payload and extracted **0 + 390 = 390**, matching the two values shown in the game.
