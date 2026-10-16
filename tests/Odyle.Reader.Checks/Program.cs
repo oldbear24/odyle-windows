@@ -374,6 +374,12 @@ static class ReaderChecks
                 Check(moving.LastNotifications == "" && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: true }, "once: from then on the account's settings count");
                 await (Task)Call(window, "FollowNotificationsAsync", new object[] { null! })!;
                 Check(Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false }, "a backend without them keeps the local choice");
+                // Cap alerts from the server show in the tray when the account wants them there.
+                var capNews = RealtimeNews.Parse(System.Text.Json.JsonDocument.Parse("""{"capAlerts":[{"characterId":"c","characterName":"Lumina","state":"full","base":840,"cap":840,"settled":true,"tick":15}]}""").RootElement.Clone());
+                ClearNotice(); Field("notifications").SetValue(window, NotificationSettings.Default); await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
+                Check(Notice() is null, "cap alerts stay off until the account turns them on");
+                Field("notifications").SetValue(window, NotificationSettings.Default with { Kinds = new(Cap: true) }); await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
+                Check(Notice() is { Title: "Lumina is losing Odyle", Text: "Its natural pool is full: each tick of 15 is lost until you spend some." }, "a cap alert shows in the tray");
                 Field("notifications").SetValue(window, NotificationSettings.Default);
                 Field("preferences").SetValue(window, PreferencesStore.Load()); Field("accountId").SetValue(window, ""); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>());
                 Field("api").SetValue(window, null); Field("tasks").SetValue(window, Array.Empty<UserTask>()); Field("tasksLoaded").SetValue(window, false); Call(window, "RenderTasks");

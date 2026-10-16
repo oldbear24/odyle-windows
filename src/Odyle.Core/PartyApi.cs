@@ -155,7 +155,7 @@ public sealed class PartyApi : IDisposable
     // Saves the account's notification settings as a whole (the app does it once, to move its
     // old local "remind me of planned runs" switch to the account).
     public async Task<NotificationSettings> SaveNotificationsAsync(NotificationSettings settings) =>
-        (await PostAsync<NotificationsResponse>("api/odyle/notifications", new { channels = settings.Where, leadMinutes = settings.Leads, kinds = settings.What, quiet = settings.Quiet ?? new QuietHours() })).Notifications;
+        (await PostAsync<NotificationsResponse>("api/odyle/notifications", new { channels = settings.Where, leadMinutes = settings.Leads, kinds = settings.What, capTicks = settings.CapTicks ?? 1, quiet = settings.Quiet ?? new QuietHours() })).Notifications;
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
