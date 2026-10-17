@@ -126,6 +126,8 @@ public sealed class PartyApi : IDisposable
     }
     public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
     // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
+    // The Windows versions the server's operators hold back (#19); older backends answer none.
+    public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
     public async Task<bool> KnowsNaWestAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Region == "GLOBAL_NAW");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     // A paired app names its device key, so a PC removed on the dashboard gets 401 here
@@ -234,5 +236,6 @@ public sealed class PartyApi : IDisposable
     }
     public void Dispose() => client.Dispose();
 }
+public sealed record WindowsReleaseInfo(string[]? Blocked = null);
 public sealed record ServerRegion(string Region);
 public sealed record ServerRegions(ServerRegion[] Regions);

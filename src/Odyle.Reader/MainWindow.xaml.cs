@@ -747,6 +747,8 @@ public partial class MainWindow : Window
         // Cap alerts of the account's characters (the server checked the quiet hours).
         if (notifications.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
         if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
+        // Versions the operators hold back (#19): a downloaded one is dropped, and this build moves off one it runs.
+        if (news.HeldBack is { } held) await HeldBackAsync(held);
         if (!news.Refresh && news.Characters.Length > 0)
         {
             var mine = PartyNews.WithCharacters(characters, news.Characters, out var complete);
@@ -1662,6 +1664,22 @@ public partial class MainWindow : Window
         settings.CheckUpdateButton.IsEnabled = !updating;
         UpdateButton.ToolTip = staged is null ? null : T("Install Odyle {0} and start it · the reader stops for a moment", staged.Version);
     }
+    // The versions the paired backend holds back (#19), asked before each update check; none
+    // without a pairing or from an older backend, which leaves the check as GitHub says.
+    private async Task<Version[]> HeldBackVersionsAsync()
+    {
+        if (api is not { } current) return heldBack;
+        try { heldBack = await current.GetHeldBackAsync(); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException or System.Text.Json.JsonException) { Log.Info($"Held-back versions not known: {error.Message}"); }
+        return heldBack;
+    }
+    private Version[] heldBack = [];
+    private async Task HeldBackAsync(Version[] held)
+    {
+        heldBack = held; Updater.Forget(held);
+        if (staged is { } waiting && held.Contains(waiting.Version)) { Log.Info($"Odyle {waiting.Version} is held back; its download is dropped."); staged = null; RenderUpdate(); }
+        if (held.Contains(Updater.Current)) { Log.Info($"Odyle {Updater.Current} is held back; looking for the latest release."); await CheckForUpdatesAsync(manual: false); }
+    }
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (updating || staged is not null || !Updater.IsReleaseBuild) return;
@@ -1669,12 +1687,16 @@ public partial class MainWindow : Window
         var install = false;
         try
         {
-            var release = await Updater.CheckAsync(CancellationToken.None);
+            var held = await HeldBackVersionsAsync(); Updater.Forget(held);
+            var release = await Updater.CheckAsync(held, CancellationToken.None);
             // What the first automatic check of this start to reach GitHub finds is installed right away.
             install = updateSchedule.AtStart && !manual; updateSchedule.Reached(DateTimeOffset.UtcNow, upToDate: release is null);
+            // Moving off a held-back version is installed at once: the next start would not install an older package.
+            if (release is not null && release.Version < Updater.Current) { install = true; Log.Info($"Odyle {Updater.Current} is held back; going back to {release.Version}."); }
             if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
             // A package an earlier start downloaded but could not install is not fetched again.
-            if (Updater.Staged() is { } ready && ready.Version >= release.Version) staged = ready;
+            // (Not when going back: a staged package is always newer than this build.)
+            if (release.Version > Updater.Current && Updater.Staged() is { } ready && ready.Version >= release.Version && !heldBack.Contains(ready.Version)) staged = ready;
             else
             {
                 Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");

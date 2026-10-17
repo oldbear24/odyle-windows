@@ -12,6 +12,8 @@ static class RealtimeChecks
     public static void Run()
     {
         var refresh = RealtimeNews.Parse(Json("""{"refresh":true}"""));
+        // Held-back Windows versions (#19) come as their own news; other news leaves them unknown.
+        Check(RealtimeNews.Parse(Json("""{"windowsBlocked":["0.18.0","bad"]}""")).HeldBack is [{ Major: 0, Minor: 18, Build: 0 }] && RealtimeNews.Parse(Json("""{"windowsBlocked":[]}""")).HeldBack is [] && refresh.HeldBack is null, "held-back versions news");
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");
         Check(RealtimeNews.Parse(Json("""{"refresh":true,"removed":true}""")) is { Refresh: true, Removed: true }, "a removed member");
         var changed = RealtimeNews.Parse(Json("""{"refresh":true,"characters":[""" + Lumina.Replace("\"value\":180", "\"value\":220").Replace("}", ",\"shared\":true}") + """]}"""));

@@ -31,6 +31,20 @@ public static class ReleaseFeed
         var match = Package.Match(assetName);
         return match.Success && Version.TryParse(match.Groups["version"].Value, out var version) ? new PackageKind(Normalize(version), match.Groups["runtime"].Value, match.Groups["bundled"].Success) : null;
     }
+    // Which release this build installs (#19): the latest one when it is newer and has this
+    // machine's package, never a version the paired backend holds back, and, when this build's own
+    // version is held back, the latest one even if it is older. A held-back latest release is
+    // never chosen, so a rollback cannot loop between two versions.
+    public static AppRelease? Choose(AppRelease? latest, Version current, IEnumerable<Version> heldBack, string runtime, bool selfContained)
+    {
+        if (latest is null || latest.Package(runtime, selfContained) is null) return null;
+        var held = heldBack.Select(Normalize).ToHashSet();
+        if (held.Contains(latest.Version)) return null;
+        if (latest.IsNewerThan(current)) return latest;
+        return held.Contains(Normalize(current)) && latest.Version != Normalize(current) ? latest : null;
+    }
+    // The versions a windows-release answer holds back ("0.18.0"); none when it names none.
+    public static Version[] HeldBack(IEnumerable<string>? versions) => (versions ?? []).Select(v => TryParseTag(v, out var version) ? version : null).OfType<Version>().Distinct().ToArray();
     // Missing components count as zero, so 0.5.0 and 0.5.0.0 compare equal.
     public static Version Normalize(Version? version) => version is null ? new Version(0, 0, 0, 0) : new Version(version.Major, Math.Max(version.Minor, 0), Math.Max(version.Build, 0), Math.Max(version.Revision, 0));
     public static bool TryParseTag(string? tag, out Version version)
