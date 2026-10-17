@@ -110,6 +110,10 @@ public partial class MainWindow : Window
     private UserTask[] tasks = [];
     private TaskResets resets = new();
     private bool tasksLoaded, refreshingTasks;
+    // When the checklist was last fetched, for the reset reminders (TaskRemindersAsync).
+    private DateTimeOffset tasksFetchedAt = DateTimeOffset.MinValue;
+    // The reader problem last told in the tray while the window was hidden; cleared once it reads again.
+    private string problemNoticed = "";
     private string? tasksProblem;
     private DateTimeOffset renderedDaily, renderedWeekly;
     // The character whose list the checklist shows with the account's (Checklist.Shown).
@@ -218,6 +222,7 @@ public partial class MainWindow : Window
         // and in the tray the rooms every minute, for the run reminders.
         partyTimer.Tick += async (_, _) =>
         {
+            await TaskRemindersAsync();
             if (realtime?.IsConnected == true)
             {
                 if (++partyTicks % 20 == 0) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
@@ -355,6 +360,13 @@ public partial class MainWindow : Window
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text); PacketStateLabel.Text = message;
+        // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
+        // restricted, a capture that failed. It reads again: the next problem is told again.
+        if (state == ReaderState.Live) problemNoticed = "";
+        else if (state == ReaderState.Problem && !IsVisible && notifications.Where.Tray && message != problemNoticed)
+        {
+            problemNoticed = message; Notify(T("Odyle cannot read the game"), message);
+        }
         // The Npcap link belongs to the line that says Npcap is missing or restricted (ShowNpcapProblem).
         NpcapLink.Visibility = Visibility.Collapsed;
         if (message != lastReaderLog)
@@ -885,6 +897,39 @@ public partial class MainWindow : Window
         }
         PreferencesStore.Save(preferences = preferences with { RemindedRuns = Reminders.Prune(reminded, now) });
     }
+    // Two hours before each daily and weekly reset, the tasks of that cadence still open, in the
+    // tray (Account & data → Notifications on the dashboard), unless it is quiet hours. Near a
+    // reset the checklist is fetched every 10 minutes, also while its panel is closed; reminded
+    // resets are kept in preferences.json, so a restart does not repeat them.
+    private async Task TaskRemindersAsync()
+    {
+        if (!notifications.TasksInTray || api is not { } current || accountId.Length == 0) return;
+        var now = DateTimeOffset.UtcNow + serverOffset;
+        if (!ResetReminders.Near(now, resets)) return;
+        if (!tasksLoaded || DateTimeOffset.UtcNow - tasksFetchedAt > TimeSpan.FromMinutes(10))
+        {
+            if (refreshingTasks) return;
+            refreshingTasks = true;
+            try { var listed = await current.GetTasksAsync(); if (api != current) return; ApplyTasks(listed); }
+            catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { tasksFetchedAt = DateTimeOffset.UtcNow; return; }
+            finally { refreshingTasks = false; }
+            now = DateTimeOffset.UtcNow + serverOffset;
+        }
+        var reminded = new HashSet<string>(preferences.RemindedResets ?? []);
+        var due = ResetReminders.Due(tasks, resets, now, reminded);
+        if (due.Length == 0) return;
+        var quiet = notifications.QuietAt(now);
+        foreach (var notice in due)
+        {
+            reminded.Add(notice.Key);
+            if (quiet) { Log.Info($"Skipped the {notice.Cadence} reset reminder in the account's quiet hours."); continue; }
+            var left = Checklist.Remaining(notice.ResetAt - now);
+            var title = notice.Cadence == "weekly" ? Tn(notice.Open.Length, "Weekly reset in {1} · {0} task open", "Weekly reset in {1} · {0} tasks open", left) : Tn(notice.Open.Length, "Daily reset in {1} · {0} task open", "Daily reset in {1} · {0} tasks open", left);
+            Notify(title, T("Still open: {0}", ResetReminders.Summary(notice.Open)));
+            Log.Info($"Reminded of {notice.Open.Length} open {notice.Cadence} tasks before the reset at {notice.ResetAt:u}.");
+        }
+        PreferencesStore.Save(preferences = preferences with { RemindedResets = Reminders.Prune(reminded, now) });
+    }
     private void OpenLink(string url)
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
@@ -1131,7 +1176,7 @@ public partial class MainWindow : Window
     }
     private void ApplyTasks(TasksResponse listed)
     {
-        tasks = listed.Tasks; resets = listed.Resets ?? new(); tasksLoaded = true; tasksProblem = null;
+        tasks = listed.Tasks; resets = listed.Resets ?? new(); tasksLoaded = true; tasksProblem = null; tasksFetchedAt = DateTimeOffset.UtcNow;
         if (Readiness.Parse(listed.ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
         RenderTasks();
     }
