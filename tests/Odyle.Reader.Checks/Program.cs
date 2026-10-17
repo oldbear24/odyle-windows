@@ -41,6 +41,12 @@ static class ReaderChecks
                 Check(settings.FindName("SharingList") is ItemsControl && settings.FindName("InviteInput") is null && settings.FindName("RoomsList") is null, "rooms and sharing are managed on the dashboard; settings only summarizes them");
                 Check(Control<Button>(window, "ReportButton").Content as string == "Connect", "an unpaired reader points to settings");
                 Check(Control<TextBlock>(window, "ValueLabel").Text == "—", "no value is shown before a reading");
+                // Screen readers (W#16): every icon button (a glyph, no words) is named from its tooltip, and the
+                // reader's state line and the status line are polite live regions.
+                var icons = Tree(window).Concat(Tree(settings)).OfType<System.Windows.Controls.Primitives.ButtonBase>().Where(b => b.Content is string c && Translation.IsGlyph(c)).ToArray();
+                Check(icons.Length >= 5 && icons.All(b => System.Windows.Automation.AutomationProperties.GetName(b).Length > 0), "every icon button has a name: " + string.Join(", ", icons.Where(b => System.Windows.Automation.AutomationProperties.GetName(b).Length == 0).Select(b => b.Name)));
+                Check(System.Windows.Automation.AutomationProperties.GetName(Control<Button>(window, "PinButton")) == "Stay on top of other windows" && Translation.NameOf("Settings · account, rooms and reader setup") == "Settings" && !Translation.IsGlyph("OK") && Translation.IsGlyph("✕"), "the name is the tooltip's first part");
+                Check(new[] { "PacketStateLabel", "StatusLabel" }.All(n => System.Windows.Automation.AutomationProperties.GetLiveSetting(Control<TextBlock>(window, n)) == System.Windows.Automation.AutomationLiveSetting.Polite), "status lines are live regions");
                 var root = (FrameworkElement)settings.Content;
                 root.Width = 300; root.Height = 480; root.Measure(new Size(300, 480)); root.Arrange(new Rect(0, 0, 300, 480)); root.UpdateLayout();
                 var scroll = (ScrollViewer)settings.FindName("Scroller");
@@ -809,6 +815,7 @@ static class ReaderChecks
     static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
     static object? Call(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
     static T Control<T>(MainWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
+    static IEnumerable<DependencyObject> Tree(DependencyObject at) { yield return at; foreach (var child in LogicalTreeHelper.GetChildren(at)) if (child is DependencyObject next) foreach (var below in Tree(next)) yield return below; }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("UI check failed: " + message); }
     static async Task Until(Func<bool> condition, int attempts)
     {
