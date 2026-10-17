@@ -237,6 +237,31 @@ static class ReaderChecks
                 var trayRows = ((System.Collections.IEnumerable)Field("charactersItem").GetValue(window)!.GetType().GetProperty("DropDownItems")!.GetValue(Field("charactersItem").GetValue(window))!).Cast<object>().Select(ItemText).ToArray();
                 Check(ItemText(Field("readerItem").GetValue(window)!) == "Stop reader" && ItemText(Field("trayStatusItem").GetValue(window)!) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
                 Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ") && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · "), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
+                // The card's "Your characters" (W#17): closed until asked, then the tray's rows; it opens by
+                // itself while the game switches characters and closes once the game names the next one.
+                var altToggle = Control<Button>(window, "AltToggle"); var alts = Control<ItemsControl>(window, "AltList");
+                Call(window, "RenderHero");
+                Check(altToggle.Visibility == Visibility.Visible && alts.Visibility == Visibility.Collapsed && altToggle.Content as string == "Your characters (2) ▾", "with two characters the card offers them, closed: " + altToggle.Content);
+                altToggle.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                var altRows = (alts.ItemsSource?.Cast<object>() ?? []).Select(r => (string)r.GetType().GetProperty("Name")!.GetValue(r)! + " · " + (string)r.GetType().GetProperty("Detail")!.GetValue(r)!).ToArray();
+                Check(alts.Visibility == Visibility.Visible && altRows.Length == 2 && altRows[0] == trayRows[0] && altRows[1] == trayRows[1], "opened, it lists them as the tray does: " + string.Join(" | ", altRows));
+                altToggle.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                var namedKey = Field("gameCharacterKey").GetValue(window)!;
+                Field("gameCharacterKey").SetValue(window, "?"); Call(window, "RenderHero");
+                Check(alts.Visibility == Visibility.Visible && altToggle.Content as string == "Your characters (2) ▴", "while the game switches characters the list opens by itself");
+                Field("gameCharacterKey").SetValue(window, "Altie|2304"); Call(window, "RenderHero");
+                Check(alts.Visibility == Visibility.Collapsed, "and closes once the game names the next character");
+                Field("gameCharacterKey").SetValue(window, namedKey);
+                // The tray icon carries the reader's state: a dot while it reads, none when stopped, each drawn once.
+                var readerStates = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
+                var stateBefore = Field("readerState").GetValue(window)!; var lineBefore = Control<TextBlock>(window, "PacketStateLabel").Text;
+                object TrayIconNow() { var icon = Field("tray").GetValue(window)!; return icon.GetType().GetProperty("Icon")!.GetValue(icon)!; }
+                Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live"); var liveIcon = TrayIconNow();
+                Call(window, "SetReaderState", Enum.Parse(readerStates, "Stale"), "Stale"); var staleIcon = TrayIconNow();
+                Call(window, "SetReaderState", Enum.Parse(readerStates, "Stopped"), "Stopped"); var stoppedIcon = TrayIconNow();
+                Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live again");
+                Check(!ReferenceEquals(liveIcon, stoppedIcon) && !ReferenceEquals(liveIcon, staleIcon) && !ReferenceEquals(staleIcon, stoppedIcon) && ReferenceEquals(TrayIconNow(), liveIcon), "the tray icon shows whether the reader reads, waits or is stopped");
+                Call(window, "SetReaderState", stateBefore, lineBefore);
                 Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
                 foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
                 Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, ExperimentalOdyleDecoder.Version));
@@ -715,6 +740,19 @@ static class ReaderChecks
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
+        // The account's characters on the card (W#17), opened.
+        Field("altsOpened").SetValue(window, true); Call(window, "RenderHero");
+        Snapshot(window, Path.Combine(directory, "characters-preview.png"));
+        Field("altsOpened").SetValue(window, false); Call(window, "RenderHero");
+        // The tray icon in each state, at the size it is drawn (W#17).
+        foreach (var name in new[] { "Stopped", "Listening", "Live", "Stale", "Problem" })
+        {
+            Call(window, "SetReaderState", Enum.Parse(state, name), name);
+            var tray = Field("tray").GetValue(window)!; var icon = tray.GetType().GetProperty("Icon")!.GetValue(tray)!;
+            var bitmap = icon.GetType().GetMethod("ToBitmap")!.Invoke(icon, null)!;
+            bitmap.GetType().GetMethod("Save", [typeof(string)])!.Invoke(bitmap, [Path.Combine(directory, $"tray-{name.ToLowerInvariant()}.png")]);
+        }
+        Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
         // The same moment in compact mode.
         Call(window, "SetCompact", true, false);
         Snapshot(window, Path.Combine(directory, "compact-mode-preview.png"), (int)CompactStrip.Width);
