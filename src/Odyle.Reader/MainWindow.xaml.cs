@@ -745,6 +745,7 @@ public partial class MainWindow : Window
         // Notification settings saved on the dashboard apply at once.
         if (news.Notifications is { } saved) { notifications = saved; CheckReminders(); }
         // Cap alerts of the account's characters (the server checked the quiet hours).
+        if (notifications.ReadyInTray) foreach (var party in news.PartyReady) { var (title, text) = party.Notice(); Notify(title, text); Log.Info($"Told that the party of run {party.RunId} is ready."); }
         if (notifications.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
         if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
         // Versions the operators hold back (#19): a downloaded one is dropped, and this build moves off one it runs.

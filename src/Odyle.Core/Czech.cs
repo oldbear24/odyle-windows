@@ -146,6 +146,8 @@ public static class Czech
         ["Unsupported or incomplete packets · reconnect the game before retrying."] = "Nepodporované nebo neúplné pakety · před dalším pokusem připoj hru znovu.",
         ["Message from the server's operators"] = "Zpráva od provozovatelů serveru",
         ["Odyle cannot read the game"] = "Odyle nemůže číst hru",
+        ["{0}: the party is ready"] = "{0}: parta je připravená",
+        ["All {0} going can claim a cube · {1}"] = "Všech {0} jdoucích si vezme kostku · {1}",
         ["Still open: {0}"] = "Ještě otevřené: {0}",
         ["natural {0:N0} · items {1:N0}"] = "přirozená {0:N0} · z předmětů {1:N0}",
         ["{0} at {1:HH:mm}"] = "{0} v {1:HH:mm}",
