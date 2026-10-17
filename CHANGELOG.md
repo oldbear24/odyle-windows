@@ -2,6 +2,14 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.14.2 · 2026-10-17
+
+### Changed
+- A game connection that reaches your PC on two network adapters (a virtual switch, a bridge) is read once instead of twice, which saves work while you play.
+
+### Fixed
+- A rare game message starting with certain bytes no longer makes the reader resync.
+
 ## 0.14.1 · 2026-10-17
 
 ### Changed

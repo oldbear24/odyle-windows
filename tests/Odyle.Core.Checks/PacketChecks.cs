@@ -168,6 +168,16 @@ static class PacketChecks
         Assert(!midstream.Synchronized, "a heartbeat waits for the next frame's length");
         midstream.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 390))]));
         Assert(midSeen.Single() is { Base: 0, Bonus: 390, Total: 390 } && midstream.Synchronized, "flagged 0 plus 390 after a heartbeat");
+        // A byte from F0 to FE is a transport flag only before a frame the decoder reads; another opcode starting with one stays whole.
+        var opcodes = new List<int>(); var flagged = new ExperimentalOdyleDecoder(); flagged.FrameObserved += (opcode, _) => opcodes.Add(opcode);
+        flagged.Feed(Frame([0xf4, 0x12, 0x34, 0x56])); flagged.Feed(Frame([0xf2, 0x33])); flagged.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 5))]));
+        Assert(opcodes.SequenceEqual(new[] { 0xf412, 0xf233, 0x0b61 }), "a flag byte is stripped only before a readable frame: " + string.Join(",", opcodes.Select(o => o.ToString("X4"))));
+        // One owner per game connection: the first interface to deliver it, until it goes quiet or stops.
+        var owners = new FlowOwners(TimeSpan.FromSeconds(10)); var flowA = new TcpFlow("10.0.0.2", 50000, "1.2.3.4", 13328); var at = DateTimeOffset.UnixEpoch;
+        Assert(owners.Claim(flowA, "eth", at) && !owners.Claim(flowA, "vswitch", at.AddSeconds(1)) && owners.Claim(flowA, "eth", at.AddSeconds(5)), "the first interface keeps the connection");
+        Assert(owners.Claim(flowA, "vswitch", at.AddSeconds(16)) && owners.OwnerOf(flowA) == "vswitch" && !owners.Claim(flowA, "eth", at.AddSeconds(17)), "a quiet owner hands it over");
+        owners.Release("vswitch"); Assert(owners.OwnerOf(flowA) is null && owners.Claim(flowA, "eth", at.AddSeconds(18)), "a stopped interface gives it up");
+        owners.Keep(Array.Empty<TcpFlow>()); Assert(owners.OwnerOf(flowA) is null, "connections the game closed are forgotten");
         var falseMatch = new ExperimentalOdyleDecoder(startsAligned: false); var falseSeen = new List<PacketCandidate>(); falseMatch.Candidate += falseSeen.Add;
         falseMatch.Feed(new byte[] { 0x06, 0x00, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 });
         Assert(!falseMatch.Synchronized, "heartbeat bytes before an impossible length are not trusted");

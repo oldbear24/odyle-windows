@@ -221,10 +221,13 @@ public sealed class ExperimentalOdyleDecoder
         if (data.Length > 10) Drop(data.Length - 10);
         return false;
     }
+    private static bool Readable(byte first, byte second) => (first, second) is (0xff, 0xff) or (0x33, 0x36) or (0x0b, 0x61) or (0x0c, 0x61);
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)
     {
-        // Global frames can carry one transport flag before the opcode.
-        if (!frame.IsEmpty && frame[0] is >= 0xf0 and <= 0xfe) frame = frame[1..];
+        // Global frames can carry one transport flag (F0 to FE) before the opcode. It is taken for one
+        // only before a frame this decoder reads (an LZ4 bundle, the identity, a stat frame); another
+        // opcode that starts with such a byte stays whole instead of being read one byte off.
+        if (frame.Length >= 3 && frame[0] is >= 0xf0 and <= 0xfe && Readable(frame[1], frame[2])) frame = frame[1..];
         if (frame.Length < 2) throw new InvalidDataException("Incomplete opcode.");
         if (frame[0] == 0xff && frame[1] == 0xff)
         {

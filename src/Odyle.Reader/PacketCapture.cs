@@ -303,6 +303,8 @@ public sealed class PacketCapture : IAsyncDisposable
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
         decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value); decoder.SnapshotWithoutOdyle += () => SnapshotWithoutOdyle?.Invoke();
     }
+    // Each game connection is decoded on one interface only, the first to deliver it (FlowOwners).
+    private readonly FlowOwners owners = new(TimeSpan.FromSeconds(10));
     private void Receive(string name, Worker worker, CancellationToken token)
     {
         var error = new StringBuilder(256); var handle = pcap_open_live(name, 65536, 0, 200, error);
@@ -324,7 +326,7 @@ public sealed class PacketCapture : IAsyncDisposable
             if (worker.Announced) { worker.Announced = false; Log.Info($"Capture interface {name} works again."); }
             while (!token.IsCancellationRequested)
             {
-                if (DateTimeOffset.UtcNow >= nextRefresh) { nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = CurrentFlows(immediate: false); streams.Maintain(flows, DateTimeOffset.UtcNow); }
+                if (DateTimeOffset.UtcNow >= nextRefresh) { nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = CurrentFlows(immediate: false); owners.Keep(flows); streams.Maintain(flows, DateTimeOffset.UtcNow); }
                 var received = pcap_next_ex(handle, out var header, out var pointer);
                 if (received == 0) { Thread.Sleep(50); continue; }
                 if (received < 0) throw new InvalidOperationException("Packet capture disconnected.");
@@ -343,6 +345,7 @@ public sealed class PacketCapture : IAsyncDisposable
                     var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
                     var flow = new TcpFlow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
                     if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true); if (!flows.Contains(flow)) continue; }
+                    if (!owners.Claim(flow, name, DateTimeOffset.UtcNow)) continue;
                     var decoded = streams.Feed(flow, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), bytes[tcp + 13], bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength));
                     if (decoded > 0) Interlocked.Add(ref gameBytes, decoded);
                 }
@@ -350,7 +353,7 @@ public sealed class PacketCapture : IAsyncDisposable
             }
         }
         catch (Exception failure) { reason = failure.Message; }
-        finally { worker.Capturing = false; pcap_close(handle); if (!worker.Unsupported) Stopped(name, worker, token, reason); }
+        finally { worker.Capturing = false; owners.Release(name); pcap_close(handle); if (!worker.Unsupported) Stopped(name, worker, token, reason); }
     }
     // A worker that ended without being asked to is opened again after 5 s, then 10, 20,
     // 40 and at most 60 seconds while it keeps failing; a minute of capturing resets that.
