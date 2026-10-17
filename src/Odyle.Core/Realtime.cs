@@ -15,6 +15,8 @@ namespace Odyle.Core;
 public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Characters, IReadOnlyDictionary<string, string> Seen)
 {
     public Version? Release { get; init; }
+    // The Windows versions held back, when the server's operators changed them (#19); null otherwise.
+    public Version[]? HeldBack { get; init; }
     public bool AnnouncementChanged { get; init; }
     public Announcement? Announcement { get; init; }
     public NotificationSettings? Notifications { get; init; }
@@ -48,7 +50,10 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         CapAlert[] alerts = [];
         if (data.TryGetProperty("capAlerts", out var told) && told.ValueKind == JsonValueKind.Array)
             try { alerts = told.Deserialize<CapAlert[]>(Json)?.Where(a => a is { CharacterName.Length: > 0, State: "soon" or "full" }).ToArray() ?? []; } catch (JsonException) { }
-        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
+        Version[]? heldBack = null;
+        if (data.TryGetProperty("windowsBlocked", out var held) && held.ValueKind == JsonValueKind.Array)
+            heldBack = ReleaseFeed.HeldBack(held.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
     }
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's

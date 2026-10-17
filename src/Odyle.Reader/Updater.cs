@@ -54,11 +54,20 @@ public static class Updater
         if (!response.IsSuccessStatusCode) throw new HttpRequestException(T("GitHub answered {0}.", (int)response.StatusCode), null, response.StatusCode);
         return ReleaseFeed.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
     }
-    // A release newer than this build that has a package for this machine, else null.
-    public static async Task<AppRelease?> CheckAsync(CancellationToken token)
+    // The release to install: newer than this build, with a package for this machine and not held
+    // back, or, while this build is held back, the latest one even if older (ReleaseFeed.Choose).
+    public static async Task<AppRelease?> CheckAsync(IReadOnlyCollection<Version> heldBack, CancellationToken token) =>
+        ReleaseFeed.Choose(await FetchLatestAsync(token), Current, heldBack, Runtime, SelfContained);
+    // Drops downloaded packages of held-back versions, so none is installed at the next start.
+    public static void Forget(IEnumerable<Version> heldBack)
     {
-        var release = await FetchLatestAsync(token);
-        return release is not null && release.IsNewerThan(Current) && release.Package(Runtime, SelfContained) is not null ? release : null;
+        if (!Directory.Exists(Staging)) return;
+        foreach (var version in heldBack)
+        {
+            var directory = Path.Combine(Staging, ReleaseFeed.Normalize(version).ToString());
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn($"Could not drop the held-back Odyle {version}: {error.Message}"); }
+        }
     }
     // Downloads this machine's package, verifies it against the release's .sha256 file
     // and extracts it; the folder is renamed into place only once everything checked out.
