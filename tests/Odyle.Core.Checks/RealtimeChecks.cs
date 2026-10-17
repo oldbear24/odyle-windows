@@ -12,6 +12,10 @@ static class RealtimeChecks
     public static void Run()
     {
         var refresh = RealtimeNews.Parse(Json("""{"refresh":true}"""));
+        // Party ready (odyle-dashboard#48): the runs whose attendees can all claim a cube, worded for the tray.
+        var party = RealtimeNews.Parse(Json("""{"partyReady":[{"runId":"r1","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","of":5},{"runId":"","dungeon":"x","of":1}]}""")).PartyReady;
+        Check(party is [{ RunId: "r1", Of: 5 }] && party[0].Notice() == ("Fire Temple: the party is ready", "All 5 going can claim a cube · Raid night") && refresh.PartyReady.Length == 0, "party-ready news");
+        Check(NotificationSettings.Default.ReadyInTray && !new NotificationSettings(Kinds: new(Ready: false)).ReadyInTray && !new NotificationSettings(Channels: new(Tray: false)).ReadyInTray, "party ready shows in the tray until turned off");
         // Held-back Windows versions (#19) come as their own news; other news leaves them unknown.
         Check(RealtimeNews.Parse(Json("""{"windowsBlocked":["0.18.0","bad"]}""")).HeldBack is [{ Major: 0, Minor: 18, Build: 0 }] && RealtimeNews.Parse(Json("""{"windowsBlocked":[]}""")).HeldBack is [] && refresh.HeldBack is null, "held-back versions news");
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");

@@ -21,6 +21,8 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
     public Announcement? Announcement { get; init; }
     public NotificationSettings? Notifications { get; init; }
     public CapAlert[] CapAlerts { get; init; } = [];
+    // Runs whose party is ready (odyle-dashboard#48).
+    public PartyReady[] PartyReady { get; init; } = [];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     // A message the app cannot read means "fetch again".
     public static RealtimeNews Parse(JsonElement data)
@@ -50,10 +52,13 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         CapAlert[] alerts = [];
         if (data.TryGetProperty("capAlerts", out var told) && told.ValueKind == JsonValueKind.Array)
             try { alerts = told.Deserialize<CapAlert[]>(Json)?.Where(a => a is { CharacterName.Length: > 0, State: "soon" or "full" }).ToArray() ?? []; } catch (JsonException) { }
+        PartyReady[] ready = [];
+        if (data.TryGetProperty("partyReady", out var parties) && parties.ValueKind == JsonValueKind.Array)
+            try { ready = parties.Deserialize<PartyReady[]>(Json)?.Where(p => p is { RunId.Length: > 0, Dungeon.Length: > 0, Of: > 0 }).ToArray() ?? []; } catch (JsonException) { }
         Version[]? heldBack = null;
         if (data.TryGetProperty("windowsBlocked", out var held) && held.ValueKind == JsonValueKind.Array)
             heldBack = ReleaseFeed.HeldBack(held.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
-        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, PartyReady = ready, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
     }
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's

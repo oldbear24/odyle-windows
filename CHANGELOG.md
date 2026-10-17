@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.19.0 · 2026-10-17
+
+### New
+- **Party ready**: from an hour before a run you are going to, once everyone going plays live with enough Odyle for a cube, the tray says so once ("Fire Temple: the party is ready"). Turn it off on the dashboard under **Account & data → Notifications**. Needs a dashboard server from 0.29.0.
+
 ## 0.18.0 · 2026-10-17
 
 ### New
