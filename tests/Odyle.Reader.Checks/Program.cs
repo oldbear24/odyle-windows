@@ -585,6 +585,12 @@ static class ReaderChecks
                     await (Task)Call(window, "StopReaderAsync")!;
                     Console.WriteLine("Windows UI game-driven characters, change-only sending, in-game switch attribution, dashboard-managed room sharing, party list and persistence passed.");
                 }
+                // Open in Odyle: a second start hands its link to the running Odyle through the pipe; nobody listening is a plain failure.
+                var pipeUser = "check-" + Guid.NewGuid().ToString("N"); var pipeLink = new TaskCompletionSource<string>(); var pipe = new PairPipe(pipeUser, link => pipeLink.TrySetResult(link));
+                var pipeSent = false; for (var i = 0; i < 20 && !(pipeSent = PairPipe.Send(pipeUser, "odyle://pair?link=x")); i++) await Task.Delay(100);
+                Check(pipeSent && await Task.WhenAny(pipeLink.Task, Task.Delay(3000)) == pipeLink.Task && pipeLink.Task.Result == "odyle://pair?link=x", "a second start hands its link to the running Odyle");
+                pipe.Stop(); Check(!PairPipe.Send("check-nobody-" + Guid.NewGuid().ToString("N"), "odyle://pair?link=x"), "with no Odyle running the link is not taken");
+                Check(PairProtocol.CommandFor(@"C:\Apps\Odyle\Odyle.exe") == "\"C:\\Apps\\Odyle\\Odyle.exe\" --pair \"%1\"", "odyle:// links start Odyle with --pair");
                 Console.WriteLine("Windows UI compact window, compact mode, What's new, separate settings, reading card, party list, narrow layout, reader pause, Npcap setup, Start with Windows offer, diagnostics and --unpair passed.");
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }

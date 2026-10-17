@@ -57,6 +57,8 @@ public static class Czech
         ["Quit Odyle? It stops reading {0}, and your party sees {0} offline.\n\nSettings can turn this question off."] = "Ukončit Odyle? Přestane číst {0} a parta uvidí {0} offline.\n\nV Nastavení můžeš tuhle otázku vypnout.",
         ["Ask before quitting while a character is read"] = "Zeptat se před ukončením, když se čte postava", ["Quitting stops the reader, and your party sees the character offline"] = "Ukončení zastaví čtečku a parta uvidí postavu offline",
         ["{0} · at the cost of {1}"] = "{0} · podle ceny v místnosti {1}",
+        ["This is not an Odyle pairing link. Copy the connection link from Pair Windows app on the dashboard."] = "Tohle není párovací odkaz Odyle. Zkopíruj odkaz pro připojení ze Spárovat Windows aplikaci na dashboardu.",
+        ["Pair Odyle on this PC with the server {0}?"] = "Spárovat Odyle na tomto PC se serverem {0}?", ["This replaces this PC's pairing with {0}."] = "Tím se nahradí párování tohoto PC s účtem {0}.",
         ["Quit"] = "Ukončit", ["Quit Odyle completely · closing the window keeps it in the tray"] = "Úplně ukončit Odyle · po zavření okna zůstane v oznamovací oblasti",
         ["Restart to update"] = "Aktualizovat", ["Your connection is remembered on this PC."] = "Připojení si tento počítač pamatuje.",
         // Tray

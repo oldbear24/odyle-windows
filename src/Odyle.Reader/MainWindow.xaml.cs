@@ -280,6 +280,21 @@ public partial class MainWindow : Window
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     // A second start of Odyle signals this one (App) to show its window in front.
+    // Open in Odyle on the dashboard (odyle://pair?link=…). The link names the server, and any page could
+    // open such a link, so Odyle asks before pairing with it and says when that replaces this PC's pairing.
+    public async void OfferPairing(string link)
+    {
+        BringToFront();
+        ConnectionDetails connection;
+        try { connection = ConnectionDetails.FromAppLink(link); }
+        catch (ArgumentException error) { Status(error.Message); Log.Warn("An Open in Odyle link was not taken: " + error.Message); return; }
+        var host = new Uri(connection.Endpoint).Authority;
+        var replaces = api is not null && accountName.Length > 0 ? "\n\n" + T("This replaces this PC's pairing with {0}.", accountName) : "";
+        if (MessageBox.Show(this, T("Pair Odyle on this PC with the server {0}?", host) + replaces, "Odyle", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) { Log.Info("An Open in Odyle link for " + host + " was declined."); return; }
+        Log.Info("Pairing from an Open in Odyle link for " + host + ".");
+        settings.EndpointInput.Text = connection.Endpoint; settings.CodeInput.Password = connection.Code;
+        await ExecuteAsync(PairAsync);
+    }
     public void BringToFront()
     {
         ShowWindow();
