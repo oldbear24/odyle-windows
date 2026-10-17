@@ -10,6 +10,11 @@ public sealed record PartyReady(string RunId, string RoomId, string Room, string
 {
     public (string Title, string Text) Notice() => (Localizer.T("{0}: the party is ready", Dungeon), Localizer.T("All {0} going can claim a cube · {1}", Of, Room));
 }
+// A run planned from the wishlist invites those who wanted its dungeon (odyle-dashboard#45).
+public sealed record RunInvite(string RunId, string RoomId, string Room, string Dungeon, string StartsAt, string By)
+{
+    public (string Title, string Text) Notice() => (Localizer.T("{0} invites you to {1}", By, Dungeon), Readiness.Parse(StartsAt) is { } at ? Localizer.T("{0} · {1}", Room, at.ToLocalTime().ToString("ddd HH:mm", Localizer.Culture)) : Room);
+}
 public sealed record CapAlert(string CharacterId, string CharacterName, string State, int Base, int Cap, bool Settled, int Tick, string? At = null)
 {
     public (string Title, string Text) Notice()

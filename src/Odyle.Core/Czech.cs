@@ -147,6 +147,8 @@ public static class Czech
         ["Message from the server's operators"] = "Zpráva od provozovatelů serveru",
         ["Odyle cannot read the game"] = "Odyle nemůže číst hru",
         ["{0}: the party is ready"] = "{0}: parta je připravená",
+        ["{0} invites you to {1}"] = "{0} tě zve na {1}",
+        ["{0} · {1}"] = "{0} · {1}",
         ["All {0} going can claim a cube · {1}"] = "Všech {0} jdoucích si vezme kostku · {1}",
         ["Show tasks"] = "Zobrazit úkoly",
         ["Characters"] = "Postavy",
