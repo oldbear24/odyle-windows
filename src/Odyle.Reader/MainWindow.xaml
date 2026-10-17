@@ -104,7 +104,7 @@
      <StackPanel VerticalAlignment="Center">
       <DockPanel x:Name="ReaderRow" Background="Transparent" ToolTipService.IsEnabled="False">
        <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
-       <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+       <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" AutomationProperties.LiveSetting="Polite" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
       </DockPanel>
       <Button x:Name="NpcapLink" Style="{StaticResource Ghost}" Content="Install Npcap ↗" Visibility="Collapsed" Click="NpcapLink_Click" HorizontalAlignment="Left" Margin="10,1,0,0" Padding="4,1" FontSize="10.5" Foreground="{StaticResource Mint}" ToolTip="Opens npcap.com · Odyle starts reading by itself once Npcap is installed"/>
      </StackPanel>
@@ -157,7 +157,7 @@
 
    <!-- Footer -->
    <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,4,6,4">
-    <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
+    <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" AutomationProperties.LiveSetting="Polite" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
    </Border>
   </Grid>
 

@@ -317,7 +317,7 @@ public partial class MainWindow : Window
     private void Status(string message)
     {
         StatusLabel.Text = message;
-        if (message != lastStatus) { lastStatus = message; Log.Info("Status: " + message); }
+        if (message != lastStatus) { lastStatus = message; Log.Info("Status: " + message); Translation.Announce(StatusLabel); }
     }
     // What a failed request means for the person at the PC, in their language.
     private static string Describe(Exception error) => error switch
@@ -359,7 +359,8 @@ public partial class MainWindow : Window
             ReaderState.Paused => ("Amber", "Amber"),
             _ => ("Rose", "Rose"),
         };
-        ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text); PacketStateLabel.Text = message;
+        ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text);
+        if (PacketStateLabel.Text != message) { PacketStateLabel.Text = message; Translation.Announce(PacketStateLabel); }
         // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
         // restricted, a capture that failed. It reads again: the next problem is told again.
         if (state == ReaderState.Live) problemNoticed = "";

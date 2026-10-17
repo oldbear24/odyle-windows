@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.17.1 · 2026-10-17
+
+### Fixed
+- **Screen readers** name the card's icon buttons (pin, tasks, compact mode, settings, the ✕ that hides a message) by what they do, and announce when the reader's state or the status line changes.
+
 ## 0.17.0 · 2026-10-17
 
 ### New
