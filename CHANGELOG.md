@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.17.2 · 2026-10-17
+
+### Fixed
+- A message from the server's operators that you hid on the card **stays hidden after a restart**, until its text changes.
+
 ## 0.17.1 · 2026-10-17
 
 ### Fixed

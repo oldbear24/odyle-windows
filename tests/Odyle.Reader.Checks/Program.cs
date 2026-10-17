@@ -213,7 +213,7 @@ static class ReaderChecks
                 Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Please update to the newest Odyle today.", "a new announcement shows again");
                 Call(window, "ShowAnnouncement", new object[] { null! });
                 Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "a removed announcement disappears");
-                Check(Field("hiddenAnnouncement").GetValue(window) is "Maintenance at 10:00 UTC", "hiding is remembered while the app runs");
+                Check(Field("hiddenAnnouncement").GetValue(window) is "Maintenance at 10:00 UTC" && PreferencesStore.Load().HiddenAnnouncement == "Maintenance at 10:00 UTC", "hiding is remembered while the app runs, and after a restart");
                 Field("hiddenAnnouncement").SetValue(window, "");
                 // News on the account's topic: a changed announcement shows at once, a new warning also as a
                 // notification; a release no newer than this build looks for nothing.

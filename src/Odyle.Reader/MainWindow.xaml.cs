@@ -237,7 +237,7 @@ public partial class MainWindow : Window
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
-        preferences = PreferencesStore.Load(); settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
         // Odyle before (it is paired) hears of this one.
@@ -836,8 +836,9 @@ public partial class MainWindow : Window
         // Connection problems are reported by the heartbeat; keep the last list.
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
     }
-    // The server's announcement above the reading card, as plain text. Hiding it lasts
-    // until the text changes; a new message also shows up when the window is hidden.
+    // The server's announcement above the reading card, as plain text. Hiding it lasts until the
+    // text changes, across restarts too (preferences.json, odyle-dashboard#47); a new message also
+    // shows up when the window is hidden.
     private Announcement? announcement;
     private string hiddenAnnouncement = "";
     private void ShowAnnouncement(Announcement? next)
@@ -852,7 +853,11 @@ public partial class MainWindow : Window
         AnnouncementText.Foreground = Brush(current.IsWarning ? "Amber" : "Text");
         AnnouncementBar.Visibility = Visibility.Visible;
     }
-    private void HideAnnouncement_Click(object sender, RoutedEventArgs e) { hiddenAnnouncement = announcement?.Text ?? ""; ShowAnnouncement(announcement); }
+    private void HideAnnouncement_Click(object sender, RoutedEventArgs e)
+    {
+        hiddenAnnouncement = announcement?.Text ?? ""; ShowAnnouncement(announcement);
+        PreferencesStore.Save(preferences = preferences with { HiddenAnnouncement = hiddenAnnouncement });
+    }
     // Tray notifications (toasts on Windows 10 and 11); clicking one opens the window.
     private void Notify(string title, string text)
     {
