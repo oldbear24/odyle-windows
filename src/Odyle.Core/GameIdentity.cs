@@ -6,6 +6,8 @@ namespace Odyle.Core;
 // Class is the wire class id, logged to confirm new classes; it is never sent anywhere.
 public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerId, string? Server, string? Region, uint Class = 0)
 {
+    // The region a server takes: one that does not list NA-West yet saves those characters as NA, as before.
+    public string? RegionFor(bool serverKnowsNaWest) => Region == "GLOBAL_NAW" && !serverKnowsNaWest ? "GLOBAL_NA" : Region;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     // Game server names and their numeric order are protocol data, not a
     // borrowed decoder implementation. See docs/packet-reader.md for sources.
@@ -30,7 +32,9 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
         var server = BinaryPrimitives.ReadUInt16LittleEndian(payload[offset..]);
         var job = BinaryPrimitives.ReadUInt32LittleEndian(payload[(offset + 2)..]);
         if (job is < 5 or > 48 || server is < 1000 or >= 3000) return null;
-        var region = (server / 100 % 10) switch { 1 or 2 => "GLOBAL_NA", 3 => "GLOBAL_EU", 4 => "GLOBAL_SA", 5 => "GLOBAL_ASIA", _ => null };
+        // NA-East (1xx) and NA-West (2xx) have servers of the same names, so they are separate regions (#4);
+        // a server from before NA-West takes GLOBAL_NA for both (GameIdentity.ForServer).
+        var region = (server / 100 % 10) switch { 1 => "GLOBAL_NA", 2 => "GLOBAL_NAW", 3 => "GLOBAL_EU", 4 => "GLOBAL_SA", 5 => "GLOBAL_ASIA", _ => null };
         var index = server % 100 - 1;
         var names = server / 1000 == 1 ? Elyos : Asmodian;
         var label = index >= 0 && index < names.Length ? names[index] : null;

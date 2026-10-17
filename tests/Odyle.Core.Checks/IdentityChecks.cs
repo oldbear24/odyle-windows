@@ -15,7 +15,9 @@ static class IdentityChecks
         }
         var lumiel = GameIdentity.Read(Payload(2304)) ?? throw new Exception("Identity missing");
         Check(lumiel.CharacterName == "TestHero" && lumiel.Server == "Lumiel" && lumiel.Region == "GLOBAL_EU", "EU Lumiel identity");
-        Check(GameIdentity.Read(Payload(1101))?.Region == "GLOBAL_NA" && GameIdentity.Read(Payload(2204))?.Region == "GLOBAL_NA", "NA region codes");
+        Check(GameIdentity.Read(Payload(1101))?.Region == "GLOBAL_NA" && GameIdentity.Read(Payload(2104))?.Region == "GLOBAL_NA", "NA-East region codes");
+        Check(GameIdentity.Read(Payload(1201)) is { Server: "Siel", Region: "GLOBAL_NAW" } && GameIdentity.Read(Payload(2204)) is { Server: "Lumiel", Region: "GLOBAL_NAW" }, "NA-West is its own region, with the same server names");
+        Check(GameIdentity.Read(Payload(1201))!.RegionFor(false) == "GLOBAL_NA" && GameIdentity.Read(Payload(1201))!.RegionFor(true) == "GLOBAL_NAW" && GameIdentity.Read(Payload(2304))!.RegionFor(false) == "GLOBAL_EU", "a server without NA-West saves those characters as NA");
         Check(GameIdentity.Read(Payload(2404))?.Region == "GLOBAL_SA" && GameIdentity.Read(Payload(2504))?.Region == "GLOBAL_ASIA", "SA/Asia codes");
         Check(GameIdentity.Read(Payload(2360)) is { Server: null, Region: "GLOBAL_EU" }, "unmapped server never guessed");
         Check(GameIdentity.Read(Payload(2004)) is { Region: null }, "unmapped region never guessed");
