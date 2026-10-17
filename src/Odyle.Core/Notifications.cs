@@ -5,7 +5,9 @@ namespace Odyle.Core;
 // on the account's topic when they change. Saved is false while the account keeps the
 // defaults; older backends send none (null).
 public sealed record NotificationChannels(bool Tray = true, bool Browser = true, bool Push = true);
-public sealed record NotificationKinds(bool Runs = true, bool Cap = false);
+// Tasks: the tasks still open two hours before a reset (odyle-dashboard#48); left out by older
+// backends and saved settings from before it, which means on.
+public sealed record NotificationKinds(bool Runs = true, bool Cap = false, bool? Tasks = null);
 // From and To are "HH:mm" (both empty: none) in the IANA TimeZone; a span over midnight wraps.
 public sealed record QuietHours(string From = "", string To = "", string TimeZone = "");
 // CapTicks: how many regeneration ticks before the cap a cap alert comes (0: when full; 1 when left out).
@@ -19,6 +21,8 @@ public sealed record NotificationSettings(NotificationChannels? Channels = null,
     public bool RunsInTray => Where.Tray && What.Runs;
     // Cap alerts show in this app's tray.
     public bool CapInTray => Where.Tray && What.Cap;
+    // Open tasks before a reset show in this app's tray.
+    public bool TasksInTray => Where.Tray && (What.Tasks ?? true);
 
     // Whether a moment falls in the quiet hours; an unknown time zone has none.
     public bool QuietAt(DateTimeOffset at)

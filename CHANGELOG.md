@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.17.0 · 2026-10-17
+
+### New
+- **Tasks still open before a reset.** Two hours before the daily and the weekly reset, the tray lists the tasks of that checklist you have not ticked yet ("Daily reset in 2h · 2 tasks open · Still open: Sanctuary ×2"), once per reset, and never when everything is done. Turn it off on the dashboard under **Account & data → Notifications**; quiet hours apply.
+- **A reader problem while Odyle sits in the tray** (Npcap missing or restricted, a capture that failed) shows one notification, so a minimised card no longer hides that nothing is read.
+
 ## 0.16.0 · 2026-10-17
 
 ### New

@@ -8,14 +8,14 @@ namespace Odyle.Reader;
 // weekly checklist beside the card, in which language ("auto" follows Windows) and
 // where it was last (WPF units). RemindRuns was the planned-run reminders' switch before the
 // account's notification settings (moved to the account once, RemindRunsMoved; kept for
-// backends without them); RemindedRuns and NotifiedUpdate keep notifications from repeating after a restart;
+// backends without them); RemindedRuns, RemindedResets and NotifiedUpdate keep notifications from repeating after a restart;
 // AutostartOffered, once the one-time offer to start with Windows was answered. Compact mode:
 // whether it was on and its shortcut ("" off); the window keeps its one position. SeenVersion: the
 // version whose What's new the card last offered ("earlier" for a PC that ran Odyle before it).
 // Everything else is configured on the dashboard.
 public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null,
     bool RemindRuns = true, string[]? RemindedRuns = null, string NotifiedUpdate = "", bool AutostartOffered = false, bool RemindRunsMoved = false,
-    bool CompactMode = false, string CompactHotkey = CompactStrip.DefaultHotkey, string SeenVersion = "", bool ConfirmQuit = true);
+    bool CompactMode = false, string CompactHotkey = CompactStrip.DefaultHotkey, string SeenVersion = "", bool ConfirmQuit = true, string[]? RemindedResets = null);
 public static class PreferencesStore
 {
     // Checks point this at a temporary file so they never touch the user's preferences.

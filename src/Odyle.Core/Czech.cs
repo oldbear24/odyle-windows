@@ -145,6 +145,8 @@ public static class Czech
         ["Listening to AION2 · {0} has no Odyle yet."] = "Poslouchám AION2 · {0} zatím nemá Odyle.",
         ["Unsupported or incomplete packets · reconnect the game before retrying."] = "Nepodporované nebo neúplné pakety · před dalším pokusem připoj hru znovu.",
         ["Message from the server's operators"] = "Zpráva od provozovatelů serveru",
+        ["Odyle cannot read the game"] = "Odyle nemůže číst hru",
+        ["Still open: {0}"] = "Ještě otevřené: {0}",
         ["natural {0:N0} · items {1:N0}"] = "přirozená {0:N0} · z předmětů {1:N0}",
         ["{0} at {1:HH:mm}"] = "{0} v {1:HH:mm}",
         ["≈{0:N0} now if unspent"] = "≈{0:N0} teď, pokud nic neutratil",
@@ -249,5 +251,7 @@ public static class Czech
     {
         ["{0} cube|{0} cubes"] = ["{0} kostka", "{0} kostky", "{0} kostek"],
         ["{1} starts in {0} minute|{1} starts in {0} minutes"] = ["{1} začíná za {0} minutu", "{1} začíná za {0} minuty", "{1} začíná za {0} minut"],
+        ["Daily reset in {1} · {0} task open|Daily reset in {1} · {0} tasks open"] = ["Denní reset za {1} · otevřený {0} úkol", "Denní reset za {1} · otevřené {0} úkoly", "Denní reset za {1} · otevřených {0} úkolů"],
+        ["Weekly reset in {1} · {0} task open|Weekly reset in {1} · {0} tasks open"] = ["Týdenní reset za {1} · otevřený {0} úkol", "Týdenní reset za {1} · otevřené {0} úkoly", "Týdenní reset za {1} · otevřených {0} úkolů"],
     };
 }
