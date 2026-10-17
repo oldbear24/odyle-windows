@@ -105,3 +105,7 @@ The optional end-to-end check accepts a test server URL and **disposable desktop
 Credentials (server address, account token and device key) are in `%LOCALAPPDATA%\Odyle\session.bin`, written whole or not at all like `preferences.json`. While Odyle restarts itself, `handover.json` holds the live character for the next start (its id, name and server number, the last Odyle total and the adapter that read it, no credentials); the next start removes it when it reads it and ignores one older than a minute or from another account. The `stat-owners.json` of builds before `global-reference-v2` is no longer used and is removed at start. An older guest credential will fail the new account API and must be replaced by pairing from the Discord dashboard.
 
 See [API contract](docs/api.md) and the dashboard's [Discord setup](https://github.com/oldbear24/odyle-dashboard/blob/main/docs/discord-setup.md). Live Discord sign-in requires the operator's provider configuration; it is never replaced by password registration.
+
+## License
+
+[MIT](LICENSE.md) · Copyright (c) 2026 oldbear24. Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT; AION 2 and its names belong to NCSOFT.
