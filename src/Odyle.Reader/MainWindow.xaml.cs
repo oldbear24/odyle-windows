@@ -183,7 +183,7 @@ public partial class MainWindow : Window
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
         compactItem.Click += (_, _) => Dispatcher.Invoke(() => { SetCompact(compactItem.Checked, persist: true); ShowWindow(); }); menu.Items.Add(compactItem);
         menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
-        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
+        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAskedAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
@@ -195,6 +195,7 @@ public partial class MainWindow : Window
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
+        settings.ConfirmQuitToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { ConfirmQuit = settings.ConfirmQuitToggle.IsChecked == true });
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
@@ -231,7 +232,7 @@ public partial class MainWindow : Window
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
-        preferences = PreferencesStore.Load(); SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        preferences = PreferencesStore.Load(); settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
         // Odyle before (it is paired) hears of this one.
@@ -1322,7 +1323,16 @@ public partial class MainWindow : Window
     private void OnSnapshotWithoutOdyle(PacketCapture source)
     {
         if (capture != source || twoClients) return;
-        odyleMissingDue = true; connectionRead = true;
+        connectionRead = true;
+        // The game sends a login's identity and snapshot either way round: one named a moment ago
+        // is the snapshot's character. Any other snapshot waits for the game to name its character.
+        if (latest is null && gameCharacterKey.Length > 0 && gameCharacterKey != UnknownOwner && DateTimeOffset.UtcNow - namedAt < TimeSpan.FromSeconds(10))
+        {
+            odyleMissingDue = false; odyleMissingKey = gameCharacterKey;
+            SetReaderState(ReaderState.Listening, T("Listening to AION2 · {0} has no Odyle yet.", gameCharacterName));
+            _ = MarkNoOdyleAsync(); RenderHero(); return;
+        }
+        odyleMissingDue = true;
         if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
         RenderHero();
     }
@@ -1482,7 +1492,7 @@ public partial class MainWindow : Window
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
-            gameCharacterId = identity.Id; nameDue = false; identityDue = false;
+            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow;
             // A snapshot without Odyle that waited for a name belongs to this character, unless its
             // Odyle was read already (the reading is kept).
             if (odyleMissingDue)
@@ -1510,6 +1520,7 @@ public partial class MainWindow : Window
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
                 Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
             }
+            if (odyleMissingKey == key) _ = MarkNoOdyleAsync();
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
             if (latest is not null) await PublishCoreAsync();
@@ -1522,6 +1533,17 @@ public partial class MainWindow : Window
             Status(T("Could not save the detected character: {0}", Describe(error)));
         }
         finally { operations.Release(); }
+    }
+
+    // Rooms say a character has no Odyle yet once the server knows (POST /api/odyle/no-odyle). Once per
+    // character and run; a server from before it, or a failed request, changes nothing here.
+    private DateTimeOffset namedAt; private string noOdyleSent = "";
+    private async Task MarkNoOdyleAsync()
+    {
+        if (api is null || currentCharacterId.Length == 0 || detectedCharacterKey != odyleMissingKey || noOdyleSent == currentCharacterId) return;
+        var id = currentCharacterId; noOdyleSent = id;
+        try { await api.NoOdyleAsync(id); Log.Info($"No Odyle yet on {gameCharacterName}: the rooms are told."); }
+        catch (Exception error) { Log.Info($"No Odyle yet on {gameCharacterName}, not told to the server: {Describe(error)}"); }
     }
 
     // ----- Restart hand-over -----
@@ -1728,7 +1750,14 @@ public partial class MainWindow : Window
         Log.Info($"Game client {version}.");
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
-    private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAsync();
+    private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAskedAsync();
+    // Quit from the card or the tray: while a character is read and sent, quitting takes it offline
+    // for the party, so Odyle asks first (Settings turns the question off).
+    private async Task QuitAskedAsync()
+    {
+        if (preferences.ConfirmQuit && LiveHandover() is { } live && MessageBox.Show(T("Quit Odyle? It stops reading {0}, and your party sees {0} offline.\n\nSettings can turn this question off.", live.CharacterName), "Odyle", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        await QuitAsync();
+    }
     // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
     public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await QuitAsync(); }
     private async Task QuitAsync(bool restart = false)

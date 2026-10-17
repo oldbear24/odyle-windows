@@ -163,6 +163,9 @@ public sealed class PartyApi : IDisposable
     // Going to a planned run or not: the card's one run action (planning stays on the dashboard).
     public Task GoingAsync(string roomId, string runId, bool going) => PostAsync<System.Text.Json.JsonElement>("api/odyle/plan", new { roomId, id = runId, going });
     public Task InvalidateAsync(string characterId, string sessionId) => PostAsync<JsonElement>("api/odyle/invalidate", new { characterId, sessionId });
+    // A character the game sent a complete snapshot of without its Odyle record (under level 22):
+    // rooms say so until its first reading. Sent on its own, so a server from before it answers 404.
+    public Task NoOdyleAsync(string characterId) => PostAsync<JsonElement>("api/odyle/no-odyle", new { characterId });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));
