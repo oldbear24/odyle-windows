@@ -13,10 +13,13 @@ namespace Odyle.Reader;
 // AutostartOffered, once the one-time offer to start with Windows was answered. Compact mode:
 // whether it was on and its shortcut ("" off); the window keeps its one position. SeenVersion: the
 // version whose What's new the card last offered ("earlier" for a PC that ran Odyle before it).
+// FadeInGame and FollowGame (W#18): the card fades while the game's window is in front, and it
+// shows itself when the game starts and goes to the tray when the game closes.
 // Everything else is configured on the dashboard.
 public sealed record Preferences(bool StayOnTop = false, bool ShowTasks = false, string Language = "auto", double? Left = null, double? Top = null,
     bool RemindRuns = true, string[]? RemindedRuns = null, string NotifiedUpdate = "", bool AutostartOffered = false, bool RemindRunsMoved = false,
-    bool CompactMode = false, string CompactHotkey = CompactStrip.DefaultHotkey, string SeenVersion = "", bool ConfirmQuit = true, string[]? RemindedResets = null, string HiddenAnnouncement = "");
+    bool CompactMode = false, string CompactHotkey = CompactStrip.DefaultHotkey, string SeenVersion = "", bool ConfirmQuit = true, string[]? RemindedResets = null, string HiddenAnnouncement = "",
+    bool FadeInGame = false, bool FollowGame = false);
 public static class PreferencesStore
 {
     // Checks point this at a temporary file so they never touch the user's preferences.

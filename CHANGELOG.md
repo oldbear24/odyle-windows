@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.23.0 · 2026-10-18
+
+### New
+- **Fade the card while the game is in front** (Settings → Window): while you play, the card turns see-through so the game shows through it; point at it to see it fully.
+- **Show the card with the game, hide it after** (Settings → Window): the card comes up when the game starts, without taking the focus from it, and goes to the tray when the game closes.
+
 ## 0.22.0 · 2026-10-18
 
 ### New

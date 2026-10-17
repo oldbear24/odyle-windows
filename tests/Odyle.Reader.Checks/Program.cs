@@ -262,6 +262,20 @@ static class ReaderChecks
                 Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live again");
                 Check(!ReferenceEquals(liveIcon, stoppedIcon) && !ReferenceEquals(liveIcon, staleIcon) && !ReferenceEquals(staleIcon, stoppedIcon) && ReferenceEquals(TrayIconNow(), liveIcon), "the tray icon shows whether the reader reads, waits or is stopped");
                 Call(window, "SetReaderState", stateBefore, lineBefore);
+                // While you play (W#18): following the game brings the card up when the reader finds the
+                // game's connection after waiting and sends it away when it waits again; fading makes the
+                // window layered at 60 % while the game is in front, opaque when it is not, plain when off.
+                var follow = typeof(MainWindow).GetMethod("FollowStep", BindingFlags.Static | BindingFlags.NonPublic)!;
+                string Step(bool present, string name) => (string)follow.Invoke(null, [present, Enum.Parse(readerStates, name)])!;
+                Check(Step(false, "Live") == "show" && Step(false, "Listening") == "show" && Step(true, "Live") == "" && Step(true, "Waiting") == "hide" && Step(false, "Waiting") == "" && Step(true, "Problem") == "" && Step(false, "Stopped") == "", "following the game: up when its connection appears, away when it is gone");
+                Check(Settings(window).FindName("FadeInGameToggle") is CheckBox && Settings(window).FindName("FollowGameToggle") is CheckBox, "the settings offer fading and following the game");
+                var handle = new System.Windows.Interop.WindowInteropHelper(window).EnsureHandle();
+                Field("gameInFront").SetValue(window, (Func<bool>)(() => true)); Call(window, "SetFadeInGame", true, false);
+                Check(Layered(handle) && Alpha(handle) == 153, "with the game in front the card fades");
+                Field("gameInFront").SetValue(window, (Func<bool>)(() => false)); Call(window, "RenderFade");
+                Check(Layered(handle) && Alpha(handle) == 255, "and is opaque again when the game is not in front");
+                Field("gameInFront").SetValue(window, (Func<bool>)(() => true)); Call(window, "RenderFade"); Call(window, "SetFadeInGame", false, false);
+                Check(!Layered(handle), "switched off, the window is a plain one again");
                 Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
                 foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
                 Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, ExperimentalOdyleDecoder.Version));
@@ -753,6 +767,7 @@ static class ReaderChecks
             bitmap.GetType().GetMethod("Save", [typeof(string)])!.Invoke(bitmap, [Path.Combine(directory, $"tray-{name.ToLowerInvariant()}.png")]);
         }
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
+        FadePreview(window, directory);
         // The same moment in compact mode.
         Call(window, "SetCompact", true, false);
         Snapshot(window, Path.Combine(directory, "compact-mode-preview.png"), (int)CompactStrip.Width);
@@ -860,6 +875,34 @@ static class ReaderChecks
         public void Delete(string name) => Values.Remove(name);
     }
     static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
+    // Fading while the game is in front (W#18), on the desktop: the real card, layered at 60 %, over a
+    // stand-in for the game (both pinned on top), captured from the screen around the stand-in only.
+    static void FadePreview(MainWindow window, string directory)
+    {
+        static void Settle() { Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle); Thread.Sleep(250); Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle); }
+        var scene = new System.Windows.Media.LinearGradientBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x4A, 0x7A), System.Windows.Media.Color.FromRgb(0xC8, 0x7A, 0x3A), 35);
+        var game = new Window { WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize, Topmost = true, ShowInTaskbar = false, ShowActivated = false, Left = 200, Top = 120, Width = 560, Height = 620, Background = scene,
+            Content = new TextBlock { Text = "AION 2", FontSize = 96, FontWeight = FontWeights.Bold, Foreground = System.Windows.Media.Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
+        game.Show();
+        window.ShowActivated = false; window.Show(); window.Left = 340; window.Top = 150; window.Topmost = true; Settle();
+        Field("gameInFront").SetValue(window, (Func<bool>)(() => true)); Call(window, "SetFadeInGame", true, false); Settle();
+        GetWindowRect(new System.Windows.Interop.WindowInteropHelper(game).Handle, out var rect);
+        var drawing = Type.GetType("System.Drawing.Bitmap, System.Drawing.Common")!; var graphics = Type.GetType("System.Drawing.Graphics, System.Drawing.Common")!;
+        var size = Activator.CreateInstance(Type.GetType("System.Drawing.Size, System.Drawing.Primitives")!, rect.Right - rect.Left, rect.Bottom - rect.Top)!;
+        var bitmap = Activator.CreateInstance(drawing, rect.Right - rect.Left, rect.Bottom - rect.Top)!;
+        var g = graphics.GetMethod("FromImage")!.Invoke(null, [bitmap])!;
+        graphics.GetMethod("CopyFromScreen", [typeof(int), typeof(int), typeof(int), typeof(int), size.GetType()])!.Invoke(g, [rect.Left, rect.Top, 0, 0, size]);
+        drawing.GetMethod("Save", [typeof(string)])!.Invoke(bitmap, [Path.Combine(directory, "faded-preview.png")]);
+        ((IDisposable)g).Dispose(); ((IDisposable)bitmap).Dispose();
+        Call(window, "SetFadeInGame", false, false); window.Topmost = false; window.Hide(); window.ShowActivated = true; game.Close();
+    }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct ScreenRect { public int Left, Top, Right, Bottom; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out ScreenRect rect);
+    // The layered state and opacity of a window (W#18).
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr window, int index);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetLayeredWindowAttributes(IntPtr window, out uint key, out byte alpha, out uint flags);
+    static bool Layered(IntPtr window) => (GetWindowLong(window, -20) & 0x80000) != 0;
+    static byte Alpha(IntPtr window) => GetLayeredWindowAttributes(window, out _, out var alpha, out _) ? alpha : (byte)0;
     static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
     static object? Call(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
     static T Control<T>(MainWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
