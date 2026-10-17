@@ -184,7 +184,7 @@ public partial class MainWindow : Window
     public MainWindow() : this(true) { }
     public MainWindow(bool enableTray)
     {
-        InitializeComponent(); Translation.Apply(this);
+        InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
         tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
@@ -207,6 +207,9 @@ public partial class MainWindow : Window
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
         settings.AutostartToggle.Click += (_, _) => SetAutostart(settings.AutostartToggle.IsChecked == true);
         settings.ConfirmQuitToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { ConfirmQuit = settings.ConfirmQuitToggle.IsChecked == true });
+        settings.FadeInGameToggle.Click += (_, _) => SetFadeInGame(settings.FadeInGameToggle.IsChecked == true, persist: true);
+        settings.FollowGameToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { FollowGame = settings.FollowGameToggle.IsChecked == true });
+        gameFocusTimer.Tick += (_, _) => RenderFade(); MouseEnter += (_, _) => RenderFade(); MouseLeave += (_, _) => RenderFade();
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
@@ -244,7 +247,8 @@ public partial class MainWindow : Window
         clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
-        preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
+        settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
         // Odyle before (it is paired) hears of this one.
@@ -306,7 +310,7 @@ public partial class MainWindow : Window
         catch { }
         return System.Drawing.SystemIcons.Application;
     }
-    protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); DarkFrame(this); }
+    protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); DarkFrame(this); HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(KeepLayered); }
     // Windows 11: dark title bar and a border that matches the window.
     private static void DarkFrame(Window window)
     {
@@ -385,6 +389,10 @@ public partial class MainWindow : Window
     private void SetReaderState(ReaderState state, string message)
     {
         readerState = state;
+        // Following the game (W#18): the card comes up with it and goes to the tray after it.
+        var follow = FollowStep(gamePresent, state);
+        gamePresent = state is ReaderState.Listening or ReaderState.Midstream or ReaderState.Live or ReaderState.Stale || (gamePresent && state is not (ReaderState.Waiting or ReaderState.Stopped));
+        if (preferences.FollowGame && follow.Length > 0 && !App.Headless) FollowGame(follow == "show");
         var (dot, text) = state switch
         {
             ReaderState.Stopped => ("Faint", "Muted"),
@@ -1038,6 +1046,84 @@ public partial class MainWindow : Window
         if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
     }
     private void Pin_Click(object sender, RoutedEventArgs e) => SetStayOnTop(!Topmost, persist: true);
+    // While you play (W#18), on this PC like stay on top. Fading: while the game's window is in
+    // front the card is 60 % opaque (a layered window, so the game shows through), and fully
+    // opaque while the pointer is on it; the foreground window is looked at twice a second.
+    private const byte FadedAlpha = 153;
+    private readonly DispatcherTimer gameFocusTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    private bool faded; private uint foregroundPid; private bool foregroundIsGame;
+    // Checks replace it; the window in front belongs to the game's process (ReaderSetup).
+    private Func<bool> gameInFront;
+    private bool GameWindowInFront()
+    {
+        var front = GetForegroundWindow();
+        if (front == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(front, out var pid);
+        if (pid == foregroundPid) return foregroundIsGame;
+        foregroundPid = pid;
+        try { using var process = System.Diagnostics.Process.GetProcessById((int)pid); foregroundIsGame = GameConnection.IsGameProcess(process.ProcessName); }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { foregroundIsGame = false; }
+        return foregroundIsGame;
+    }
+    private void SetFadeInGame(bool on, bool persist)
+    {
+        settings.FadeInGameToggle.IsChecked = on; preferences = preferences with { FadeInGame = on };
+        if (persist) PreferencesStore.Save(preferences);
+        if (on) gameFocusTimer.Start(); else gameFocusTimer.Stop();
+        RenderFade();
+    }
+    private void RenderFade()
+    {
+        var fade = preferences.FadeInGame && !IsMouseOver && gameInFront();
+        // WPF takes the layered style off when it changes the window's style itself: it is put back.
+        var handle = new WindowInteropHelper(this).Handle;
+        var layered = handle != IntPtr.Zero && (GetWindowLong(handle, GwlExStyle) & WsExLayered) != 0;
+        if (fade == faded && layered == preferences.FadeInGame) return;
+        faded = fade; SetAlpha(fade ? FadedAlpha : (byte)255, layered: preferences.FadeInGame);
+    }
+    // The window's opacity: layered while fading is on (255 is fully opaque), plain otherwise.
+    private void SetAlpha(byte alpha, bool layered)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero) return;
+        var style = GetWindowLong(handle, GwlExStyle);
+        settingLayered = true;
+        try
+        {
+            if (!layered) { if ((style & WsExLayered) != 0) SetWindowLong(handle, GwlExStyle, style & ~WsExLayered); return; }
+            if ((style & WsExLayered) == 0) SetWindowLong(handle, GwlExStyle, style | WsExLayered);
+        }
+        finally { settingLayered = false; }
+        SetLayeredWindowAttributes(handle, 0, alpha, LwaAlpha);
+    }
+    // WPF drops WS_EX_LAYERED from a window without AllowsTransparency while the style changes
+    // (WM_STYLECHANGING). The change the fading makes itself is let through as it is.
+    private bool settingLayered;
+    private IntPtr KeepLayered(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == 0x7C && settingLayered && wParam.ToInt64() == GwlExStyle) handled = true;
+        return IntPtr.Zero;
+    }
+    // Following the game: it came when the reader finds its connection after waiting for one, and
+    // it went when the reader waits for a connection again after it had one.
+    private bool gamePresent;
+    private static string FollowStep(bool present, ReaderState state) =>
+        !present && state is ReaderState.Listening or ReaderState.Midstream or ReaderState.Live ? "show"
+        : present && state == ReaderState.Waiting ? "hide" : "";
+    private void FollowGame(bool show)
+    {
+        if (!show) { if (IsVisible) { SavePosition(); Hide(); } return; }
+        // Up without taking the game's focus, and back above it when pinned.
+        if (!IsVisible || WindowState == WindowState.Minimized) { ShowActivated = false; Show(); WindowState = WindowState.Normal; ShowActivated = true; }
+        if (Topmost) { Topmost = false; Topmost = true; }
+        _ = RefreshPartyAsync(); _ = RefreshTasksAsync();
+    }
+    private const int GwlExStyle = -20, WsExLayered = 0x80000; private const uint LwaAlpha = 0x2;
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] private static extern int SetWindowLong(IntPtr window, int index, int value);
+    [DllImport("user32.dll")] private static extern bool SetLayeredWindowAttributes(IntPtr window, uint key, byte alpha, uint flags);
     // Compact mode in place of the card, in the same window: it keeps its place, title bar, pin and
     // tray, and only its content shrinks to your Odyle and your party's. In from the header button,
     // the tray or the shortcut; back the same way, with a double-click or with ⤢.
