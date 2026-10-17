@@ -57,6 +57,8 @@ The app deliberately does not:
 - **Touch the game.** No memory reading, packet injection, automation or in-game overlay; the card is an ordinary window. Raw game traffic never leaves the PC.
 - **Keep settings of its own.** Rooms, sharing, tasks and notifications are set on the dashboard; the app keeps only what belongs to this PC (pairing, window, language).
 
+**The tray menu** starts with what the reader is doing, then offers Open Odyle, **Start reader** or **Stop reader**, **Show tasks**, your **Characters** (the fullest first, each with its Odyle, cubes and when it was read; a row opens the card), Stay on top, Compact mode, Settings and Quit.
+
 **Quitting.** Closing the window keeps Odyle in the tray. **Quit** (on the card or in the tray menu) stops the reader, so while a character is being read and sent Odyle asks first: your party would see that character offline. **Settings → Window → Ask before quitting while a character is read** turns the question off.
 
 ## Download and updates

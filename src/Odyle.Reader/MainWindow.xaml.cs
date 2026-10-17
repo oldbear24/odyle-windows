@@ -125,6 +125,9 @@ public partial class MainWindow : Window
     // place), its tray item, and the shortcut registered for it on a message-only window.
     private bool compactMode;
     private readonly Forms.ToolStripMenuItem compactItem = new(T("Compact mode")) { CheckOnClick = true };
+    // The tray menu says what the reader does and lists the account's characters (W#17); both are
+    // filled each time the menu opens (TrayMenuOpening).
+    private readonly Forms.ToolStripMenuItem trayStatusItem = new("") { Enabled = false }, readerItem = new(""), tasksItem = new(T("Show tasks")) { CheckOnClick = true }, charactersItem = new(T("Characters"));
     private HwndSource? hotkeyWindow;
     private string hotkeyProblem = "";
     // The value and cube cost the card shows, for the strip.
@@ -183,7 +186,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent(); Translation.Apply(this);
         tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = T("Odyle · Not connected"), Visible = enableTray };
-        var menu = new Forms.ContextMenuStrip(); menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        readerItem.Click += (_, _) => Dispatcher.Invoke(() => Reader_Click(readerItem, new RoutedEventArgs())); menu.Items.Add(readerItem);
+        tasksItem.Click += (_, _) => Dispatcher.Invoke(() => { SetTasksShown(tasksItem.Checked, persist: true); if (tasksItem.Checked) ShowWindow(); }); menu.Items.Add(tasksItem);
+        menu.Items.Add(charactersItem); menu.Opening += (_, _) => Dispatcher.Invoke(TrayMenuOpening);
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
         compactItem.Click += (_, _) => Dispatcher.Invoke(() => { SetCompact(compactItem.Checked, persist: true); ShowWindow(); }); menu.Items.Add(compactItem);
         menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
@@ -379,6 +386,28 @@ public partial class MainWindow : Window
     private void SetPill(string dot, string text, string background, string label)
     {
         StateDot.Fill = Brush(dot); StateText.Foreground = Brush(text); StatePill.Background = Brush(background); StateText.Text = label;
+    }
+    // The tray menu as it opens: the reader's state, Start or Stop reader, whether the tasks show,
+    // and the account's characters, the fullest first (equal ones: the longest unread first), each
+    // with its value, cubes at the card's cost and when it was read; a row opens the card.
+    private void TrayMenuOpening()
+    {
+        var state = PacketStateLabel.Text is { Length: > 0 } text ? text : T("Not connected");
+        trayStatusItem.Text = state.Length > 60 ? state[..59] + "…" : state;
+        readerItem.Text = capture is not null ? T("Stop reader") : T("Start reader");
+        readerItem.Enabled = capture is not null || api is not null || Offline;
+        tasksItem.Checked = TasksPanel.Visibility == Visibility.Visible; tasksItem.Enabled = !compactMode;
+        charactersItem.DropDownItems.Clear();
+        var listed = characters.Where(c => c.CharacterName.Length > 0)
+            .OrderByDescending(c => c.Value).ThenBy(c => Readiness.Parse(c.LastReadingAt) ?? DateTimeOffset.MinValue).Take(20).ToArray();
+        foreach (var c in listed)
+        {
+            var cost = HeroCost(c);
+            var read = Readiness.Parse(c.LastReadingAt) is { } at ? " · " + Age(at) : "";
+            var row = $"{c.CharacterName} · {c.Value.ToString("N0", Culture)} Odyle · {Tn(cost > 0 ? c.Value / cost : 0, "{0} cube", "{0} cubes")}{read}";
+            charactersItem.DropDownItems.Add(row, null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        }
+        charactersItem.Enabled = listed.Length > 0;
     }
     private static string Age(DateTimeOffset moment)
     {

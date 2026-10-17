@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.20.0 · 2026-10-17
+
+### New
+- **A richer tray menu**: it starts with what the reader is doing, offers **Start reader** or **Stop reader** and **Show tasks**, and lists your **Characters**, the fullest first, each with its Odyle, cubes and when it was read (a row opens the card).
+
 ## 0.19.0 · 2026-10-17
 
 ### New
