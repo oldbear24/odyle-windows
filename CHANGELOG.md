@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.15.0 · 2026-10-17
+
+### New
+- **Open in Odyle**: in the dashboard's Pair Windows app dialog, one click hands the connection link to Odyle, also while it is already running. Odyle names the server the link points at and asks before pairing; copying and pasting the link still works.
+
 ## 0.14.2 · 2026-10-17
 
 ### Changed

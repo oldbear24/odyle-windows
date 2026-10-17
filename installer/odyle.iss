@@ -92,6 +92,11 @@ Name: "{autodesktop}\Odyle"; Filename: "{app}\Odyle.exe"; Tasks: desktopicon
 ; The same entry as Settings -> Start with Windows: "<Odyle.exe>" --tray.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Odyle"; ValueData: """{app}\Odyle.exe"" --tray"; Tasks: autostart
 
+; Open in Odyle in the dashboard's pairing dialog: odyle:// links start "<Odyle.exe>" --pair "<link>". Removed on uninstall.
+Root: HKCU; Subkey: "Software\Classes\odyle"; ValueType: string; ValueName: ""; ValueData: "URL:Odyle pairing"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\odyle"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\odyle\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Odyle.exe"" --pair ""%1"""
+
 [Run]
 Filename: "{app}\Odyle.exe"; Description: "{cm:LaunchProgram,Odyle}"; Flags: nowait postinstall skipifsilent
 Filename: "https://npcap.com/#download"; Description: "{cm:NpcapRun}"; Flags: shellexec nowait postinstall skipifsilent; Check: not NpcapInstalled

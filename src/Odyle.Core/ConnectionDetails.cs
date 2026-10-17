@@ -28,6 +28,20 @@ public sealed record ConnectionDetails(string Endpoint, string Code)
         return new(NormalizeEndpoint(fallbackEndpoint), NormalizeCode(input));
     }
 
+    // "Open in Odyle" on the dashboard's pairing dialog: odyle://pair?link=<the connection link>. Only
+    // that form is taken, and the link inside is checked like a pasted one (HTTPS, or HTTP on localhost).
+    public const string Scheme = "odyle";
+    public static ConnectionDetails FromAppLink(string input)
+    {
+        input = input.Trim();
+        if (input.Length > 2048 || !Uri.TryCreate(input, UriKind.Absolute, out var uri) || uri.Scheme != Scheme || !string.Equals(uri.Host, "pair", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath is not ("" or "/"))
+            throw new ArgumentException(Localizer.T("This is not an Odyle pairing link. Copy the connection link from Pair Windows app on the dashboard."));
+        var links = uri.Query.TrimStart('?').Split('&').Select(part => part.Split('=', 2)).Where(part => part.Length == 2 && part[0] == "link").Select(part => Uri.UnescapeDataString(part[1])).ToArray();
+        if (links.Length != 1 || !Uri.TryCreate(links[0], UriKind.Absolute, out _))
+            throw new ArgumentException(Localizer.T("This is not an Odyle pairing link. Copy the connection link from Pair Windows app on the dashboard."));
+        return Parse(links[0], "https://invalid.invalid");
+    }
+
     private static string NormalizeCode(string value)
     {
         var code = Regex.Replace(value, "[\\s-]", "").ToUpperInvariant();

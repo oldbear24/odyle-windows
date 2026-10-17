@@ -12,6 +12,8 @@ public static class StartupCommand
     // "<Odyle.exe>" --build-info <file>: the publish script asks a fresh package what it is (BuildInfo) and
     // refuses to release one that would not update itself. Nothing else starts.
     public const string BuildInfoArgument = "--build-info";
+    // "<Odyle.exe>" --pair "odyle://pair?link=…": an Open in Odyle link from the dashboard (ConnectionDetails.FromAppLink).
+    public const string PairArgument = "--pair";
     public static string For(string executable) => $"\"{executable}\" {TrayArgument}";
     // The executable a Run value starts: the quoted path, or the first word without quotes.
     public static string? PathOf(string? command)
@@ -28,6 +30,12 @@ public static class StartupCommand
     public static string? BuildInfoPath(IReadOnlyList<string> args)
     {
         for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], BuildInfoArgument, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
+        return null;
+    }
+    // The link after --pair, or null without one.
+    public static string? PairLinkOf(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], PairArgument, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
         return null;
     }
     // What a build is: its version, whether it updates itself, its package kind.

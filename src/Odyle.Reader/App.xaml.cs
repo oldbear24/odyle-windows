@@ -19,6 +19,7 @@ public partial class App : System.Windows.Application
     // with --unpair signals it to quit.
     private EventWaitHandle? showSignal, quitSignal;
     private RegisteredWaitHandle? showWait, quitWait;
+    private PairPipe? pairPipe;
     private bool primary;
     private DateTimeOffset failuresSince, lastNotice = DateTimeOffset.MinValue;
     private int failures;
@@ -53,13 +54,16 @@ public partial class App : System.Windows.Application
             return;
         }
         instance = new Mutex(true, "Local\\Odyle-" + user, out primary);
-        // Already running: a start by hand brings that window forward; a start with Windows just ends.
-        if (!primary) { if (!tray) ShowRunning(user); Shutdown(); return; }
+        // Already running: a start by hand brings that window forward; a start with Windows just ends; an
+        // Open in Odyle link (--pair) goes to the running Odyle, which asks before pairing.
+        var pairLink = StartupCommand.PairLinkOf(e.Args);
+        if (!primary) { if (pairLink is not null) { AllowSetForegroundWindow(-1); if (!PairPipe.Send(user, pairLink)) ShowRunning(user); } else if (!tray) ShowRunning(user); Shutdown(); return; }
         Log.Info($"Odyle {Updater.Current} starts{(tray ? " in the tray" : "")}: {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")} package, {Environment.OSVersion}, language {Localizer.Language} ({Localizer.Culture.Name}).");
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
         if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
         Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
+        if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
         var window = new MainWindow(); MainWindow = window;
         // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
         if (StartupCommand.Traces(e.Args)) window.StartTrace();
@@ -67,8 +71,10 @@ public partial class App : System.Windows.Application
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
         quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + user);
         quitWait = ThreadPool.RegisterWaitForSingleObject(quitSignal, (_, _) => window.Dispatcher.BeginInvoke(window.QuitOnRequest), null, Timeout.Infinite, executeOnlyOnce: true);
-        if (!tray) window.Show();
+        pairPipe = new PairPipe(user, link => window.Dispatcher.BeginInvoke(() => window.OfferPairing(link)));
+        if (!tray || pairLink is not null) window.Show();
         _ = window.StartAsync(tray);
+        if (pairLink is not null) window.Dispatcher.BeginInvoke(() => window.OfferPairing(pairLink), DispatcherPriority.ApplicationIdle);
     }
     // "Odyle.exe --unpair", run by the uninstaller when asked to disconnect this PC: a running Odyle
     // quits first (it marks its reading stale and lets the uninstaller remove its files), then the
@@ -157,7 +163,7 @@ public partial class App : System.Windows.Application
     private void Release()
     {
         showWait?.Unregister(null); showWait = null; showSignal?.Dispose(); showSignal = null;
-        quitWait?.Unregister(null); quitWait = null; quitSignal?.Dispose(); quitSignal = null; instance?.Dispose(); instance = null;
+        quitWait?.Unregister(null); quitWait = null; quitSignal?.Dispose(); quitSignal = null; pairPipe?.Stop(); pairPipe = null; instance?.Dispose(); instance = null;
     }
     protected override void OnExit(ExitEventArgs e) { if (primary) Log.Info("Odyle stops."); Release(); base.OnExit(e); }
 }

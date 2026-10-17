@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Security;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 using Odyle.Core;
 
@@ -36,6 +40,61 @@ public static class Autostart
             Key.Set(StartupCommand.ValueName, StartupCommand.For(exe)); Log.Info("The Start with Windows entry now points at " + exe + ".");
         }
         catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { Log.Warn("The Start with Windows entry could not be checked: " + error.Message); }
+    }
+}
+// odyle:// links (Open in Odyle in the dashboard's pairing dialog) start "<Odyle.exe>" --pair "<link>" for this
+// Windows account (HKCU, no administrator rights). A release build keeps the entry pointing at itself; the
+// installer writes the same entry and removes it on uninstall.
+public static class PairProtocol
+{
+    private const string Path = @"Software\Classes\odyle";
+    public static string CommandFor(string executable) => $"\"{executable}\" {StartupCommand.PairArgument} \"%1\"";
+    public static void Register(string? executable)
+    {
+        if (executable is null) return;
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(Path)) { key.SetValue("", "URL:Odyle pairing"); key.SetValue("URL Protocol", ""); }
+            using var open = Registry.CurrentUser.CreateSubKey(Path + @"\shell\open\command");
+            if (open.GetValue("") as string == CommandFor(executable)) return;
+            open.SetValue("", CommandFor(executable)); Log.Info("Open in Odyle links now start " + executable + ".");
+        }
+        catch (Exception error) when (error is IOException or SecurityException or UnauthorizedAccessException) { Log.Warn("Open in Odyle links could not be registered: " + error.Message); }
+    }
+}
+// A second start with --pair hands its link to the running Odyle through a pipe that only this
+// Windows account can open (PipeOptions.CurrentUserOnly), then ends.
+public sealed class PairPipe
+{
+    private readonly CancellationTokenSource stop = new();
+    public static string NameFor(string user) => "Odyle-Pair-" + user;
+    public PairPipe(string user, Action<string> received) => _ = Task.Run(() => ListenAsync(NameFor(user), received, stop.Token));
+    public void Stop() => stop.Cancel();
+    private static async Task ListenAsync(string name, Action<string> received, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                using var server = new NamedPipeServerStream(name, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await server.WaitForConnectionAsync(token);
+                using var reader = new StreamReader(server, Encoding.UTF8);
+                var buffer = new char[2049]; var read = await reader.ReadBlockAsync(buffer.AsMemory(), token);
+                if (read is > 0 and <= 2048) received(new string(buffer, 0, read).Trim());
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn("The Open in Odyle pipe failed: " + error.Message); try { await Task.Delay(1000, token); } catch (OperationCanceledException) { return; } }
+        }
+    }
+    // From a second start: true once the running Odyle took the link.
+    public static bool Send(string user, string link)
+    {
+        try
+        {
+            using var client = new NamedPipeClientStream(".", NameFor(user), PipeDirection.Out, PipeOptions.CurrentUserOnly);
+            client.Connect(3000); var bytes = Encoding.UTF8.GetBytes(link); client.Write(bytes, 0, bytes.Length); client.Flush(); return true;
+        }
+        catch (Exception error) when (error is IOException or TimeoutException or UnauthorizedAccessException) { Log.Warn("The running Odyle did not take the link: " + error.Message); return false; }
     }
 }
 // Npcap is installed separately: its library in System32\Npcap, or its registry key. Odyle may

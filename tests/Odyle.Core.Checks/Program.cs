@@ -37,6 +37,14 @@ foreach (var unsafeLink in new[] { "http://party.example/#odyle-pair=" + pairing
 {
     try { ConnectionDetails.Parse(unsafeLink, "http://127.0.0.1:8090"); throw new Exception("Unsafe or invalid connection link accepted."); } catch (ArgumentException) { }
 }
+// Open in Odyle: odyle://pair?link=<the connection link>, checked like a pasted link; nothing else.
+var opened = ConnectionDetails.FromAppLink("odyle://pair?link=" + Uri.EscapeDataString("https://party.example/pocketbase/#odyle-pair=" + pairingCode));
+if (opened.Endpoint != "https://party.example/pocketbase" || opened.Code != pairingCode) throw new Exception("Open in Odyle link did not select its backend.");
+if (StartupCommand.PairLinkOf(new[] { "--pair", "odyle://pair?link=x" }) != "odyle://pair?link=x" || StartupCommand.PairLinkOf(new[] { "--tray" }) is not null) throw new Exception("--pair argument not read.");
+foreach (var refused in new[] { "odyle://pair?link=" + Uri.EscapeDataString("http://party.example/#odyle-pair=" + pairingCode), "odyle://other?link=" + Uri.EscapeDataString("https://party.example/#odyle-pair=" + pairingCode), "https://party.example/#odyle-pair=" + pairingCode, "odyle://pair", "odyle://pair?link=" + pairingCode, "odyle://pair/extra?link=" + Uri.EscapeDataString("https://party.example/#odyle-pair=" + pairingCode) })
+{
+    try { ConnectionDetails.FromAppLink(refused); throw new Exception("Unsafe or invalid Open in Odyle link accepted: " + refused); } catch (ArgumentException) { }
+}
 try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", -1, "test-fixture-v1")); throw new Exception("Negative value accepted."); } catch (ArgumentOutOfRangeException) { }
 try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, " ")); throw new Exception("Blank adapter accepted."); } catch (ArgumentException) { }
 try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, "test-fixture-v1", Source: "manual")); throw new Exception("Manual source accepted."); } catch (ArgumentException) { }
