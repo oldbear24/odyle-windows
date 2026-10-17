@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.22.0 · 2026-10-18
+
+### New
+- **The tray icon shows the reader**: a dot in its corner in the card's colours, green while it reads, amber while it waits or its reading is old, red when it cannot read; none while the reader is stopped.
+- **Your characters** on the card: with two or more characters, open the list under the reading to see each one's Odyle, cubes and when it was read, the fullest first. It also opens by itself while the game switches characters.
+
 ## 0.21.0 · 2026-10-17
 
 ### New

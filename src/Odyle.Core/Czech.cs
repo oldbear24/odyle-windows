@@ -152,6 +152,7 @@ public static class Czech
         ["All {0} going can claim a cube · {1}"] = "Všech {0} jdoucích si vezme kostku · {1}",
         ["Show tasks"] = "Zobrazit úkoly",
         ["Characters"] = "Postavy",
+        ["Your characters ({0})"] = "Tvoje postavy ({0})",
         ["Stop reader"] = "Zastavit čtečku",
         ["Start reader"] = "Spustit čtečku",
         ["Still open: {0}"] = "Ještě otevřené: {0}",

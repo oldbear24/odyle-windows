@@ -185,7 +185,7 @@ public partial class MainWindow : Window
     public MainWindow(bool enableTray)
     {
         InitializeComponent(); Translation.Apply(this);
-        tray = new Forms.NotifyIcon { Icon = LoadTrayIcon(), Text = T("Odyle · Not connected"), Visible = enableTray };
+        tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
         readerItem.Click += (_, _) => Dispatcher.Invoke(() => Reader_Click(readerItem, new RoutedEventArgs())); menu.Items.Add(readerItem);
@@ -266,6 +266,36 @@ public partial class MainWindow : Window
         PreferencesStore.Save(preferences = preferences with { Language = choice });
         settings.LanguageRestartPanel.Visibility = Resolve(choice, System.Globalization.CultureInfo.CurrentUICulture) != Localizer.Language ? Visibility.Visible : Visibility.Collapsed;
     }
+    // The tray icon carries the reader's state (W#17): the card's reader dot in its corner, the
+    // same colour (live, listening, waiting or stale, a problem), none while the reader is stopped.
+    // Each variant is drawn once and kept.
+    private readonly Dictionary<string, System.Drawing.Icon> trayIcons = [];
+    private System.Drawing.Icon TrayIcon(string? dot)
+    {
+        if (dot is null) return trayIcons.TryGetValue("", out var plain) ? plain : trayIcons[""] = LoadTrayIcon();
+        if (trayIcons.TryGetValue(dot, out var known)) return known;
+        try
+        {
+            var color = ((System.Windows.Media.SolidColorBrush)Brush(dot)).Color;
+            using var bitmap = TrayIcon(null).ToBitmap();
+            using (var g = System.Drawing.Graphics.FromImage(bitmap))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var size = bitmap.Width * 0.46f; var at = bitmap.Width - size - 0.5f;
+                using var ring = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(255, 12, 18, 14));
+                using var fill = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(color.A, color.R, color.G, color.B));
+                g.FillEllipse(ring, at - 2, at - 2, size + 2, size + 2);
+                g.FillEllipse(fill, at, at, size - 2, size - 2);
+            }
+            var handle = bitmap.GetHicon();
+            // A copy owns its own handle, so the one GetHicon made can be released right away.
+            using (var drawn = System.Drawing.Icon.FromHandle(handle)) trayIcons[dot] = (System.Drawing.Icon)drawn.Clone();
+            DestroyIcon(handle);
+            return trayIcons[dot];
+        }
+        catch { return TrayIcon(null); }
+    }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr handle);
     private static System.Drawing.Icon LoadTrayIcon()
     {
         try
@@ -367,6 +397,7 @@ public partial class MainWindow : Window
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text);
+        tray.Icon = TrayIcon(state == ReaderState.Stopped ? null : dot);
         if (PacketStateLabel.Text != message) { PacketStateLabel.Text = message; Translation.Announce(PacketStateLabel); }
         // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
         // restricted, a capture that failed. It reads again: the next problem is told again.
@@ -398,17 +429,37 @@ public partial class MainWindow : Window
         readerItem.Enabled = capture is not null || api is not null || Offline;
         tasksItem.Checked = TasksPanel.Visibility == Visibility.Visible; tasksItem.Enabled = !compactMode;
         charactersItem.DropDownItems.Clear();
-        var listed = characters.Where(c => c.CharacterName.Length > 0)
-            .OrderByDescending(c => c.Value).ThenBy(c => Readiness.Parse(c.LastReadingAt) ?? DateTimeOffset.MinValue).Take(20).ToArray();
-        foreach (var c in listed)
-        {
-            var cost = HeroCost(c);
-            var read = Readiness.Parse(c.LastReadingAt) is { } at ? " · " + Age(at) : "";
-            var row = $"{c.CharacterName} · {c.Value.ToString("N0", Culture)} Odyle · {Tn(cost > 0 ? c.Value / cost : 0, "{0} cube", "{0} cubes")}{read}";
-            charactersItem.DropDownItems.Add(row, null, (_, _) => Dispatcher.Invoke(ShowWindow));
-        }
+        var listed = ListedCharacters();
+        foreach (var c in listed) charactersItem.DropDownItems.Add($"{c.CharacterName} · {CharacterDetail(c)}", null, (_, _) => Dispatcher.Invoke(ShowWindow));
         charactersItem.Enabled = listed.Length > 0;
     }
+    // The account's characters as the tray menu and the card list them: the fullest first (equal
+    // ones: the longest unread first), at most 20; each with its Odyle, cubes at the card's cost
+    // and when it was read.
+    private Character[] ListedCharacters() => characters.Where(c => c.CharacterName.Length > 0)
+        .OrderByDescending(c => c.Value).ThenBy(c => Readiness.Parse(c.LastReadingAt) ?? DateTimeOffset.MinValue).Take(20).ToArray();
+    private string CharacterDetail(Character c)
+    {
+        var cost = HeroCost(c);
+        var read = Readiness.Parse(c.LastReadingAt) is { } at ? " · " + Age(at) : "";
+        return $"{c.Value.ToString("N0", Culture)} Odyle · {Tn(cost > 0 ? c.Value / cost : 0, "{0} cube", "{0} cubes")}{read}";
+    }
+    // The card's "Your characters" (W#17): with two or more characters, a toggle under the reading
+    // that lists them. It opens on demand, and by itself while the game switches characters, until
+    // it names the next one (then it closes again, unless it was opened by hand).
+    private sealed record AltRow(string Name, string Detail);
+    private bool altsOpened;
+    private void RenderAlts()
+    {
+        var listed = (api is not null || Offline) ? ListedCharacters() : [];
+        var open = listed.Length > 1 && (altsOpened || (capture is not null && gameCharacterKey == UnknownOwner));
+        AltToggle.Visibility = listed.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
+        AltToggle.Content = T("Your characters ({0})", listed.Length) + (open ? " ▴" : " ▾");
+        System.Windows.Automation.AutomationProperties.SetName(AltToggle, T("Your characters ({0})", listed.Length));
+        AltList.ItemsSource = open ? listed.Select(c => new AltRow(c.CharacterName, CharacterDetail(c))).ToArray() : null;
+        AltList.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void AltToggle_Click(object sender, RoutedEventArgs e) { altsOpened = AltList.Visibility != Visibility.Visible; RenderAlts(); }
     private static string Age(DateTimeOffset moment)
     {
         var seconds = Math.Max(0, (long)(DateTimeOffset.UtcNow - moment).TotalSeconds);
@@ -416,6 +467,7 @@ public partial class MainWindow : Window
     }
     private void RenderHero()
     {
+        RenderAlts();
         // Offline: paired, but the server has not confirmed the pairing yet (it is tried again by itself);
         // the reader reads locally and what it read is sent once the server answers.
         var connected = api is not null; var offline = Offline;

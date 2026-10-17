@@ -83,6 +83,18 @@
       <!-- Readings above the cap the account's membership answer settled -->
       <TextBlock x:Name="CapMismatchLabel" FontSize="10" Foreground="{StaticResource Amber}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
       <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
+      <!-- The account's characters (W#17): on demand, and by itself while the game switches characters -->
+      <Button x:Name="AltToggle" Style="{StaticResource Ghost}" Click="AltToggle_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="-4,3,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Muted}"/>
+      <ItemsControl x:Name="AltList" Visibility="Collapsed" Focusable="False" Margin="0,1,0,0">
+       <ItemsControl.ItemTemplate>
+        <DataTemplate>
+         <DockPanel Margin="0,1,0,1">
+          <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/>
+          <TextBlock Text="{Binding Name}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
+         </DockPanel>
+        </DataTemplate>
+       </ItemsControl.ItemTemplate>
+      </ItemsControl>
      </StackPanel>
     </Border>
 
