@@ -2,6 +2,15 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.14.0 · 2026-10-17
+
+### New
+- A character the game shows without Odyle (under level 22) is now told to the server, so your rooms on the dashboard say **No Odyle yet** instead of waiting for a value.
+- **Quit** asks first while a character is being read: your party would see it offline. **Settings → Window** can turn the question off.
+
+### Fixed
+- **No Odyle on … yet** also shows when the game names the character just before it sends its stats, instead of only after the next relog.
+
 ## 0.13.0 · 2026-10-17
 
 ### New

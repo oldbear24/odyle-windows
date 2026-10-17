@@ -49,6 +49,7 @@
    <CheckBox x:Name="StayOnTopToggle" Content="Stay on top of other windows" ToolTip="Keeps the card above the game in windowed or borderless mode"/>
    <CheckBox x:Name="TasksToggle" Content="Show daily &amp; weekly tasks beside the card" Margin="0,8,0,0" ToolTip="Your checklist from the dashboard; tick tasks off here"/>
    <CheckBox x:Name="AutostartToggle" Content="Start with Windows" Margin="0,8,0,0" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
+   <CheckBox x:Name="ConfirmQuitToggle" Content="Ask before quitting while a character is read" Margin="0,8,0,0" ToolTip="Quitting stops the reader, and your party sees the character offline"/>
    <!-- Compact mode: the shortcut that switches it -->
    <DockPanel Margin="0,8,0,0"><TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Compact mode shortcut" VerticalAlignment="Center" Margin="2,0,8,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the full card and compact mode from anywhere"/></DockPanel>
    <TextBlock x:Name="HotkeyProblemLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,4,0,0"/>
