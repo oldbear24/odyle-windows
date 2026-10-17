@@ -1,0 +1,43 @@
+name: Dashboard integration
+# The app's checks (tests/Odyle.Core.Checks and tests/Odyle.Reader.Checks) against the backend of
+# odyle-dashboard's main branch, in the dashboard's integration tests (odyle-dashboard#53): pull
+# requests see a change that breaks the app against the server, and a release waits for them, so
+# installed apps never update to a build the server does not work with. The dashboard runs the
+# same against this repository's main (its windows-companion workflow).
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  dashboard:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: oldbear24/odyle-dashboard
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: odyle-windows
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: npm ci
+      # The dashboard first: the backend embeds it, and the integration tests read its page.
+      - run: npm run build
+      - run: npm run backend:build
+      # Built ahead: the integration tests give each check a minute to run.
+      - run: dotnet build odyle-windows/tests/Odyle.Core.Checks -c Release
+      - run: dotnet build odyle-windows/tests/Odyle.Reader.Checks -c Release
+      - run: npm run test:integration
+        timeout-minutes: 15
+        env:
+          ODYLE_WINDOWS_CHECKS: odyle-windows/tests/Odyle.Core.Checks
+          ODYLE_WINDOWS_UI_CHECKS: odyle-windows/tests/Odyle.Reader.Checks
