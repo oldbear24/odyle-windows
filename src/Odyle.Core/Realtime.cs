@@ -23,6 +23,8 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
     public CapAlert[] CapAlerts { get; init; } = [];
     // Runs whose party is ready (odyle-dashboard#48).
     public PartyReady[] PartyReady { get; init; } = [];
+    // Runs planned from the wishlist that invite the account (odyle-dashboard#45).
+    public RunInvite[] Invites { get; init; } = [];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     // A message the app cannot read means "fetch again".
     public static RealtimeNews Parse(JsonElement data)
@@ -55,10 +57,13 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         PartyReady[] ready = [];
         if (data.TryGetProperty("partyReady", out var parties) && parties.ValueKind == JsonValueKind.Array)
             try { ready = parties.Deserialize<PartyReady[]>(Json)?.Where(p => p is { RunId.Length: > 0, Dungeon.Length: > 0, Of: > 0 }).ToArray() ?? []; } catch (JsonException) { }
+        RunInvite[] invites = [];
+        if (data.TryGetProperty("invites", out var invited) && invited.ValueKind == JsonValueKind.Array)
+            try { invites = invited.Deserialize<RunInvite[]>(Json)?.Where(i => i is { RunId.Length: > 0, Dungeon.Length: > 0 }).ToArray() ?? []; } catch (JsonException) { }
         Version[]? heldBack = null;
         if (data.TryGetProperty("windowsBlocked", out var held) && held.ValueKind == JsonValueKind.Array)
             heldBack = ReleaseFeed.HeldBack(held.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
-        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, PartyReady = ready, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, PartyReady = ready, Invites = invites, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
     }
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's

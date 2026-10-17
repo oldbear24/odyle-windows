@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.21.0 · 2026-10-17
+
+### New
+- **Wishlist invites**: when someone plans a run from the wishlist for a dungeon you want, the tray tells you ("Lumina invites you to Fire Temple"). It follows your planned-run notices on the dashboard. Needs a dashboard server from 0.33.0.
+
 ## 0.20.0 · 2026-10-17
 
 ### New
