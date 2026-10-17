@@ -16,7 +16,11 @@ concurrency:
   group: release
   cancel-in-progress: false
 jobs:
+  # A release waits for the app's checks against the dashboard backend (dashboard.yml).
+  dashboard:
+    uses: ./.github/workflows/dashboard.yml
   release:
+    needs: dashboard
     runs-on: windows-latest
     permissions:
       contents: write

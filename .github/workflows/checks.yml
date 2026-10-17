@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 jobs:
+  # The app against the dashboard backend (dashboard.yml); not a required check, so a broken
+  # dashboard main does not block merges here, but a release waits for it.
+  dashboard:
+    uses: ./.github/workflows/dashboard.yml
   build:
     runs-on: windows-latest
     steps:
