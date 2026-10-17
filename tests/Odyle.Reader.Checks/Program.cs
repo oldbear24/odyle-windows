@@ -228,6 +228,16 @@ static class ReaderChecks
                 // An update restart hands the live character to the next start, which takes it over without a relog.
                 Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
                 Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
+                // The tray menu (W#17): the reader's state line, Stop while it reads, and the characters, the
+                // fullest first, each with its value and cubes; nameless records are left out. (WinForms
+                // items are read through reflection: the checks reference WPF only.)
+                string ItemText(object item) => (string)item.GetType().GetProperty("Text")!.GetValue(item)!;
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "2026-10-17T10:00:00Z"), new Character("c2", "u", "Altie", "Lumiel", "GLOBAL_EU", 1090, true, true, "2026-10-17T09:00:00Z"), new Character("c3", "u", "", "Lumiel", "GLOBAL_EU", 0, false, false, "") });
+                Call(window, "TrayMenuOpening");
+                var trayRows = ((System.Collections.IEnumerable)Field("charactersItem").GetValue(window)!.GetType().GetProperty("DropDownItems")!.GetValue(Field("charactersItem").GetValue(window))!).Cast<object>().Select(ItemText).ToArray();
+                Check(ItemText(Field("readerItem").GetValue(window)!) == "Stop reader" && ItemText(Field("trayStatusItem").GetValue(window)!) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
+                Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ") && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · "), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
+                Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
                 foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
                 Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, ExperimentalOdyleDecoder.Version));
                 Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
