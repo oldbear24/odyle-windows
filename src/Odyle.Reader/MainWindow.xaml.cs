@@ -368,7 +368,9 @@ public partial class MainWindow : Window
         // A reading whose owner is not yet the shown character is displayed, but never under its name.
         var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
         int? value = reading?.Total ?? (character is { Confirmed: true } ? character.Value : null);
-        AccountLabel.Text = offline ? T("OFFLINE") : !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? accountName.ToUpper(Culture) : T("CONNECTING…");
+        // The header keeps room for its buttons: it names a state, not the account (Settings does).
+        AccountLabel.Text = offline ? T("OFFLINE") : !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? "" : T("CONNECTING…");
+        AccountLabel.Visibility = AccountLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         HeroTitle.Text = !connected && !offline ? T("Not connected")
             : offline && reading is not null ? (gameCharacterName.Length > 0 && readingOwnerKey == gameCharacterKey ? T("{0} · offline", gameCharacterName) : T("Detecting character…"))
             : reading is not null && !owned ? (gameCharacterName.Length > 0 && gameCharacterKey != detectedCharacterKey && readingOwnerKey == gameCharacterKey ? T("{0} · not saved", gameCharacterName) : T("Detecting character…"))
@@ -377,9 +379,8 @@ public partial class MainWindow : Window
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
         EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected || offline ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
-        if (rooms.Length > 1 && HeroRoom(character) is { } costRoom) CubeLabel.Text += " · " + costRoom.Name;
-        // A long room name is trimmed so the value keeps its room; the tooltip has the whole line.
-        CubeLabel.ToolTip = CubeLabel.Text.Length > 0 ? CubeLabel.Text : null;
+        // With several rooms the count is at the cost of the first one the character is shared in; the tooltip names it.
+        CubeLabel.ToolTip = CubeLabel.Text.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", CubeLabel.Text, costRoom.Name) : CubeLabel.Text;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
         var split = (connected || offline) && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
@@ -498,8 +499,9 @@ public partial class MainWindow : Window
         var seen = !live && Readiness.Parse(c.LastSeenAt) is { } at ? " · " + T("seen {0}", Age(at)) : "";
         // The class leads the detail, so a narrow row trims the server rather than the class.
         var where = c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}";
-        return new PartyMate(c.CharacterName, c.ClassLine.Length > 0 ? $"{c.ClassLine} · {where}" : where,
-            c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes") + (live ? "" : " · " + T("stale") + seen), Brush(live ? "Mint" : "Amber"),
+        var detail = c.ClassLine.Length > 0 ? $"{c.ClassLine} · {where}" : where;
+        return new PartyMate(c.CharacterName, live ? detail : T("stale") + seen + " · " + detail,
+            c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes"), Brush(live ? "Mint" : "Amber"),
             (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)));
     }
     // The Odyle clock under the split: from the reading on screen, or the saved character's last

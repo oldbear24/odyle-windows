@@ -79,7 +79,7 @@
       <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>
       <TextBlock x:Name="SplitLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
       <Button x:Name="ShareHintButton" Style="{StaticResource Ghost}" Content="Not shared in any room · Share ↗" Visibility="Collapsed" Click="ShareHint_Click" HorizontalAlignment="Left" Margin="-4,2,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Amber}" ToolTip="Your rooms cannot see this character. Choose the rooms on the dashboard."/>
-      <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+      <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
       <!-- Readings above the cap the account's membership answer settled -->
       <TextBlock x:Name="CapMismatchLabel" FontSize="10" Foreground="{StaticResource Amber}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
       <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
@@ -134,11 +134,16 @@
          <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
           <ItemsControl.ItemTemplate><DataTemplate>
            <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">
-            <DockPanel>
-             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center"><TextBlock Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,1,7,0"/><TextBlock Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/></StackPanel>
-             <Ellipse DockPanel.Dock="Left" Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
-             <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold"/><Run Text="  "/><Run Text="{Binding Detail, Mode=OneWay}" FontSize="10" Foreground="{StaticResource Faint}"/></TextBlock>
-            </DockPanel>
+            <!-- Two lines: the name and its Odyle, then class, level or staleness and the cubes -->
+            <Grid>
+             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+             <Ellipse Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+             <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+             <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
+             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"/>
+             <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="8,0,0,0"/>
+            </Grid>
            </Border>
           </DataTemplate></ItemsControl.ItemTemplate>
          </ItemsControl>

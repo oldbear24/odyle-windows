@@ -56,6 +56,7 @@ public static class Czech
         ["Stop"] = "Zastavit", ["Start"] = "Spustit", ["Connect"] = "Připojit",
         ["Quit Odyle? It stops reading {0}, and your party sees {0} offline.\n\nSettings can turn this question off."] = "Ukončit Odyle? Přestane číst {0} a parta uvidí {0} offline.\n\nV Nastavení můžeš tuhle otázku vypnout.",
         ["Ask before quitting while a character is read"] = "Zeptat se před ukončením, když se čte postava", ["Quitting stops the reader, and your party sees the character offline"] = "Ukončení zastaví čtečku a parta uvidí postavu offline",
+        ["{0} · at the cost of {1}"] = "{0} · podle ceny v místnosti {1}",
         ["Quit"] = "Ukončit", ["Quit Odyle completely · closing the window keeps it in the tray"] = "Úplně ukončit Odyle · po zavření okna zůstane v oznamovací oblasti",
         ["Restart to update"] = "Aktualizovat", ["Your connection is remembered on this PC."] = "Připojení si tento počítač pamatuje.",
         // Tray

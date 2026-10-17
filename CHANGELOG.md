@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.14.1 · 2026-10-17
+
+### Changed
+- Nothing on the card is cut off any more: the header names only a state such as OFFLINE (Settings names your account), the cube count leaves the room name to its tooltip, and the Odyle clock wraps onto a second line.
+- Party rows take two lines: the name and its Odyle, then class and level and the cubes. A stale reading says when it was last seen on its second line.
+
 ## 0.14.0 · 2026-10-17
 
 ### New
