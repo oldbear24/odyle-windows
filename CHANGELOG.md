@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.16.0 · 2026-10-17
+
+### New
+- **NA-East and NA-West are told apart.** Both have servers of the same names, so a character on NA-West Siel and one of the same name on NA-East Siel used to become one. The card shows NA-E or NA-W. Needs a dashboard server from 0.21.0; with an older one, NA-West characters are saved as NA as before.
+
 ## 0.15.0 · 2026-10-17
 
 ### New

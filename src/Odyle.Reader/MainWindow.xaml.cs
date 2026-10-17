@@ -642,7 +642,7 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next; next.AppVersion = Updater.Current.ToString();
+        api = next; naWest = null; next.AppVersion = Updater.Current.ToString();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
@@ -1528,12 +1528,14 @@ public partial class MainWindow : Window
             }
             if (detectedCharacterKey != key)
             {
+                // A server that does not list NA-West yet saves those characters as NA, as before (#4).
+                if (identity.Region == "GLOBAL_NAW" && naWest is null) { try { naWest = await api.KnowsNaWestAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { naWest = false; Log.Warn("The server's regions could not be read: " + error.Message); } }
                 if (identity.Server is null || identity.Region is null)
                 {
                     Status(T("Detected {0}, but its server ({1}) is not supported yet. Its Odyle is not saved.", identity.CharacterName, identity.ServerId));
                     RenderHero(); return;
                 }
-                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.Region);
+                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.RegionFor(naWest == true)!);
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
                 Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
             }
@@ -1555,6 +1557,8 @@ public partial class MainWindow : Window
     // Rooms say a character has no Odyle yet once the server knows (POST /api/odyle/no-odyle). Once per
     // character and run; a server from before it, or a failed request, changes nothing here.
     private DateTimeOffset namedAt; private string noOdyleSent = "";
+    // Whether the connected server keeps NA-West apart; asked once per connection, when an NA-West character is named.
+    private bool? naWest;
     private async Task MarkNoOdyleAsync()
     {
         if (api is null || currentCharacterId.Length == 0 || detectedCharacterKey != odyleMissingKey || noOdyleSent == currentCharacterId) return;

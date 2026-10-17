@@ -25,7 +25,7 @@ public sealed record NotificationsResponse(NotificationSettings Notifications);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null, int? AnsweredCap = null, int Level = 0, string? ClassName = null)
 {
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
-    public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
+    public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA-E", "NAW" => "NA-W", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string Location => $"{Server} · {RegionLabel}";
     // Class and level as PLAYNC's official search lists them (the dashboard's daily lookup, #25):
     // "Chanter · Lv 45", either alone, or "" until the character was found. Never typed in (R1).
@@ -125,6 +125,8 @@ public sealed class PartyApi : IDisposable
         DeviceKey = null; await PostAsync<JsonElement>("api/odyle/unpair", new { deviceKey = key }, renew: false);
     }
     public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
+    // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
+    public async Task<bool> KnowsNaWestAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Region == "GLOBAL_NAW");
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     // A paired app names its device key, so a PC removed on the dashboard gets 401 here
     // and ends its pairing like an unknown key at sign-in. Absent fields are left out;
@@ -170,7 +172,7 @@ public sealed class PartyApi : IDisposable
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));
         if (string.IsNullOrWhiteSpace(server) || server.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a server (up to 40 characters)."));
-        if (region is not ("GLOBAL_EU" or "GLOBAL_NA" or "GLOBAL_SA" or "GLOBAL_ASIA")) throw new ArgumentException(Localizer.T("Select a Global region."));
+        if (region is not ("GLOBAL_EU" or "GLOBAL_NA" or "GLOBAL_NAW" or "GLOBAL_SA" or "GLOBAL_ASIA")) throw new ArgumentException(Localizer.T("Select a Global region."));
         return (await PostAsync<ReportResponse>("api/odyle/character", new { characterName = characterName.Trim(), server = server.Trim(), region })).Character;
     }
     public async Task<Character> ReportAsync(PacketReading reading)
@@ -232,3 +234,5 @@ public sealed class PartyApi : IDisposable
     }
     public void Dispose() => client.Dispose();
 }
+public sealed record ServerRegion(string Region);
+public sealed record ServerRegions(ServerRegion[] Regions);
