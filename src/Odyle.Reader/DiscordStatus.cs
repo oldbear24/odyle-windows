@@ -11,8 +11,8 @@ namespace Odyle.Reader;
 // pipe, nothing goes over the network. Show sets what Discord should show, null clears it. A change
 // is sent at most every 15 seconds (Discord allows five in 20), a Discord that is not running is
 // looked for every 30 seconds, and clearing closes the pipe, which ends the status at once.
-// The status is sent for the game's process: Discord then shows it in place of the game it detects
-// ("Playing AION2"), which would otherwise lead the profile and hide it.
+// The status is sent for Odyle's own process, not the game's: tied to the game's, Discord hides it
+// along with the game when the player takes AION2 off Discord's list of games (0.26.1).
 public sealed class DiscordStatus : IDisposable
 {
     public enum State { Off, NotRunning, Shown, Refused }
@@ -20,21 +20,19 @@ public sealed class DiscordStatus : IDisposable
     private readonly SemaphoreSlim busy = new(1, 1), writing = new(1, 1);
     private NamedPipeClientStream? pipe;
     // refusedBy: the application Discord turned down (an unknown one); it is not tried again.
-    private string application = "", connectedTo = "", refusedBy = "";
+    private string application = "", connectedTo = "", refusedBy = "", lastFailure = "";
     private DiscordActivity? wanted, sent;
-    // The process the status is for: the game's, else Odyle's own.
-    private int wantedFor = Environment.ProcessId, sentFor;
     private DateTimeOffset sentAt = DateTimeOffset.MinValue, lookedAt = DateTimeOffset.MinValue;
     public State Now { get; private set; } = State.Off;
     public string Problem { get; private set; } = "";
     public event Action? Changed;
 
-    public void Show(string application, DiscordActivity? activity, int? game = null)
+    public void Show(string application, DiscordActivity? activity)
     {
-        this.application = application; wanted = activity; wantedFor = game ?? Environment.ProcessId;
+        this.application = application; wanted = activity;
         if (activity is null && pipe is null) { Set(State.Off, ""); return; }
         if (application == refusedBy) return;
-        if (activity == sent && wantedFor == sentFor && application == connectedTo && pipe is not null) return;
+        if (activity == sent && application == connectedTo && pipe is not null) return;
         var now = DateTimeOffset.UtcNow;
         if (activity is not null && pipe is not null && now - sentAt < SendEvery) return;
         if (activity is not null && pipe is null && now - lookedAt < LookEvery) return;
@@ -48,9 +46,9 @@ public sealed class DiscordStatus : IDisposable
             if (pipe is not null && (wanted is null || application != connectedTo)) Disconnect();
             if (wanted is null) { Set(State.Off, ""); return; }
             if (pipe is null && !await ConnectAsync()) return;
-            var (activity, process) = (wanted, wantedFor);
-            await WriteAsync(DiscordPresence.Message, DiscordPresence.SetActivityJson(process, activity, Guid.NewGuid().ToString()));
-            sent = activity; sentFor = process; sentAt = DateTimeOffset.UtcNow; Set(State.Shown, "");
+            var activity = wanted;
+            await WriteAsync(DiscordPresence.Message, DiscordPresence.SetActivityJson(Environment.ProcessId, activity, Guid.NewGuid().ToString()));
+            sent = activity; sentAt = DateTimeOffset.UtcNow; Set(State.Shown, "");
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException or InvalidDataException or TimeoutException)
         {
@@ -65,6 +63,7 @@ public sealed class DiscordStatus : IDisposable
         string[] names;
         try { names = Directory.GetFiles(@"\\.\pipe\").Select(Path.GetFileName).Where(n => n is not null && n.StartsWith("discord-ipc-", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray()!; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { names = []; }
+        var failure = "";
         foreach (var name in names)
         {
             // CurrentUserOnly: only a pipe of this Windows account's own Discord is talked to.
@@ -84,16 +83,19 @@ public sealed class DiscordStatus : IDisposable
                     if (frame is { Opcode: DiscordPresence.Close }) refusedBy = application;
                     Set(State.Refused, refused ?? ""); return false;
                 }
-                connectedTo = application; Log.Info("Connected to Discord for the status.");
+                connectedTo = application; lastFailure = ""; Log.Info("Connected to Discord for the status.");
                 _ = Task.Run(() => ListenAsync(next));
                 return true;
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or UnauthorizedAccessException or TimeoutException or InvalidDataException)
             {
                 if (pipe == next) pipe = null;
-                next.Dispose();
+                next.Dispose(); failure = $"{name}: {error.GetType().Name} {error.Message}";
             }
         }
+        // A Discord whose pipe is there but will not take Odyle is logged once per new reason.
+        if (failure != lastFailure && failure.Length > 0) Log.Warn("Discord's pipe could not be used for the status: " + failure);
+        lastFailure = failure;
         Set(State.NotRunning, ""); return false;
     }
     // Discord pings now and then and closes the pipe when it quits; whatever it answers is read so
