@@ -165,7 +165,7 @@ public static class Czech
         ["Discord turned it down: {0}"] = "Discord to odmítl: {0}", ["Discord is not running on this PC."] = "Discord na tomhle PC neběží.",
         ["Shown in your Discord status now."] = "Teď se ukazuje ve tvém stavu na Discordu.",
         ["Shown in your Discord status while the reader reads your character."] = "Ukazuje se ve tvém stavu na Discordu, když čtečka čte tvou postavu.",
-        ["Start or stop the reader"] = "Spustit nebo zastavit čtečku", ["Open the dashboard"] = "Otevřít dashboard",
+        ["Start or stop the reader"] = "Spustit nebo zastavit čtečku", ["View in the armory"] = "Ukázat ve zbrojnici", ["Open the dashboard"] = "Otevřít dashboard",
         ["Stop reader"] = "Zastavit čtečku",
         ["Start reader"] = "Spustit čtečku",
         ["Still open: {0}"] = "Ještě otevřené: {0}",

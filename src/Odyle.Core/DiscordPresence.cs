@@ -6,7 +6,10 @@ namespace Odyle.Core;
 // What Discord shows in the player's status while they play (Settings → Window, off by default):
 // the character with its Odyle, then the run they go to within the hour, or their cubes and when the
 // natural pool is full. Since: when the game's connection was found, for Discord's elapsed time.
-public sealed record DiscordActivity(string Details, string State, DateTimeOffset? Since);
+// Pictures and links come from the server's public address (Dress): the character's portrait from the
+// game (else Odyle's icon) and Odyle's icon beside it, and buttons to its armory profile and to Odyle.
+public sealed record DiscordActivity(string Details, string State, DateTimeOffset? Since, string? LargeImage = null, string? LargeText = null,
+    string? SmallImage = null, string? SmallText = null, string? ArmoryUrl = null, string? HomeUrl = null);
 
 // Discord's local RPC (the discord-ipc-N pipe of the Discord app on this PC): frames of an opcode
 // and a length, both 32-bit little-endian, then UTF-8 JSON. A handshake names the Discord
@@ -64,20 +67,50 @@ public static class DiscordPresence
         }
         return new DiscordActivity(Fit(details), Fit(state), since);
     }
+    // The pictures and buttons, all on the server's public HTTPS address so Discord can fetch and open
+    // them (a local test server gets none): the portrait the server keeps from the game, Odyle's icon,
+    // the character's armory profile (PLAYNC's, else the armory's search for it) and Odyle itself.
+    public static DiscordActivity Dress(DiscordActivity activity, string endpoint, Character character)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var server) || server.Scheme != "https") return activity;
+        var home = server.AbsoluteUri.TrimEnd('/');
+        var icon = home + "/icon-512.png";
+        var portrait = character.Portrait is { Length: > 0 } file ? $"{home}/api/files/characters/{Uri.EscapeDataString(character.Id)}/{Uri.EscapeDataString(file)}" : null;
+        if (portrait is { Length: > MaxImage }) portrait = null;
+        var about = character.ClassLine.Length > 0 ? $"{character.CharacterName} · {character.ClassLine} · {character.Server}" : $"{character.CharacterName} · {character.Location}";
+        return activity with
+        {
+            LargeImage = portrait ?? icon, LargeText = Fit(about),
+            SmallImage = portrait is null ? null : icon, SmallText = portrait is null ? null : "Odyle",
+            ArmoryUrl = ArmoryPath(character) is { } path ? home + "/#" + path : null, HomeUrl = home + "/",
+        };
+    }
+    // The armory page of a character, as the dashboard's src/armory.js builds and accepts it.
+    private static readonly System.Text.RegularExpressions.Regex ArmoryRoute = new(@"^/armory(?:/find/GLOBAL_(?:NAW?|EU|SA|ASIA)/[A-Za-z]{2,20}/[^/]{1,60}|/(?:nae|naw|eu|la|as)/[12]\d{3}/[A-Za-z0-9_-]{8,90}={0,2})$");
+    public static string? ArmoryPath(Character c)
+    {
+        var path = c is { OfficialId.Length: > 0, OfficialRegion.Length: > 0, OfficialServerId: > 0 } ? $"/armory/{c.OfficialRegion}/{c.OfficialServerId}/{c.OfficialId}" : "";
+        if (!ArmoryRoute.IsMatch(path)) path = $"/armory/find/{c.Region}/{c.Server}/{Uri.EscapeDataString(c.CharacterName)}";
+        return ArmoryRoute.IsMatch(path) ? path : null;
+    }
+    // Discord takes image addresses of at most 256 characters, button labels of at most 32 and links of at most 512.
+    private const int MaxImage = 256, MaxLabel = 32, MaxLink = 512;
     private static string Fit(string text) => text.Length > MaxText ? text[..(MaxText - 1)] + "…" : text.Length < 2 ? text.PadRight(2) : text;
 
     public static string HandshakeJson(string application) => JsonSerializer.Serialize(new { v = 1, client_id = application });
-    public static string SetActivityJson(int pid, DiscordActivity activity, string nonce) => JsonSerializer.Serialize(new
+    public static string SetActivityJson(int pid, DiscordActivity activity, string nonce)
     {
-        cmd = "SET_ACTIVITY", nonce,
-        args = new
-        {
-            pid,
-            activity = activity.Since is { } since
-                ? (object)new { details = activity.Details, state = activity.State, timestamps = new { start = since.ToUnixTimeMilliseconds() } }
-                : new { details = activity.Details, state = activity.State },
-        },
-    });
+        var shown = new Dictionary<string, object> { ["details"] = activity.Details, ["state"] = activity.State };
+        if (activity.Since is { } since) shown["timestamps"] = new { start = since.ToUnixTimeMilliseconds() };
+        var assets = new Dictionary<string, string>();
+        if (activity.LargeImage is { } large) { assets["large_image"] = large; if (activity.LargeText is { } about) assets["large_text"] = about; }
+        if (activity.SmallImage is { } small) { assets["small_image"] = small; if (activity.SmallText is { } label) assets["small_text"] = label; }
+        if (assets.Count > 0) shown["assets"] = assets;
+        var buttons = new[] { (Label: Localizer.T("View in the armory"), Url: activity.ArmoryUrl), (Label: Localizer.T("Open Odyle"), Url: activity.HomeUrl) }
+            .Where(b => b.Url is { Length: > 0 and <= MaxLink } && b.Label.Length <= MaxLabel).Select(b => new { label = b.Label, url = b.Url }).ToArray();
+        if (buttons.Length > 0) shown["buttons"] = buttons;
+        return JsonSerializer.Serialize(new { cmd = "SET_ACTIVITY", nonce, args = new { pid, activity = shown } });
+    }
 
     public static byte[] Frame(int opcode, string json)
     {

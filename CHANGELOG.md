@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.26.0 · 2026-10-21
+
+### New
+- **Your Discord status has pictures and buttons**: your character's portrait from the game (or Odyle's icon) with its class, level and server, Odyle's icon beside it, and the buttons **View in the armory** (your character's public profile) and **Open Odyle** for whoever looks at your profile. Discord does not let you click your own buttons; your friends can.
+
 ## 0.25.0 · 2026-10-21
 
 ### New

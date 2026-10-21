@@ -1119,7 +1119,7 @@ public partial class MainWindow : Window
         var reading = latest;
         if (reading is not null && !(readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey)) return null;
         if (reading is null && !character.Confirmed) return null;
-        return DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince);
+        return DiscordPresence.Dress(DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince), api.Endpoint, character);
     }
     private void RenderDiscordNote()
     {
