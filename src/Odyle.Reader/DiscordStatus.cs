@@ -11,6 +11,8 @@ namespace Odyle.Reader;
 // pipe, nothing goes over the network. Show sets what Discord should show, null clears it. A change
 // is sent at most every 15 seconds (Discord allows five in 20), a Discord that is not running is
 // looked for every 30 seconds, and clearing closes the pipe, which ends the status at once.
+// The status is sent for the game's process: Discord then shows it in place of the game it detects
+// ("Playing AION2"), which would otherwise lead the profile and hide it.
 public sealed class DiscordStatus : IDisposable
 {
     public enum State { Off, NotRunning, Shown, Refused }
@@ -20,17 +22,19 @@ public sealed class DiscordStatus : IDisposable
     // refusedBy: the application Discord turned down (an unknown one); it is not tried again.
     private string application = "", connectedTo = "", refusedBy = "";
     private DiscordActivity? wanted, sent;
+    // The process the status is for: the game's, else Odyle's own.
+    private int wantedFor = Environment.ProcessId, sentFor;
     private DateTimeOffset sentAt = DateTimeOffset.MinValue, lookedAt = DateTimeOffset.MinValue;
     public State Now { get; private set; } = State.Off;
     public string Problem { get; private set; } = "";
     public event Action? Changed;
 
-    public void Show(string application, DiscordActivity? activity)
+    public void Show(string application, DiscordActivity? activity, int? game = null)
     {
-        this.application = application; wanted = activity;
+        this.application = application; wanted = activity; wantedFor = game ?? Environment.ProcessId;
         if (activity is null && pipe is null) { Set(State.Off, ""); return; }
         if (application == refusedBy) return;
-        if (activity == sent && application == connectedTo && pipe is not null) return;
+        if (activity == sent && wantedFor == sentFor && application == connectedTo && pipe is not null) return;
         var now = DateTimeOffset.UtcNow;
         if (activity is not null && pipe is not null && now - sentAt < SendEvery) return;
         if (activity is not null && pipe is null && now - lookedAt < LookEvery) return;
@@ -44,9 +48,9 @@ public sealed class DiscordStatus : IDisposable
             if (pipe is not null && (wanted is null || application != connectedTo)) Disconnect();
             if (wanted is null) { Set(State.Off, ""); return; }
             if (pipe is null && !await ConnectAsync()) return;
-            var activity = wanted;
-            await WriteAsync(DiscordPresence.Message, DiscordPresence.SetActivityJson(Environment.ProcessId, activity, Guid.NewGuid().ToString()));
-            sent = activity; sentAt = DateTimeOffset.UtcNow; Set(State.Shown, "");
+            var (activity, process) = (wanted, wantedFor);
+            await WriteAsync(DiscordPresence.Message, DiscordPresence.SetActivityJson(process, activity, Guid.NewGuid().ToString()));
+            sent = activity; sentFor = process; sentAt = DateTimeOffset.UtcNow; Set(State.Shown, "");
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException or InvalidDataException or TimeoutException)
         {

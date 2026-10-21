@@ -39,6 +39,10 @@ public sealed class PacketCapture : IAsyncDisposable
     public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
     // Payload bytes that reached a decoder; blocked or unknown connections add nothing.
     public long GameBytes => Interlocked.Read(ref gameBytes);
+    // The process id of the game client last seen alone on the game port, or null before one: it
+    // stays through a moment without a connection (loading, a server change), so the Discord status
+    // does not jump between the game and Odyle.
+    public int? GameProcess { get { lock (flowsLock) return knownGame; } }
     private sealed class Worker
     {
         public Task Task = Task.CompletedTask;
@@ -217,6 +221,7 @@ public sealed class PacketCapture : IAsyncDisposable
     private TcpFlow[] knownFlows = Array.Empty<TcpFlow>();
     // How many game processes own those connections: more than one is two clients on this PC.
     private int knownClients;
+    private int? knownGame;
     private bool reportedTwoClients;
     private DateTimeOffset knownFlowsAt = DateTimeOffset.MinValue;
     private void ForgetFlows() { lock (flowsLock) knownFlowsAt = DateTimeOffset.MinValue; }
@@ -225,7 +230,7 @@ public sealed class PacketCapture : IAsyncDisposable
         lock (flowsLock)
         {
             if (DateTimeOffset.UtcNow - knownFlowsAt < (immediate ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(2))) return knownFlows;
-            knownFlows = GameFlows(out knownClients); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
+            knownFlows = GameFlows(out knownClients, out var game); knownGame = game ?? knownGame; knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
         }
     }
     private static string ProcessName(int pid, Dictionary<int, string> cache)
@@ -253,7 +258,7 @@ public sealed class PacketCapture : IAsyncDisposable
     }
     private static byte[] Address(IntPtr row, int offset) { var bytes = new byte[16]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, 16); return bytes; }
     private static ushort PortAt(IntPtr row, int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
-    private static TcpFlow[] GameFlows(out int clients)
+    private static TcpFlow[] GameFlows(out int clients, out int? game)
     {
         var result = new List<TcpFlow>(); var processes = new Dictionary<int, string>(); var owners = new HashSet<int>();
         ReadTcpTable(2, 24, row =>
@@ -277,7 +282,7 @@ public sealed class PacketCapture : IAsyncDisposable
             if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
             result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44))); owners.Add(owner);
         });
-        clients = owners.Count;
+        clients = owners.Count; game = owners.Count == 1 ? owners.First() : null;
         return result.ToArray();
     }
     // What GameConnection.Explain needs: the live connections of the game's processes and every

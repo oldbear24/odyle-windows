@@ -1080,7 +1080,8 @@ public partial class MainWindow : Window
     // Off by default (Settings → Window): while the reader has the game, Discord shows the card's
     // character with its Odyle, then the run you go to within the hour, or the cubes and when the
     // natural pool is full. It ends when the game closes, the reader stops or the setting is off.
-    // The Discord application is the one the server signs in with (its public auth methods).
+    // The Discord application is the one the server signs in with (its public auth methods). It is
+    // sent for the game's process, so Discord shows it instead of the plain "Playing AION2".
     private readonly DiscordStatus discord = new();
     private string? discordApp; private bool discordMissing; private DateTimeOffset discordAskedAt = DateTimeOffset.MinValue;
     private DateTimeOffset? gameSince;
@@ -1096,7 +1097,7 @@ public partial class MainWindow : Window
         {
             discordAskedAt = DateTimeOffset.UtcNow; _ = AskDiscordAppAsync(current);
         }
-        if (!App.Headless) discord.Show(discordApp ?? "", discordApp is null ? null : PresenceNow());
+        if (!App.Headless) discord.Show(discordApp ?? "", discordApp is null ? null : PresenceNow(), capture?.GameProcess);
         RenderDiscordNote();
     }
     private async Task AskDiscordAppAsync(PartyApi current)

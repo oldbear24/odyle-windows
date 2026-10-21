@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.26.1 · 2026-10-21
+
+### Fixed
+- **Your Discord status is no longer hidden by AION2**: Discord showed only “Playing AION2” while the game ran; now your character, its Odyle and the buttons show instead.
+
 ## 0.26.0 · 2026-10-21
 
 ### New
