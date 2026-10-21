@@ -88,8 +88,8 @@
       <ItemsControl x:Name="AltList" Visibility="Collapsed" Focusable="False" Margin="0,1,0,0">
        <ItemsControl.ItemTemplate>
         <DataTemplate>
-         <DockPanel Margin="0,1,0,1">
-          <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/>
+         <DockPanel Margin="0,1,0,1" ToolTip="{Binding Hint}" Background="Transparent">
+          <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10" Foreground="{Binding Mark}" Margin="8,0,0,0"/>
           <TextBlock Text="{Binding Name}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
          </DockPanel>
         </DataTemplate>

@@ -15,6 +15,9 @@
 <SolidColorBrush x:Key="Faint" Color="#6B8274"/>
 <SolidColorBrush x:Key="Amber" Color="#E6CB8B"/>
 <SolidColorBrush x:Key="Rose" Color="#F2A6AB"/>
+<!-- A natural pool near its cap (OdyleClock.Level): full within two days, and full or within the hour -->
+<SolidColorBrush x:Key="Orange" Color="#FFB65C"/>
+<SolidColorBrush x:Key="Red" Color="#FF7F87"/>
 <SolidColorBrush x:Key="PillNeutral" Color="#1F2B24"/>
 <SolidColorBrush x:Key="PillLive" Color="#1F3A2A"/>
 <SolidColorBrush x:Key="PillAmber" Color="#3A3220"/>

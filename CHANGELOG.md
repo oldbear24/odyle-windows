@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.24.0 · 2026-10-21
+
+### New
+- **A character near its Odyle cap stands out**: on the card the clock line and the Odyle value turn orange two days before the natural pool is full (**Nearly full**), and red once it is full or fills within the hour (**Full within the hour**). In **Your characters** those rows are coloured the same way.
+
 ## 0.23.0 · 2026-10-18
 
 ### New
