@@ -763,6 +763,7 @@ static class ReaderChecks
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
+        Call(window, "SetDiscordStatus", true, false); Snapshot(settings, Path.Combine(directory, "settings-discord-preview.png"), 320); Call(window, "SetDiscordStatus", false, false);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
