@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.26.3 · 2026-10-21
+
+### Fixed
+- **Settings tells you when Discord runs as administrator**: Odyle cannot reach a Discord started that way, and it used to say Discord was not running. Now it says how to fix it: turn off **Run this program as an administrator** in Discord.exe's Properties → Compatibility and restart Discord.
+
 ## 0.26.2 · 2026-10-21
 
 ### Fixed
