@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using Odyle.Core;
 using Odyle.Reader;
@@ -174,10 +175,21 @@ static class ReaderChecks
                 var shownReading = Field("latest").GetValue(window);
                 Field("latest").SetValue(window, new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }); Call(window, "RenderOdyleClock");
                 Check(odyleClock.Text.StartsWith("Nearly full · +15 in ") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
+                // The taskbar button fills with the natural pool towards its cap, in the card's colours.
+                Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
                 Field("latest").SetValue(window, new PacketCandidate(560, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }); Call(window, "RenderOdyleClock");
                 Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
+                Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
                 Field("latest").SetValue(window, shownReading); Call(window, "RenderOdyleClock");
                 Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
+                Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Normal }, "far from its cap the taskbar button is green again");
+                // The Discord status (off by default): while the reader has the game, the card's character with its Odyle.
+                Check(Settings(window).FindName("DiscordToggle") is CheckBox { IsChecked: false } && Call(window, "PresenceNow") is null, "the Discord status is off unless chosen");
+                Call(window, "SetDiscordStatus", true, false); Field("gamePresent").SetValue(window, true);
+                Check(Call(window, "PresenceNow") is DiscordActivity { Details: var details } && details.EndsWith(" · " + Control<TextBlock>(window, "ValueLabel").Text + " Odyle") && ((TextBlock)Settings(window).FindName("DiscordNoteLabel")).Visibility == Visibility.Visible, "chosen, Discord shows the character and its Odyle while the game is read");
+                Field("gamePresent").SetValue(window, false);
+                Check(Call(window, "PresenceNow") is null, "without the game Discord shows nothing");
+                Call(window, "SetDiscordStatus", false, false);
                 // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
                 // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
                 server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
@@ -751,6 +763,7 @@ static class ReaderChecks
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
         Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
+        Call(window, "SetDiscordStatus", true, false); Snapshot(settings, Path.Combine(directory, "settings-discord-preview.png"), 320); Call(window, "SetDiscordStatus", false, false);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");

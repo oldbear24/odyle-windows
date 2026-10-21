@@ -57,7 +57,10 @@ public partial class App : System.Windows.Application
         // Already running: a start by hand brings that window forward; a start with Windows just ends; an
         // Open in Odyle link (--pair) goes to the running Odyle, which asks before pairing.
         var pairLink = StartupCommand.PairLinkOf(e.Args);
-        if (!primary) { if (pairLink is not null) { AllowSetForegroundWindow(-1); if (!PairPipe.Send(user, pairLink)) ShowRunning(user); } else if (!tray) ShowRunning(user); Shutdown(); return; }
+        // A jump list task (--do) goes to the running Odyle the same way.
+        var action = StartupCommand.ActionOf(e.Args);
+        var handed = pairLink ?? (action is null ? null : StartupCommand.PipeActionPrefix + action);
+        if (!primary) { if (handed is not null) { AllowSetForegroundWindow(-1); if (!PairPipe.Send(user, handed)) ShowRunning(user); } else if (!tray) ShowRunning(user); Shutdown(); return; }
         Log.Info($"Odyle {Updater.Current} starts{(tray ? " in the tray" : "")}: {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")} package, {Environment.OSVersion}, language {Localizer.Language} ({Localizer.Culture.Name}).");
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
@@ -71,10 +74,22 @@ public partial class App : System.Windows.Application
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
         quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + user);
         quitWait = ThreadPool.RegisterWaitForSingleObject(quitSignal, (_, _) => window.Dispatcher.BeginInvoke(window.QuitOnRequest), null, Timeout.Infinite, executeOnlyOnce: true);
-        pairPipe = new PairPipe(user, link => window.Dispatcher.BeginInvoke(() => window.OfferPairing(link)));
+        pairPipe = new PairPipe(user, text => window.Dispatcher.BeginInvoke(() => { if (StartupCommand.PipeAction(text) is { } task) window.Do(task); else window.OfferPairing(text); }));
+        UseJumpList();
         if (!tray || pairLink is not null) window.Show();
         _ = window.StartAsync(tray);
         if (pairLink is not null) window.Dispatcher.BeginInvoke(() => window.OfferPairing(pairLink), DispatcherPriority.ApplicationIdle);
+        else if (action is not null) window.Dispatcher.BeginInvoke(() => window.Do(action), DispatcherPriority.ApplicationIdle);
+    }
+    // The taskbar button's right-click menu, also on a pinned button while Odyle is not running: each
+    // task starts this executable with --do, which a running Odyle takes over (MainWindow.Do).
+    private void UseJumpList()
+    {
+        if (Environment.ProcessPath is not { } exe) return;
+        System.Windows.Shell.JumpTask Task(string action, string title) => new() { Title = Localizer.T(title), Arguments = $"{StartupCommand.ActionArgument} {action}", ApplicationPath = exe, IconResourcePath = exe, IconResourceIndex = 0 };
+        var list = new System.Windows.Shell.JumpList([Task("compact", "Compact mode"), Task("tasks", "Show tasks"), Task("reader", "Start or stop the reader"), Task("dashboard", "Open the dashboard"), Task("settings", "Settings")], false, false);
+        try { System.Windows.Shell.JumpList.SetJumpList(this, list); list.Apply(); }
+        catch (Exception error) when (error is InvalidOperationException or COMException or UnauthorizedAccessException) { Log.Warn("The jump list could not be set: " + error.Message); }
     }
     // "Odyle.exe --unpair", run by the uninstaller when asked to disconnect this PC: a running Odyle
     // quits first (it marks its reading stale and lets the uninstaller remove its files), then the

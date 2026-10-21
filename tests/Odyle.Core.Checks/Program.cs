@@ -6,6 +6,7 @@ ChecklistChecks.Run();
 LocalizationChecks.Run();
 await ConnectionChecks.Run();
 DesktopChecks.Run();
+await DiscordChecks.Run();
 SetupChecks.Run();
 RealtimeChecks.Run();
 ClockChecks.Run();

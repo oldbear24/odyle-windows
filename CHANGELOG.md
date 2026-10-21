@@ -2,6 +2,13 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.25.0 · 2026-10-21
+
+### New
+- **Your Odyle in your Discord status** (Settings → Window, off unless you choose it): while you play, Discord shows your character with its Odyle, then the run you go to within the hour or your cubes and when the natural pool is full. Odyle talks only to the Discord app on your PC; the status ends when the game closes.
+- **The taskbar button shows your natural pool** filling towards its cap, yellow two days before it is full and red once it is; pointing at it shows the Odyle clock.
+- **Right-click the taskbar button** for Compact mode, Show tasks, Start or stop the reader, Open the dashboard and Settings, also on a pinned button while Odyle is not running.
+
 ## 0.24.0 · 2026-10-21
 
 ### New

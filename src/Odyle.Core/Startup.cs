@@ -14,6 +14,10 @@ public static class StartupCommand
     public const string BuildInfoArgument = "--build-info";
     // "<Odyle.exe>" --pair "odyle://pair?link=…": an Open in Odyle link from the dashboard (ConnectionDetails.FromAppLink).
     public const string PairArgument = "--pair";
+    // "<Odyle.exe>" --do <action>: a task of the jump list (the taskbar button's right-click menu). A
+    // running Odyle gets it over the Open in Odyle pipe as "odyle-do:<action>".
+    public const string ActionArgument = "--do", PipeActionPrefix = "odyle-do:";
+    public static readonly string[] Actions = ["compact", "tasks", "reader", "dashboard", "settings"];
     public static string For(string executable) => $"\"{executable}\" {TrayArgument}";
     // The executable a Run value starts: the quoted path, or the first word without quotes.
     public static string? PathOf(string? command)
@@ -38,6 +42,14 @@ public static class StartupCommand
         for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], PairArgument, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
         return null;
     }
+    // The jump list action after --do, or null without a known one.
+    public static string? ActionOf(IReadOnlyList<string> args)
+    {
+        for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], ActionArgument, StringComparison.OrdinalIgnoreCase) && Actions.Contains(args[i + 1].ToLowerInvariant())) return args[i + 1].ToLowerInvariant();
+        return null;
+    }
+    // A jump list action the pipe carried, or null for anything else (an Open in Odyle link).
+    public static string? PipeAction(string text) => text.StartsWith(PipeActionPrefix, StringComparison.Ordinal) && Actions.Contains(text[PipeActionPrefix.Length..]) ? text[PipeActionPrefix.Length..] : null;
     // What a build is: its version, whether it updates itself, its package kind.
     public static string BuildInfo(Version version, bool release, bool selfContained, string runtime) =>
         System.Text.Json.JsonSerializer.Serialize(new { version = $"{version.Major}.{version.Minor}.{Math.Max(version.Build, 0)}", release, selfContained, runtime });

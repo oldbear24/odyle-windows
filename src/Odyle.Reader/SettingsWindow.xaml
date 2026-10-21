@@ -53,6 +53,9 @@
    <!-- While you play (W#18) -->
    <CheckBox x:Name="FadeInGameToggle" Content="Fade the card while the game is in front" Margin="0,8,0,0" ToolTip="The card turns see-through while you play; point at it to see it fully"/>
    <CheckBox x:Name="FollowGameToggle" Content="Show the card with the game, hide it after" Margin="0,8,0,0" ToolTip="The card comes up when the game starts, without taking the focus, and goes to the tray when the game closes"/>
+   <!-- The Discord status: through the Discord app on this PC, off unless chosen -->
+   <CheckBox x:Name="DiscordToggle" Content="Show my Odyle in my Discord status" Margin="0,8,0,0" ToolTip="While you play, Discord shows your character, its Odyle and your cubes or next run; your Discord friends and servers see it"/>
+   <TextBlock x:Name="DiscordNoteLabel" Style="{StaticResource Hint}" TextWrapping="Wrap" Visibility="Collapsed" Margin="22,2,0,0"/>
    <!-- Compact mode: the shortcut that switches it -->
    <DockPanel Margin="0,8,0,0"><TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Compact mode shortcut" VerticalAlignment="Center" Margin="2,0,8,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the full card and compact mode from anywhere"/></DockPanel>
    <TextBlock x:Name="HotkeyProblemLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,4,0,0"/>
