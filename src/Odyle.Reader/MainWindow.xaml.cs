@@ -209,6 +209,7 @@ public partial class MainWindow : Window
         settings.ConfirmQuitToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { ConfirmQuit = settings.ConfirmQuitToggle.IsChecked == true });
         settings.FadeInGameToggle.Click += (_, _) => SetFadeInGame(settings.FadeInGameToggle.IsChecked == true, persist: true);
         settings.FollowGameToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { FollowGame = settings.FollowGameToggle.IsChecked == true });
+        settings.DiscordToggle.Click += (_, _) => SetDiscordStatus(settings.DiscordToggle.IsChecked == true, persist: true); discord.Changed += () => Dispatcher.BeginInvoke(RenderDiscordNote);
         gameFocusTimer.Tick += (_, _) => RenderFade(); MouseEnter += (_, _) => RenderFade(); MouseLeave += (_, _) => RenderFade();
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
@@ -244,11 +245,11 @@ public partial class MainWindow : Window
         heartbeat.Tick += async (_, _) => await PulseAsync();
         npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
         publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
-        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); };
+        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); RenderDiscord(); };
         clock.Start();
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
-        settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetDiscordStatus(preferences.DiscordStatus, persist: false); SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
         // Odyle before (it is paired) hears of this one.
@@ -390,9 +391,10 @@ public partial class MainWindow : Window
     {
         readerState = state;
         // Following the game (W#18): the card comes up with it and goes to the tray after it.
-        var follow = FollowStep(gamePresent, state);
+        var follow = FollowStep(gamePresent, state); var wasPresent = gamePresent;
         gamePresent = state is ReaderState.Listening or ReaderState.Midstream or ReaderState.Live or ReaderState.Stale || (gamePresent && state is not (ReaderState.Waiting or ReaderState.Stopped));
         if (preferences.FollowGame && follow.Length > 0 && !App.Headless) FollowGame(follow == "show");
+        if (gamePresent && !wasPresent) gameSince = DateTimeOffset.UtcNow; else if (!gamePresent) gameSince = null;
         var (dot, text) = state switch
         {
             ReaderState.Stopped => ("Faint", "Muted"),
@@ -636,12 +638,7 @@ public partial class MainWindow : Window
     private void RenderOdyleClock()
     {
         var character = CurrentCharacter; var reading = capture is not null ? latest : null;
-        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
-        ClockState? state = null;
-        if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
-            state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
-        else if (api is not null && reading is null && character is not null)
-            state = SavedClock(character);
+        var state = CardClock();
         var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
         // Orange two days before the natural pool is full, red once it is or within the hour.
         var flag = OdyleClock.Flag(state, DateTimeOffset.UtcNow); var level = OdyleClock.Level(state, DateTimeOffset.UtcNow);
@@ -650,6 +647,32 @@ public partial class MainWindow : Window
         OdyleClockLabel.FontWeight = level == CapLevel.None ? FontWeights.Normal : FontWeights.SemiBold;
         var mismatch = api is not null && character is not null ? OdyleClock.Mismatch(character.NaturalMax, character.AnsweredCap) : "";
         CapMismatchLabel.Text = mismatch; CapMismatchLabel.Visibility = mismatch.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RenderTaskbar(state, level, OdyleClockLabel.Text);
+    }
+    // The clock of the card's character: from the reading on screen once it is that character's, else
+    // from its last saved one; null without either.
+    private ClockState? CardClock()
+    {
+        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
+        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
+            return OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
+        return api is not null && reading is null && character is not null ? SavedClock(character) : null;
+    }
+    // The taskbar button fills with the natural pool towards its cap: green, yellow two days before it
+    // is full, red once it is or within the hour (the card's orange and red); its tooltip is the clock.
+    private void RenderTaskbar(ClockState? state, CapLevel level, string line)
+    {
+        var bar = TaskbarItemInfo ??= new System.Windows.Shell.TaskbarItemInfo();
+        bar.ProgressState = state is not { Cap: > 0 } ? System.Windows.Shell.TaskbarItemProgressState.None : level switch
+        {
+            CapLevel.Soon => System.Windows.Shell.TaskbarItemProgressState.Paused,
+            CapLevel.Full => System.Windows.Shell.TaskbarItemProgressState.Error,
+            _ => System.Windows.Shell.TaskbarItemProgressState.Normal,
+        };
+        bar.ProgressValue = state is { Cap: > 0 } s ? Math.Clamp(s.Base / (double)s.Cap, 0, 1) : 0;
+        var tip = state is null ? "Odyle" : $"Odyle · {ValueLabel.Text} · {line}";
+        if (bar.Description != tip) bar.Description = tip;
     }
     // The Odyle clock of a saved character from its last reading (an estimate), or null.
     private ClockState? SavedClock(Character c) => c is { Confirmed: true, Parts: { } parts } && Readiness.Parse(c.LastReadingAt) is { } saved
@@ -762,7 +785,7 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next; naWest = null; next.AppVersion = Updater.Current.ToString();
+        api = next; naWest = null; discordApp = null; discordMissing = false; discordAskedAt = DateTimeOffset.MinValue; next.AppVersion = Updater.Current.ToString();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
@@ -1051,6 +1074,79 @@ public partial class MainWindow : Window
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception error) { Status(T(error.Message)); }
+    }
+
+    // ----- Discord status -----
+    // Off by default (Settings → Window): while the reader has the game, Discord shows the card's
+    // character with its Odyle, then the run you go to within the hour, or the cubes and when the
+    // natural pool is full. It ends when the game closes, the reader stops or the setting is off.
+    // The Discord application is the one the server signs in with (its public auth methods).
+    private readonly DiscordStatus discord = new();
+    private string? discordApp; private bool discordMissing; private DateTimeOffset discordAskedAt = DateTimeOffset.MinValue;
+    private DateTimeOffset? gameSince;
+    private void SetDiscordStatus(bool on, bool persist)
+    {
+        settings.DiscordToggle.IsChecked = on; preferences = preferences with { DiscordStatus = on };
+        if (persist) { PreferencesStore.Save(preferences); Log.Info(on ? "The Discord status is on." : "The Discord status is off."); }
+        RenderDiscord();
+    }
+    private void RenderDiscord()
+    {
+        if (preferences.DiscordStatus && api is { } current && discordApp is null && DateTimeOffset.UtcNow - discordAskedAt > TimeSpan.FromMinutes(10))
+        {
+            discordAskedAt = DateTimeOffset.UtcNow; _ = AskDiscordAppAsync(current);
+        }
+        if (!App.Headless) discord.Show(discordApp ?? "", discordApp is null ? null : PresenceNow());
+        RenderDiscordNote();
+    }
+    private async Task AskDiscordAppAsync(PartyApi current)
+    {
+        try
+        {
+            var found = await current.GetDiscordApplicationAsync();
+            if (api != current) return;
+            discordApp = found; discordMissing = found is null;
+            if (found is null) Log.Info("The server has no Discord sign-in, so there is no Discord status.");
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException) { Log.Warn("The server's Discord application could not be read: " + error.Message); }
+        RenderDiscordNote();
+    }
+    // What Discord should show now, or null: only while the reader has the game, for the card's
+    // character, never for a reading the game has not named yet.
+    private DiscordActivity? PresenceNow()
+    {
+        if (!preferences.DiscordStatus || api is null || capture is null || !gamePresent || CurrentCharacter is not { } character || heroValue is not { } value) return null;
+        var reading = latest;
+        if (reading is not null && !(readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey)) return null;
+        if (reading is null && !character.Confirmed) return null;
+        return DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince);
+    }
+    private void RenderDiscordNote()
+    {
+        var note = !preferences.DiscordStatus ? ""
+            : discordMissing ? T("This server has no Discord sign-in, so Odyle has no Discord app to show your status with.")
+            : discord.Now == DiscordStatus.State.Refused ? T("Discord turned it down: {0}", discord.Problem)
+            : discord.Now == DiscordStatus.State.NotRunning ? T("Discord is not running on this PC.")
+            : discord.Now == DiscordStatus.State.Shown ? T("Shown in your Discord status now.")
+            : T("Shown in your Discord status while the reader reads your character.");
+        if (settings.DiscordNoteLabel.Text != note) settings.DiscordNoteLabel.Text = note;
+        settings.DiscordNoteLabel.Visibility = note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ----- Jump list -----
+    // The taskbar button's right-click menu (App sets it up): each task starts Odyle with --do, which
+    // the running Odyle gets over the Open in Odyle pipe; a first start does it once it is up.
+    public void Do(string action)
+    {
+        Log.Info($"Jump list: {action}.");
+        switch (action)
+        {
+            case "compact": ToggleCompact(); BringToFront(); break;
+            case "tasks": if (compactMode) SetCompact(false, persist: true); SetTasksShown(TasksPanel.Visibility != Visibility.Visible, persist: true); BringToFront(); break;
+            case "reader": Reader_Click(this, new RoutedEventArgs()); break;
+            case "dashboard": if (api is null && !Offline) { BringToFront(); OpenSettings(); } else OpenDashboard(""); break;
+            case "settings": BringToFront(); OpenSettings(); break;
+        }
     }
 
     // ----- Window -----
@@ -2052,7 +2148,7 @@ public partial class MainWindow : Window
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
         if (handover is not null) { HandoverStore.Save(handover); Log.Info($"Handing {handover.CharacterName} over to the restart."); }
-        try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); realtime?.Dispose(); api?.Dispose(); }
+        try { await Task.WhenAny(StopCaptureAsync(invalidate: handover is null), Task.Delay(4000)); realtime?.Dispose(); api?.Dispose(); discord.Dispose(); }
         finally
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); whatsNew?.Close();
