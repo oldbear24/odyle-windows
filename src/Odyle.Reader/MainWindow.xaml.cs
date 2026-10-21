@@ -1127,6 +1127,7 @@ public partial class MainWindow : Window
             : discordMissing ? T("This server has no Discord sign-in, so Odyle has no Discord app to show your status with.")
             : discord.Now == DiscordStatus.State.Refused ? T("Discord turned it down: {0}", discord.Problem)
             : discord.Now == DiscordStatus.State.NotRunning ? T("Discord is not running on this PC.")
+            : discord.Now == DiscordStatus.State.AsAdministrator ? T("Discord runs as administrator, so Odyle cannot reach it. Turn off “Run this program as an administrator” in Discord.exe's Properties → Compatibility and restart Discord.")
             : discord.Now == DiscordStatus.State.Shown ? T("Shown in your Discord status now.")
             : T("Shown in your Discord status while the reader reads your character.");
         if (settings.DiscordNoteLabel.Text != note) settings.DiscordNoteLabel.Text = note;

@@ -163,6 +163,7 @@ public static class Czech
         ["{0} · {1:N0} Odyle"] = "{0} · {1:N0} Odyle", ["natural pool full"] = "přirozená zásoba plná",
         ["This server has no Discord sign-in, so Odyle has no Discord app to show your status with."] = "Tenhle server nemá přihlášení přes Discord, takže Odyle nemá Discord aplikaci, přes kterou by stav ukázalo.",
         ["Discord turned it down: {0}"] = "Discord to odmítl: {0}", ["Discord is not running on this PC."] = "Discord na tomhle PC neběží.",
+        ["Discord runs as administrator, so Odyle cannot reach it. Turn off “Run this program as an administrator” in Discord.exe's Properties → Compatibility and restart Discord."] = "Discord běží jako správce, takže se k němu Odyle nedostane. Ve Vlastnostech Discord.exe → Kompatibilita vypni „Spustit tento program jako správce“ a Discord restartuj.",
         ["Shown in your Discord status now."] = "Teď se ukazuje ve tvém stavu na Discordu.",
         ["Shown in your Discord status while the reader reads your character."] = "Ukazuje se ve tvém stavu na Discordu, když čtečka čte tvou postavu.",
         ["Start or stop the reader"] = "Spustit nebo zastavit čtečku", ["View in the armory"] = "Ukázat ve zbrojnici", ["Open the dashboard"] = "Otevřít dashboard",

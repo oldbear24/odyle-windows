@@ -15,7 +15,7 @@ namespace Odyle.Reader;
 // along with the game when the player takes AION2 off Discord's list of games (0.26.1).
 public sealed class DiscordStatus : IDisposable
 {
-    public enum State { Off, NotRunning, Shown, Refused }
+    public enum State { Off, NotRunning, Shown, Refused, AsAdministrator }
     private static readonly TimeSpan SendEvery = TimeSpan.FromSeconds(15), LookEvery = TimeSpan.FromSeconds(30);
     private readonly SemaphoreSlim busy = new(1, 1), writing = new(1, 1);
     private NamedPipeClientStream? pipe;
@@ -63,7 +63,7 @@ public sealed class DiscordStatus : IDisposable
         string[] names;
         try { names = Directory.GetFiles(@"\\.\pipe\").Select(Path.GetFileName).Where(n => n is not null && n.StartsWith("discord-ipc-", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray()!; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { names = []; }
-        var failure = "";
+        var failure = ""; var denied = false;
         foreach (var name in names)
         {
             // CurrentUserOnly: only a pipe of this Windows account's own Discord is talked to.
@@ -90,13 +90,14 @@ public sealed class DiscordStatus : IDisposable
             catch (Exception error) when (error is IOException or OperationCanceledException or UnauthorizedAccessException or TimeoutException or InvalidDataException)
             {
                 if (pipe == next) pipe = null;
-                next.Dispose(); failure = $"{name}: {error.GetType().Name} {error.Message}";
+                next.Dispose(); failure = $"{name}: {error.GetType().Name} {error.Message}"; denied |= error is UnauthorizedAccessException;
             }
         }
         // A Discord whose pipe is there but will not take Odyle is logged once per new reason.
         if (failure != lastFailure && failure.Length > 0) Log.Warn("Discord's pipe could not be used for the status: " + failure);
         lastFailure = failure;
-        Set(State.NotRunning, ""); return false;
+        // Access denied: Discord runs as administrator (its pipe is then out of a normal app's reach).
+        Set(denied ? State.AsAdministrator : State.NotRunning, ""); return false;
     }
     // Discord pings now and then and closes the pipe when it quits; whatever it answers is read so
     // the pipe never fills up.
