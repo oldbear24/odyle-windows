@@ -33,8 +33,17 @@ static class ClockChecks
             Check(answeredNo is { Cap: 560, Settled: true } && answeredNo.Fills.Select(f => f.Cap).SequenceEqual([560]) && !OdyleClock.Line(answeredNo, now, true).Contains(" at 560"), "without the membership the pool is full at 560, said without hedging");
             Check(OdyleClock.Of(500, 0, now, now, rules, null, 500, 840) is { Cap: 840, Settled: true }, "with it a pool that never passed 560 counts up to 840");
             Check(OdyleClock.Mismatch(700, 560) == "Natural pool held 700, more than 560: has the membership started? Answer on the dashboard." && OdyleClock.Mismatch(560, 560) == "" && OdyleClock.Mismatch(700, null) == "" && OdyleClock.Mismatch(300, 840) == "", "readings above the answered cap are pointed out");
+            // Orange two days before the natural pool is full, red once it is or within the hour (the dashboard's capLevel).
+            var soonAt = At("2026-10-15T05:30:00Z"); var readSoon = At("2026-10-15T05:00:00Z");
+            ClockState? Pool(int natural, DateTimeOffset at, int? answered = 560) => OdyleClock.Of(natural, 0, readSoon, at, rules, null, null, answered);
+            Check(OdyleClock.Level(Pool(500, soonAt), soonAt) == CapLevel.Soon && OdyleClock.Flag(Pool(500, soonAt), soonAt) == "Nearly full", "full in seven and a half hours is orange");
+            Check(OdyleClock.Level(Pool(545, soonAt), soonAt) == CapLevel.Soon && OdyleClock.Level(Pool(545, At("2026-10-15T06:00:00Z")), At("2026-10-15T06:00:00Z")) == CapLevel.Full && OdyleClock.Flag(Pool(545, At("2026-10-15T06:00:00Z")), At("2026-10-15T06:00:00Z")) == "Full within the hour", "the tick that fills it is red from an hour before");
+            Check(OdyleClock.Level(Pool(560, soonAt), soonAt) == CapLevel.Full && OdyleClock.Flag(Pool(560, soonAt), soonAt) == "", "a full pool is red and its line says so itself");
+            Check(OdyleClock.Level(Pool(320, soonAt), soonAt) == CapLevel.Soon && OdyleClock.Level(Pool(305, soonAt), soonAt) == CapLevel.None, "16 ticks to go fill it in 46½ hours, 17 in 49½");
+            Check(OdyleClock.Level(Pool(500, soonAt, 840), soonAt) == CapLevel.None && OdyleClock.Level(Pool(560, soonAt, null), soonAt) == CapLevel.Full && OdyleClock.Level(null, soonAt) == CapLevel.None, "the membership cap is far; an open cap goes by the smallest");
             Localizer.Use("cs");
             Check(OdyleClock.Line(full, now, true) == "přirozená zásoba plná · každých 20 propadá", "the clock in Czech");
+            Check(OdyleClock.Flag(Pool(500, soonAt), soonAt) == "Skoro plná", "the flag in Czech");
         }
         finally { Localizer.Use("en"); }
         // The rules and what the readings showed, as the backend sends them; older backends send neither.
@@ -45,7 +54,7 @@ static class ClockChecks
         var character = JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":905,"confirmed":true,"valid":true,"lastReadingAt":"2026-10-15 05:00:00.000Z","parts":{"base":15,"bonus":890},"regenTick":15,"naturalMax":600,"naturalMaxAt":"2026-10-15 05:00:00.000Z"}""", options)!;
         Check(character is { RegenTick: 15, NaturalMax: 600, AnsweredCap: null }, "a character carries its tick and fullest natural pool, and no answered cap from older backends");
         Check(JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":905,"confirmed":true,"valid":true,"lastReadingAt":"","answeredCap":560}""", options) is { AnsweredCap: 560 }, "a character carries the cap its account's membership answer settled");
-        Console.WriteLine("Odyle clock ticks, caps, the membership answer, projection, card line and rules passed.");
+        Console.WriteLine("Odyle clock ticks, caps, the membership answer, projection, card line, cap colours and rules passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Odyle clock check failed: " + message); }
 }

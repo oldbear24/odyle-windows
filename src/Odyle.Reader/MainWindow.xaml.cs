@@ -455,7 +455,7 @@ public partial class MainWindow : Window
     // The card's "Your characters" (W#17): with two or more characters, a toggle under the reading
     // that lists them. It opens on demand, and by itself while the game switches characters, until
     // it names the next one (then it closes again, unless it was opened by hand).
-    private sealed record AltRow(string Name, string Detail);
+    private sealed record AltRow(string Name, string Detail, Brush Mark, string? Hint);
     private bool altsOpened;
     private void RenderAlts()
     {
@@ -464,7 +464,17 @@ public partial class MainWindow : Window
         AltToggle.Visibility = listed.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
         AltToggle.Content = T("Your characters ({0})", listed.Length) + (open ? " ▴" : " ▾");
         System.Windows.Automation.AutomationProperties.SetName(AltToggle, T("Your characters ({0})", listed.Length));
-        AltList.ItemsSource = open ? listed.Select(c => new AltRow(c.CharacterName, CharacterDetail(c))).ToArray() : null;
+        AltList.ItemsSource = open ? listed.Select(c =>
+        {
+            // A natural pool near its cap colours the row as on the card.
+            var level = OdyleClock.Level(SavedClock(c), DateTimeOffset.UtcNow);
+            return new AltRow(c.CharacterName, CharacterDetail(c), CapBrush(level, "Faint"), level switch
+            {
+                CapLevel.Soon => T("{0} · natural pool full within two days", c.CharacterName),
+                CapLevel.Full => T("{0} · natural pool full, or full within the hour", c.CharacterName),
+                _ => null,
+            });
+        }).ToArray() : null;
         AltList.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
     }
     private void AltToggle_Click(object sender, RoutedEventArgs e) { altsOpened = AltList.Visibility != Visibility.Visible; RenderAlts(); }
@@ -630,13 +640,21 @@ public partial class MainWindow : Window
         ClockState? state = null;
         if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
             state = OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
-        else if (api is not null && reading is null && character is { Confirmed: true, Parts: { } parts } && Readiness.Parse(character.LastReadingAt) is { } saved)
-            state = OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, character.RegenTick, character.NaturalMax, character.AnsweredCap);
+        else if (api is not null && reading is null && character is not null)
+            state = SavedClock(character);
         var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
-        OdyleClockLabel.Text = line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Orange two days before the natural pool is full, red once it is or within the hour.
+        var flag = OdyleClock.Flag(state, DateTimeOffset.UtcNow); var level = OdyleClock.Level(state, DateTimeOffset.UtcNow);
+        OdyleClockLabel.Text = flag.Length > 0 ? $"{flag} · {line}" : line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        OdyleClockLabel.Foreground = CapBrush(level, "Mint"); ValueLabel.Foreground = CompactValue.Foreground = CapBrush(level, "Text");
+        OdyleClockLabel.FontWeight = level == CapLevel.None ? FontWeights.Normal : FontWeights.SemiBold;
         var mismatch = api is not null && character is not null ? OdyleClock.Mismatch(character.NaturalMax, character.AnsweredCap) : "";
         CapMismatchLabel.Text = mismatch; CapMismatchLabel.Visibility = mismatch.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+    // The Odyle clock of a saved character from its last reading (an estimate), or null.
+    private ClockState? SavedClock(Character c) => c is { Confirmed: true, Parts: { } parts } && Readiness.Parse(c.LastReadingAt) is { } saved
+        ? OdyleClock.Of(parts.Base, parts.Bonus, saved, DateTimeOffset.UtcNow, clockRules, c.RegenTick, c.NaturalMax, c.AnsweredCap) : null;
+    private Brush CapBrush(CapLevel level, string otherwise) => Brush(level switch { CapLevel.Soon => "Orange", CapLevel.Full => "Red", _ => otherwise });
     private void RenderClock()
     {
         var character = CurrentCharacter;

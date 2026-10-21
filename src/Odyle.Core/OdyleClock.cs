@@ -11,6 +11,10 @@ public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paus
 // When a cap is reached; At is null when it is more than 120 days away.
 public sealed record ClockFill(int Cap, DateTimeOffset? At);
 
+// How close a natural pool is to its cap, for the card's colours: Soon (orange) when it fills
+// within two days, Full (red) once it is full or fills within the hour.
+public enum CapLevel { None, Soon, Full }
+
 // Where a character's natural pool stands now and where it goes. Projected: estimated from an
 // older reading; Settled: the character's cap is known (it held more than the smaller ones).
 public sealed record ClockState(int Base, int Total, int Cap, int Tick, DateTimeOffset? Next, ClockFill[] Fills, bool Full, bool Settled, bool Projected);
@@ -64,6 +68,25 @@ public static class OdyleClock
     // says so under the clock, or "" when they fit.
     public static string Mismatch(int? naturalMax, int? answeredCap) =>
         answeredCap is > 0 and var cap && naturalMax is { } held && held > cap ? Localizer.T("Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard.", held, cap) : "";
+
+    // The dashboard's capLevel (src/clock.js): while the cap is open it goes by the smallest one,
+    // as cap alerts do.
+    public static CapLevel Level(ClockState? clock, DateTimeOffset now)
+    {
+        if (clock is null) return CapLevel.None;
+        var at = clock.Full ? now : clock.Fills.FirstOrDefault()?.At;
+        if (at is not { } due) return CapLevel.None;
+        return due - now <= TimeSpan.FromHours(1) ? CapLevel.Full : due - now <= TimeSpan.FromDays(2) ? CapLevel.Soon : CapLevel.None;
+    }
+
+    // What the colour means, ahead of the card's line while the pool is not full yet (a full one
+    // says so itself), or "".
+    public static string Flag(ClockState? clock, DateTimeOffset now) => clock is null || clock.Full ? "" : Level(clock, now) switch
+    {
+        CapLevel.Soon => Localizer.T("Nearly full"),
+        CapLevel.Full => Localizer.T("Full within the hour"),
+        _ => "",
+    };
 
     // One line for the card: the estimate of a character not read right now, then either the
     // next tick and when the natural pool is full, or that it is full and losing each tick.

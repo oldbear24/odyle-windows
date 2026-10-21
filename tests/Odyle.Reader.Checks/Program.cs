@@ -170,6 +170,14 @@ static class ReaderChecks
                 Field("clockRules").SetValue(window, ClockRules.Default with { Paused = true }); Call(window, "RenderOdyleClock");
                 Check(odyleClock.Visibility == Visibility.Collapsed, "the operators can hide the Odyle clock");
                 Field("clockRules").SetValue(window, null);
+                // Near its cap the clock turns orange (11 ticks to 560: 30 to 33 hours), and red with the value once the pool is full.
+                var shownReading = Field("latest").GetValue(window);
+                Field("latest").SetValue(window, new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }); Call(window, "RenderOdyleClock");
+                Check(odyleClock.Text.StartsWith("Nearly full · +15 in ") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
+                Field("latest").SetValue(window, new PacketCandidate(560, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }); Call(window, "RenderOdyleClock");
+                Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
+                Field("latest").SetValue(window, shownReading); Call(window, "RenderOdyleClock");
+                Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
                 // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
                 // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
                 server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
