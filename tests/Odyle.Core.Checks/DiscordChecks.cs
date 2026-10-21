@@ -36,6 +36,22 @@ static class DiscordChecks
                 && activity.GetProperty("details").GetString() == "Lumina · 820 Odyle" && activity.GetProperty("state").GetString() == "10 cubes" && activity.GetProperty("timestamps").GetProperty("start").GetInt64() == 1792605600000, "SET_ACTIVITY with the elapsed time from the game's start");
         }
         Check(!DiscordPresence.SetActivityJson(42, new DiscordActivity("ab", "cd", null), "n").Contains("timestamps"), "no start, no elapsed time");
+        // Pictures and buttons from the server's public address: the game's portrait, Odyle's icon, the armory profile and Odyle.
+        Localizer.Use("en");
+        var lumina = new Character("c1", "u", "Lumina", "Lumiel", "GLOBAL_EU", 820, true, true, "", Level: 45, ClassName: "Chanter", Portrait: "portrait_ab12cd.png", OfficialId: "AbCdEfGh12_-==", OfficialRegion: "eu", OfficialServerId: 2304);
+        var dressed = DiscordPresence.Dress(new DiscordActivity("Lumina · 820 Odyle", "10 cubes", since), "https://odyle.example", lumina);
+        Check(dressed is { LargeImage: "https://odyle.example/api/files/characters/c1/portrait_ab12cd.png", LargeText: "Lumina · Chanter · Lv 45 · Lumiel", SmallImage: "https://odyle.example/icon-512.png", SmallText: "Odyle", ArmoryUrl: "https://odyle.example/#/armory/eu/2304/AbCdEfGh12_-==", HomeUrl: "https://odyle.example/" }, "the portrait, Odyle's icon, the armory profile and Odyle: " + dressed);
+        var plain = DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "https://odyle.example", lumina with { Portrait = null, OfficialId = null, Level = 0, ClassName = null });
+        Check(plain is { LargeImage: "https://odyle.example/icon-512.png", LargeText: "Lumina · Lumiel · EU", SmallImage: null, ArmoryUrl: "https://odyle.example/#/armory/find/GLOBAL_EU/Lumiel/Lumina" }, "without a portrait Odyle's icon, and the armory searches for the character: " + plain);
+        Check(DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "http://127.0.0.1:8090", lumina) == new DiscordActivity("ab", "cd", null), "a local test server gets no pictures and no buttons");
+        Check(DiscordPresence.ArmoryPath(lumina with { OfficialId = null, CharacterName = new string('x', 61) }) is null && DiscordPresence.ArmoryPath(lumina with { OfficialId = "../../x" }) == "/armory/find/GLOBAL_EU/Lumiel/Lumina", "only armory pages the dashboard accepts are linked");
+        using (var set = System.Text.Json.JsonDocument.Parse(DiscordPresence.SetActivityJson(42, dressed, "n")))
+        {
+            var activity = set.RootElement.GetProperty("args").GetProperty("activity"); var assets = activity.GetProperty("assets"); var buttons = activity.GetProperty("buttons");
+            Check(assets.GetProperty("large_image").GetString() == dressed.LargeImage && assets.GetProperty("large_text").GetString() == dressed.LargeText && assets.GetProperty("small_image").GetString() == dressed.SmallImage
+                && buttons.GetArrayLength() == 2 && buttons[0].GetProperty("label").GetString() == "View in the armory" && buttons[0].GetProperty("url").GetString() == dressed.ArmoryUrl && buttons[1].GetProperty("label").GetString() == "Open Odyle", "SET_ACTIVITY carries the pictures and two buttons");
+        }
+        Check(!DiscordPresence.SetActivityJson(42, new DiscordActivity("ab", "cd", null), "n").Contains("assets") && !DiscordPresence.SetActivityJson(42, new DiscordActivity("ab", "cd", null), "n").Contains("buttons"), "no pictures, no buttons");
 
         try
         {
