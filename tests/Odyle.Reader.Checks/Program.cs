@@ -546,6 +546,7 @@ static class ReaderChecks
                 Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Visible, "a character no room sees says so");
                 Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true, ["c1"]) }); Call(window, "RenderHero");
                 Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Collapsed, "a shared character does not");
+                await PartyRefreshChecks(window);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>());
                 Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("api").SetValue(window, null);
                 Field("notifications").SetValue(window, NotificationSettings.Default);
@@ -673,6 +674,75 @@ static class ReaderChecks
             finally { try { await (Task)Call(window, "QuitAsync")!; } finally { try { File.Delete(PreferencesStore.FilePath); } catch (IOException) { } try { Directory.Delete(scratch, true); } catch (IOException) { } Dispatcher.CurrentDispatcher.InvokeShutdown(); } }
         });
         Dispatcher.Run();
+    }
+    // Refreshing the party: one room that times out or fails keeps what it showed instead of failing
+    // the whole refresh, a room's realtime news fetches only that room, and a refresh of one room never
+    // runs beside a refresh of the whole party, so an older answer can never replace a newer one.
+    static async Task PartyRefreshChecks(MainWindow window)
+    {
+        var server = new PartyServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, server)); Field("accountId").SetValue(window, "u");
+        int Value(string room) => ((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single(s => s.Room.Id == room).Members.Single().Characters.Single().Value;
+        string[] Shown() => ((RoomSnapshot[])Field("snapshots").GetValue(window)!).Select(s => s.Room.Id).ToArray();
+        Task Refresh() => (Task)Call(window, "RefreshPartyAsync")!;
+        Task News(string topic, string json) => (Task)Call(window, "OnNewsAsync", topic, RealtimeNews.Parse(System.Text.Json.JsonDocument.Parse(json).RootElement.Clone()))!;
+        // The first answers come from a server whose clock is an hour behind.
+        server.Skew = TimeSpan.FromHours(-1); await Refresh();
+        Check(Shown().SequenceEqual(new[] { "r2", "r1" }) && Value("r1") == 100 && Value("r2") == 50, "the party lists each room's snapshot");
+        server.Skew = TimeSpan.Zero; server.Values["r1"] = 110; server.TimesOut.Add("r2"); await Refresh();
+        Check(Shown().SequenceEqual(new[] { "r2", "r1" }) && Value("r1") == 110 && Value("r2") == 50, "a room that times out keeps what it showed and the others still refresh");
+        Check(((TimeSpan)Field("serverOffset").GetValue(window)!).Duration() < TimeSpan.FromMinutes(1), "the server's clock comes from a fresh snapshot, never from one kept from before");
+        server.TimesOut.Clear(); server.Fails["r2"] = HttpStatusCode.ServiceUnavailable; server.Values["r1"] = 115; await Refresh();
+        Check(Shown().SequenceEqual(new[] { "r2", "r1" }) && Value("r1") == 115 && Value("r2") == 50, "a room the server fails to answer stays in the party");
+        server.Fails.Clear(); server.Rooms.Remove("r2"); await Refresh();
+        Check(Shown().SequenceEqual(new[] { "r1" }), "a room no longer listed is dropped");
+        server.Rooms.Insert(0, "r2"); await Refresh();
+        // A room's news without characters fetches that room only.
+        server.Requests.Clear(); server.Values["r1"] = 120; await News("odyle.room.r1", """{"refresh":true}""");
+        Check(server.Requests.SequenceEqual(new[] { "/api/odyle/snapshot/r1" }) && Value("r1") == 120 && Value("r2") == 50, "a room's news fetches that room's snapshot only: " + string.Join(", ", server.Requests));
+        // News while the whole party is being fetched waits for it and fetches its room after it.
+        server.Requests.Clear(); server.Values["r1"] = 130; server.Gate = new(); server.Arrived = new();
+        var full = Refresh(); await server.Arrived.Task;
+        server.Values["r1"] = 140; var news = News("odyle.room.r1", """{"refresh":true}""");
+        await Task.Delay(100);
+        Check(server.Requests.Count(r => r == "/api/odyle/snapshot/r1") == 1, "a room's news does not fetch beside a running refresh of the party");
+        server.Gate.SetResult(); await Task.WhenAll(full, news); server.Gate = null;
+        Check(Value("r1") == 140 && server.Requests.Last() == "/api/odyle/snapshot/r1", "the room's news is fetched after the party's refresh, so the newer answer stays: " + string.Join(", ", server.Requests));
+        // Leaving a room, and news of a room the app does not list yet, fetch the whole party.
+        server.Requests.Clear(); await News("odyle.room.r2", """{"refresh":true,"removed":true}""");
+        Check(server.Requests.FirstOrDefault() == "/api/odyle/rooms", "leaving a room fetches the account's rooms");
+        server.Requests.Clear(); await News("odyle.room.r3", """{"refresh":true}""");
+        Check(server.Requests.FirstOrDefault() == "/api/odyle/rooms", "news of a room not listed yet fetches the account's rooms");
+        // A room the server no longer shows the account (403) is dropped, and the rooms are fetched again.
+        server.Requests.Clear(); server.Fails["r2"] = HttpStatusCode.Forbidden; await News("odyle.room.r2", """{"refresh":true}""");
+        Check(server.Requests.Contains("/api/odyle/rooms") && !Shown().Contains("r2"), "a room the account no longer sees is dropped");
+        Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("serverOffset").SetValue(window, TimeSpan.Zero);
+    }
+    // Answers the rooms and room snapshots like the backend: each room's one character has the room's
+    // value; rooms can time out or fail, and a gate holds the answer for r1 until released.
+    sealed class PartyServer : HttpMessageHandler
+    {
+        public readonly List<string> Rooms = ["r2", "r1"];
+        public readonly Dictionary<string, int> Values = new() { ["r1"] = 100, ["r2"] = 50 };
+        public readonly HashSet<string> TimesOut = [];
+        public readonly Dictionary<string, HttpStatusCode> Fails = [];
+        public readonly List<string> Requests = [];
+        public TimeSpan Skew;
+        public TaskCompletionSource? Gate, Arrived;
+        static string Room(string id) => $$"""{"id":"{{id}}","name":"Room {{id}}","cost":40,"role":"owner","sharing":true}""";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var route = request.RequestUri!.AbsolutePath; lock (Requests) Requests.Add(route);
+            HttpResponseMessage Answer(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+            if (route == "/api/odyle/rooms") return Answer(HttpStatusCode.OK, $$"""{"rooms":[{{string.Join(",", Rooms.Select(Room))}}],"odylePerCube":40,"announcement":null}""");
+            if (!route.StartsWith("/api/odyle/snapshot/")) return Answer(HttpStatusCode.OK, "{}");
+            var id = route["/api/odyle/snapshot/".Length..];
+            if (TimesOut.Contains(id)) throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 12 seconds elapsing.", new TimeoutException());
+            if (Fails.TryGetValue(id, out var failure)) return Answer(failure, """{"message":"Something went wrong."}""");
+            var value = Values.GetValueOrDefault(id); var now = DateTimeOffset.UtcNow + Skew;
+            if (id == "r1" && Gate is { } gate) { Arrived?.TrySetResult(); await gate.Task; }
+            var seen = now.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+            return Answer(HttpStatusCode.OK, $$"""{"room":{{Room(id)}},"serverNow":"{{now:O}}","members":[{"id":"m-{{id}}","user":"k","role":"reporter","displayName":"Kaelen","characters":[{"id":"c-{{id}}","user":"k","characterName":"Kael","server":"Lumiel","region":"GLOBAL_EU","value":{{value}},"confirmed":true,"valid":true,"source":"packet","shared":true,"lastReadingAt":"{{seen}}","lastSeenAt":"{{seen}}"}]}]}""");
+        }
     }
     // The pairing is DPAPI-protected and written whole; a file this account cannot read
     // counts as not paired, says so and is removed instead of failing the start.

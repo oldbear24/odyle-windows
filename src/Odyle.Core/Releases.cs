@@ -56,7 +56,14 @@ public static class ReleaseFeed
         version = Normalize(parsed); return true;
     }
     // Parses GitHub's "latest release" JSON; null for drafts, pre-releases and tags that are not versions.
+    // An answer that is not that JSON (a proxy's sign-in page, a cut-off body) is a FormatException
+    // with a message for the settings window, never a bare JsonException.
     public static AppRelease? Parse(string json)
+    {
+        try { return Read(json); }
+        catch (Exception error) when (error is JsonException or FormatException) { throw new FormatException(Localizer.T("GitHub sent an answer the app cannot read."), error); }
+    }
+    private static AppRelease? Read(string json)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;

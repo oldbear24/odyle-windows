@@ -100,6 +100,8 @@ public partial class MainWindow : Window
     private TimeSpan serverOffset;
     private Task? partyRefresh;
     private bool partyAgain;
+    // Rooms whose realtime news asked for their own snapshot only (RefreshRoomAsync).
+    private readonly HashSet<string> roomsAgain = new();
     // Realtime news of the account and its rooms: the party, the rooms and the checklist
     // follow changes and heartbeats as they happen, and are fetched again when the
     // connection comes back and every five minutes in case news was missed. Without it they
@@ -220,13 +222,7 @@ public partial class MainWindow : Window
             if (busy) { restoreTimer.Interval = TimeSpan.FromSeconds(2); restoreTimer.Start(); return; }
             await ExecuteAsync(RestoreAsync);
         };
-        updateTimer.Tick += async (_, _) =>
-        {
-            updateTimer.Stop();
-            if (staged is null && updateSchedule.Due(DateTimeOffset.UtcNow)) { Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); }
-            if (quitting) return;
-            updateTimer.Interval = updateSchedule.Next; updateTimer.Start();
-        };
+        updateTimer.Tick += async (_, _) => await UpdateTickAsync();
         // With realtime the party and the checklist follow the news, and every 20th tick (five
         // minutes) fetches them in case some was missed; run reminders are checked every tick.
         // Without it, open, they refresh every 15 seconds (showing the window refreshes at once)
@@ -846,8 +842,9 @@ public partial class MainWindow : Window
         next.Start(RealtimeTopics.For(accountId, rooms));
     }
     // A room's changed characters and heartbeats are applied to the party in place, anything
-    // else fetches the party again; the account's own news fetches its characters, rooms and
-    // checklist again, or applies its changed characters.
+    // else fetches that room's snapshot again, and leaving the room the whole party; the
+    // account's own news fetches its characters, rooms and checklist again, or applies its
+    // changed characters.
     private async Task OnNewsAsync(string topic, RealtimeNews news)
     {
         if (topic.StartsWith(RealtimeTopics.Presence, StringComparison.Ordinal))
@@ -857,12 +854,15 @@ public partial class MainWindow : Window
         }
         if (topic.StartsWith(RealtimeTopics.Room, StringComparison.Ordinal))
         {
+            var roomId = topic[RealtimeTopics.Room.Length..];
             if (!news.Removed && news.Characters.Length > 0)
             {
-                var applied = PartyNews.WithCharacters(snapshots, topic[RealtimeTopics.Room.Length..], news.Characters, out var complete);
+                var applied = PartyNews.WithCharacters(snapshots, roomId, news.Characters, out var complete);
                 if (complete) { snapshots = applied; RenderParty(); return; }
             }
-            await RefreshPartyAsync();
+            // Changes to the account's rooms themselves (joining, sharing, renaming) also come as
+            // news on its own topic, which fetches everything (ReloadOwnAsync).
+            await (news.Removed ? RefreshPartyAsync() : RefreshRoomAsync(roomId));
             return;
         }
         // News for everyone: a changed announcement shows at once (a new warning also as a
@@ -945,30 +945,67 @@ public partial class MainWindow : Window
     // reloaded too: sharing changed on the dashboard shows up here.
     // A refresh asked for while one runs makes it run once more (partyAgain); the caller
     // waits for that, so it always sees the party as the server has it now.
-    private async Task RefreshPartyAsync()
+    private Task RefreshPartyAsync() { partyAgain = true; return RunPartyRefreshAsync(); }
+    // Realtime news of one room fetches only that room's snapshot. It joins the same queue as
+    // the whole party's refreshes: one fetch at a time, each asked for after the one before was
+    // applied, so an answer the server gave earlier can never replace one it gave later.
+    private Task RefreshRoomAsync(string roomId) { roomsAgain.Add(roomId); return RunPartyRefreshAsync(); }
+    private async Task RunPartyRefreshAsync()
     {
-        if (partyRefresh is { IsCompleted: false } running) { partyAgain = true; await running; return; }
-        await (partyRefresh = RefreshPartyNowAsync());
+        // A refresh that ended without doing what was asked (the account changed meanwhile) leaves it for the next.
+        while (partyRefresh is { IsCompleted: false } running) await running;
+        if (partyAgain || roomsAgain.Count > 0) await (partyRefresh = RefreshPartyNowAsync());
     }
     private async Task RefreshPartyNowAsync()
     {
         if (api is not { } current) return;
-        try
+        while (api == current && (partyAgain || roomsAgain.Count > 0))
         {
-            do
+            try
             {
-                partyAgain = false;
-                var listed = await current.GetRoomsAsync();
-                var fetched = await Task.WhenAll(listed.Rooms.Select(async r => { try { return await current.GetSnapshotAsync(r.Id); } catch (HttpRequestException) { return null; } }));
-                if (api != current) return;
-                rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; await FollowNotificationsAsync(listed.Notifications); snapshots = fetched.OfType<RoomSnapshot>().ToArray(); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
-                if (snapshots.Length > 0 && Readiness.Parse(snapshots[0].ServerNow) is { } server) serverOffset = server - DateTimeOffset.UtcNow;
-                RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
-                if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
-            } while (partyAgain);
+                if (partyAgain) await RefreshAllRoomsAsync(current);
+                else await RefreshSomeRoomsAsync(current);
+            }
+            // Connection problems are reported by the heartbeat; keep the last list.
+            catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
         }
-        // Connection problems are reported by the heartbeat; keep the last list.
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
+    }
+    private async Task RefreshAllRoomsAsync(PartyApi current)
+    {
+        // This covers the rooms asked for alone too; news arriving meanwhile asks again.
+        partyAgain = false; roomsAgain.Clear();
+        var listed = await current.GetRoomsAsync();
+        var fetched = await Task.WhenAll(listed.Rooms.Select(r => FetchSnapshotAsync(current, r.Id)));
+        if (api != current) return;
+        rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock;
+        snapshots = PartySnapshots.Merge(rooms, snapshots, fetched); if (PartySnapshots.ClockOffset(fetched) is { } offset) serverOffset = offset;
+        await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+        RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
+        if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
+    }
+    private async Task RefreshSomeRoomsAsync(PartyApi current)
+    {
+        var wanted = roomsAgain.ToArray(); roomsAgain.Clear();
+        // News of a room the list does not have yet (just joined) fetches the whole party.
+        if (!wanted.All(id => rooms.Any(r => r.Id == id))) { partyAgain = true; return; }
+        var fetched = await Task.WhenAll(wanted.Select(id => FetchSnapshotAsync(current, id)));
+        if (api != current) return;
+        snapshots = PartySnapshots.Merge(rooms, snapshots, fetched); if (PartySnapshots.ClockOffset(fetched) is { } offset) serverOffset = offset;
+        // A room the server no longer shows the account changes its list of rooms.
+        if (fetched.Any(f => f.Gone)) partyAgain = true;
+        RenderParty(); RenderHero(); CheckReminders();
+    }
+    // A room that fails or takes longer than the 12-second timeout keeps the snapshot it showed
+    // (PartySnapshots.Merge) instead of failing the whole party's refresh.
+    private static async Task<FetchedSnapshot> FetchSnapshotAsync(PartyApi current, string roomId)
+    {
+        try { var snapshot = await current.GetSnapshotAsync(roomId); return new(roomId, snapshot, DateTimeOffset.UtcNow); }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException)
+        {
+            var gone = error is HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.NotFound };
+            Log.Warn($"Room {roomId} could not be fetched{(gone ? "; the account no longer sees it" : "; it keeps what it showed")}: {error.Message}");
+            return new(roomId, null, DateTimeOffset.UtcNow, gone);
+        }
     }
     // The server's announcement above the reading card, as plain text. Hiding it lasts until the
     // text changes, across restarts too (preferences.json, odyle-dashboard#47); a new message also
@@ -1964,6 +2001,14 @@ public partial class MainWindow : Window
         if (staged is { } waiting && held.Contains(waiting.Version)) { Log.Info($"Odyle {waiting.Version} is held back; its download is dropped."); staged = null; RenderUpdate(); }
         if (held.Contains(Updater.Current)) { Log.Info($"Odyle {Updater.Current} is held back; looking for the latest release."); await CheckForUpdatesAsync(manual: false); }
     }
+    // The update timer's tick. It always starts the timer again (unless Odyle is quitting), also
+    // after a failure nobody expected, so update checks never stop for the rest of the session.
+    private async Task UpdateTickAsync()
+    {
+        updateTimer.Stop();
+        try { if (staged is null && updateSchedule.Due(DateTimeOffset.UtcNow)) { Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); } }
+        finally { if (!quitting) { updateTimer.Interval = updateSchedule.Next; updateTimer.Start(); } }
+    }
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (updating || staged is not null || !Updater.IsReleaseBuild) return;
@@ -1998,7 +2043,8 @@ public partial class MainWindow : Window
             }
             Status(T("Odyle {0} is ready · restart to update, or it installs at the next start.", staged.Version));
         }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException)
+        // An answer that is not GitHub's release data (a proxy's page, say) is a failed check too (ReleaseFeed.Parse).
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
             updateSchedule.Failed(); Log.Warn($"Update check failed: {error.Message}");
             updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
@@ -2081,7 +2127,7 @@ public partial class MainWindow : Window
         // The pause is the server's: without a connection there is none.
         DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
-        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; tasks = []; tasksLoaded = false; tasksProblem = null;
+        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
         Status(message); RenderHero();
     }
