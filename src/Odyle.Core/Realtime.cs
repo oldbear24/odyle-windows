@@ -23,7 +23,7 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
     public CapAlert[] CapAlerts { get; init; } = [];
     // Runs whose party is ready (odyle-dashboard#48).
     public PartyReady[] PartyReady { get; init; } = [];
-    // Runs planned from the wishlist that invite the account (odyle-dashboard#45).
+    // Runs planned from the wishlist that invite the account (odyle-dashboard#45), and calls to a run now.
     public RunInvite[] Invites { get; init; } = [];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     // A message the app cannot read means "fetch again".

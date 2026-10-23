@@ -10,10 +10,17 @@ public sealed record PartyReady(string RunId, string RoomId, string Room, string
 {
     public (string Title, string Text) Notice() => (Localizer.T("{0}: the party is ready", Dungeon), Localizer.T("All {0} going can claim a cube · {1}", Of, Room));
 }
-// A run planned from the wishlist invites those who wanted its dungeon (odyle-dashboard#45).
-public sealed record RunInvite(string RunId, string RoomId, string Room, string Dungeon, string StartsAt, string By)
+// A run planned from the wishlist invites those who wanted its dungeon (odyle-dashboard#45). Now
+// marks a call to a run that starts in a few minutes (Run now, odyle-dashboard 0.41.0): it says
+// so, with the start time alone.
+public sealed record RunInvite(string RunId, string RoomId, string Room, string Dungeon, string StartsAt, string By, bool Now = false)
 {
-    public (string Title, string Text) Notice() => (Localizer.T("{0} invites you to {1}", By, Dungeon), Readiness.Parse(StartsAt) is { } at ? Localizer.T("{0} · {1}", Room, at.ToLocalTime().ToString("ddd HH:mm", Localizer.Culture)) : Room);
+    public (string Title, string Text) Notice()
+    {
+        var at = Readiness.Parse(StartsAt)?.ToLocalTime();
+        if (Now) return (Localizer.T("{0} calls the party to {1}", By, Dungeon), at is { } soon ? Localizer.T("{0} · starts {1}", Room, soon.ToString("HH:mm", Localizer.Culture)) : Room);
+        return (Localizer.T("{0} invites you to {1}", By, Dungeon), at is { } later ? Localizer.T("{0} · {1}", Room, later.ToString("ddd HH:mm", Localizer.Culture)) : Room);
+    }
 }
 public sealed record CapAlert(string CharacterId, string CharacterName, string State, int Base, int Cap, bool Settled, int Tick, string? At = null)
 {
