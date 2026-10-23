@@ -82,6 +82,7 @@ static class ReaderChecks
                 await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
                 Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
                 Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
+                CaptureLooks();
                 // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
                 Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
@@ -894,6 +895,23 @@ static class ReaderChecks
         public string? Get(string name) => Values.GetValueOrDefault(name);
         public void Set(string name, string value) => Values[name] = value;
         public void Delete(string name) => Values.Remove(name);
+    }
+    // A packet of a connection the capture does not know looks at the connection table again at
+    // most every 100 ms; a SYN-ACK always does (up to 20 times a second), since the look just
+    // before it may predate the connection, and missing it would join the connection midstream.
+    static void CaptureLooks()
+    {
+        var capture = new PacketCapture(); const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var lookedAt = typeof(PacketCapture).GetField("knownFlowsAt", flags)!; var current = typeof(PacketCapture).GetMethod("CurrentFlows", flags)!;
+        bool Looked(bool opening)
+        {
+            var recent = DateTimeOffset.UtcNow.AddMilliseconds(-10); lookedAt.SetValue(capture, recent);
+            current.Invoke(capture, [true, opening]); return (DateTimeOffset)lookedAt.GetValue(capture)! != recent;
+        }
+        Check(!Looked(false), "an unknown connection's packet reuses a look younger than 100 ms");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Check(Enumerable.Range(0, 20).All(_ => Looked(true)), "a SYN-ACK looks at the connection table again");
+        Check(clock.Elapsed > TimeSpan.FromMilliseconds(900) || !Looked(true), "at most 20 SYN-ACK looks a second");
     }
     static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
     // Fading while the game is in front (W#18), on the desktop: the real card, layered at 60 %, over a

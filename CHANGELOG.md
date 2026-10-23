@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.27.1 · 2026-10-23
+
+### Fixed
+- **Your Odyle is read right after login, even on a shaky connection**: when the game's first packets arrived out of order, or Odyle started listening just as the game connected, the value from the login could be missed and only showed at the next Odyle change.
+- **A briefly delayed packet no longer makes Odyle lose track**: a packet the game had to send again could make Odyle resync and skip the Odyle changes that came in meanwhile, or go blind for a few seconds after a resync.
+
 ## 0.27.0 · 2026-10-23
 
 ### New

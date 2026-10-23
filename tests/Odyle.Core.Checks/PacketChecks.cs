@@ -20,7 +20,10 @@ static class PacketChecks
         Framing();
         Fuzz();
         Streams();
-        Console.WriteLine("Synthetic TCP, framing, heartbeat sync, LZ4, stat record, identity, candidate, fuzz and connection table checks passed.");
+        LoginStarts();
+        LateRetransmissions();
+        OldRetransmissions();
+        Console.WriteLine("Synthetic TCP, framing, heartbeat sync, LZ4, stat record, identity, candidate, fuzz, connection table, login start and retransmission checks passed.");
     }
     static void Tcp()
     {
@@ -31,10 +34,27 @@ static class PacketChecks
         Assert(!tcp.Feed(100, new byte[] { 1, 2 }).Any(), "duplicate ignored");
         Reject(() => tcp.Feed(101, new byte[] { 9, 3 }), "conflicting retransmission");
         Reject(() => tcp.Feed(700000, new byte[] { 1 }), "bounded gap");
-        tcp.Reset(); tcp.Feed(uint.MaxValue - 1, new byte[] { 1, 2 });
+        tcp = new TcpReceiveStream(); tcp.Feed(uint.MaxValue - 1, new byte[] { 1, 2 });
         Assert(tcp.Feed(0, new byte[] { 3 }).Single()[0] == 3, "sequence rollover");
         tcp.Reset(); tcp.Feed(100, new byte[] { 1 }); tcp.Feed(104, new byte[] { 5, 6 });
         Reject(() => tcp.Feed(103, new byte[] { 4, 9 }), "pending overlap");
+        // The SYN's sequence number: the first data byte follows it, so a later segment is a gap.
+        var started = new TcpReceiveStream(); started.Start(uint.MaxValue);
+        Assert(!started.Feed(2, new byte[] { 3, 4 }).Any() && started.GapSince is not null, "data after a lost first segment waits");
+        Assert(started.Feed(0, new byte[] { 1, 2 }).SelectMany(x => x).SequenceEqual(new byte[] { 1, 2, 3, 4 }) && started.GapSince is null, "the first segment after the SYN fills the gap, across the sequence rollover");
+        // After a reset, segments ending at or before the last delivered byte are old retransmissions.
+        started.Reset();
+        Assert(!started.Feed(0, new byte[] { 1, 2 }).Any() && !started.Feed(2, new byte[] { 3, 4 }).Any(), "old retransmissions after a reset are ignored");
+        Assert(started.Feed(3, new byte[] { 4, 5, 6 }).SelectMany(x => x).SequenceEqual(new byte[] { 5, 6 }), "a segment reaching past the last delivered byte resumes right after it");
+        started.Reset(); started.Reset();
+        Assert(!started.Feed(5, new byte[] { 6 }).Any() && started.Feed(20, new byte[] { 9 }).Single()[0] == 9, "a second reset keeps the mark, and newer data resumes at once");
+        // Pending segments are bounded by bytes: a thousand small held segments are no overflow.
+        var small = new TcpReceiveStream(); small.Feed(0, new byte[] { 0 });
+        for (uint i = 2; i <= 1000; i++) small.Feed(i, new byte[] { (byte)i });
+        Assert(small.Feed(1, new byte[] { 1 }).SelectMany(x => x).SequenceEqual(Enumerable.Range(1, 1000).Select(i => (byte)i)), "a thousand held segments are released in order");
+        var flood = new TcpReceiveStream(); flood.Feed(0, new byte[] { 0 });
+        for (uint i = 2; i <= 2049; i++) flood.Feed(i, new byte[] { 1 });
+        Reject(() => flood.Feed(5000, new byte[] { 1 }), "a flood of tiny held segments is bounded");
     }
     // [tag][u32 LE resource id][varint base if tag has 4][varint bonus if tag has 8].
     static void Records()
@@ -259,10 +279,14 @@ static class PacketChecks
         Assert(streams.Feed(game, later - 3, 0x18, new byte[] { 9, 9, 9 }) == 0 && !streams.IsBlocked(game) && statuses.Last().Kind == CaptureStatus.Resyncing, "a conflicting retransmission resyncs");
         // Two heartbeats, then a length no frame can have.
         var unframed = new byte[] { 0x06, 0x00, 0x36, 0x06, 0x00, 0x36, 0x01, 0x00 };
-        Assert(streams.Feed(game, 1, 0x18, unframed) == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var unreadable } && unreadable.StartsWith("Unreadable"), "bytes that do not frame resync");
-        streams.Feed(game, 1, 0x18, unframed); streams.Feed(game, 1, 0x18, unframed);
+        int Unframed() { var decoded = streams.Feed(game, later, 0x18, unframed); later += (uint)unframed.Length; return decoded; }
+        Assert(Unframed() == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var unreadable } && unreadable.StartsWith("Unreadable"), "bytes that do not frame resync");
+        var resyncs = statuses.Count(s => s.Kind == CaptureStatus.Resyncing);
+        streams.Feed(game, later - (uint)unframed.Length, 0x18, unframed);
+        Assert(statuses.Count(s => s.Kind == CaptureStatus.Resyncing) == resyncs, "a retransmission of bytes already read does not resync again");
+        Unframed(); Unframed();
         Assert(!streams.IsBlocked(game), "five resyncs in a minute are tolerated");
-        streams.Feed(game, 1, 0x18, unframed);
+        Unframed();
         Assert(streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var damaged } && damaged.StartsWith("Unsupported"), "a sixth resync within a minute blocks the connection and says so");
         Assert(streams.Feed(game, 1, 0x18, snapshot) == 0 && candidates.Last().Total == 140, "a blocked connection is not decoded and counts no bytes");
         streams.Feed(game, 1, 0x11, []); Assert(streams.Count == 0, "FIN ends the connection");
@@ -273,6 +297,134 @@ static class PacketChecks
         Assert(streams.Feed(midstream, 9000, 0x18, new byte[] { 1, 2, 3 }) == 3 && statuses.Last() is { Kind: CaptureStatus.Midstream, Message: var late } && late.Contains("within a few minutes"), "a connection joined after login waits for a heartbeat and the game's identity");
         streams.Maintain([midstream], DateTimeOffset.UtcNow); Assert(streams.Count == 1 && !streams.IsBlocked(midstream), "connections the game closed are forgotten");
         Assert(streams.Feed(game with { LocalPort = 50003 }, 1, 0x10, []) == 0 && streams.Count == 1, "an empty ACK opens no connection");
+    }
+    // A connection seen from its SYN-ACK whose first data segment arrives after the second, or
+    // never (a segment the capture dropped): the login snapshot is read when its segment arrives,
+    // and reading never starts in the middle of a message.
+    static void LoginStarts()
+    {
+        var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328); const uint isn = 1000;
+        byte[] login = [.. Frame(Identity(42, "TestHero")), .. Frame(Snapshot(Stat(0x0c, Odyle, 100, 50))), 0x06, 0x00, 0x36];
+        byte[] after = [.. Frame(Update(0, Stat(0x08, Odyle, 0, 140))), 0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 130)))];
+        for (var cut = 1; cut < login.Length; cut++)
+        {
+            var statuses = new List<CaptureStatus>(); var candidates = new List<int>(); var named = new List<GameIdentity>();
+            var streams = new GameStreams(decoder => { decoder.Candidate += c => candidates.Add(c.Total); decoder.IdentityObserved += named.Add; }, (kind, _) => statuses.Add(kind));
+            streams.Feed(game, isn, 0x12, []);
+            Assert(streams.Feed(game, isn + 1 + (uint)cut, 0x18, login.AsSpan(cut)) == 0 && candidates.Count == 0, $"a second segment before the first waits (cut {cut})");
+            Assert(streams.Feed(game, isn + 1, 0x18, login.AsSpan(0, cut)) == login.Length && candidates.SequenceEqual([150]) && named.Single().CharacterName == "TestHero", $"the login snapshot is read when the first segment arrives late (cut {cut})");
+            streams.Feed(game, isn + 1 + (uint)login.Length, 0x18, after);
+            Assert(candidates.SequenceEqual([150, 140, 130]) && statuses.SequenceEqual([CaptureStatus.Listening]), $"the connection reads on without a resync (cut {cut})");
+        }
+        // Random login traffic in 1400-byte segments: the first arrives up to five segments late,
+        // or never. Late, everything is read; lost, the connection resyncs and reads only what
+        // follows a heartbeat after the gap, never the snapshot from the middle of a message.
+        var random = new Random(20261023);
+        for (var run = 0; run < 300; run++)
+        {
+            var (stream, updates) = LoginTraffic(random);
+            var segments = new List<(uint Sequence, byte[] Bytes)>();
+            for (var at = 0; at < stream.Length; at += 1400) segments.Add((isn + 1 + (uint)at, stream[at..Math.Min(stream.Length, at + 1400)]));
+            var lost = run % 2 == 1;
+            var statuses = new List<CaptureStatus>(); var candidates = new List<int>();
+            var streams = new GameStreams(decoder => decoder.Candidate += c => candidates.Add(c.Total), (kind, _) => statuses.Add(kind));
+            streams.Feed(game, isn, 0x12, []);
+            if (!lost)
+            {
+                var order = segments.Skip(1).ToList(); order.Insert(Math.Min(order.Count, random.Next(1, 6)), segments[0]);
+                foreach (var (sequence, bytes) in order) streams.Feed(game, sequence, 0x18, bytes);
+                Assert(candidates.SequenceEqual([150, .. updates]) && statuses.SequenceEqual([CaptureStatus.Listening]), $"a late first segment loses nothing (run {run})");
+                continue;
+            }
+            var half = segments.Count / 2;
+            foreach (var (sequence, bytes) in segments.Skip(1).Take(half - 1)) streams.Feed(game, sequence, 0x18, bytes);
+            Assert(candidates.Count == 0, $"nothing is read while the first segment is missing (run {run})");
+            streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
+            foreach (var (sequence, bytes) in segments.Skip(half)) streams.Feed(game, sequence, 0x18, bytes);
+            Assert(candidates.Count > 0 && candidates.All(updates.Contains) && candidates.SequenceEqual(candidates.Order()) && statuses.SequenceEqual([CaptureStatus.Listening, CaptureStatus.Resyncing, CaptureStatus.Resumed]), $"a lost first segment resyncs and reads only later updates (run {run})");
+        }
+    }
+    // A connection's first 400 frames: random opcodes and payloads, a heartbeat every 15 frames,
+    // the login snapshot (Odyle 100 + 50 among 70 other stats) at frame 25 and an Odyle update
+    // every 40 frames after it.
+    static (byte[] Stream, List<int> Updates) LoginTraffic(Random random)
+    {
+        var bytes = new List<byte>(); var updates = new List<int>();
+        for (var i = 0; i < 400; i++)
+        {
+            if (i == 25) bytes.AddRange(Frame(Snapshot([.. Enumerable.Range(0, 70).Select(n => Stat(0x0c, 10000001 + (uint)n * 1000, (uint)random.Next(1000), (uint)random.Next(100))), Stat(0x0c, Odyle, 100, 50)])));
+            else if (i % 15 == 14) bytes.AddRange([0x06, 0x00, 0x36]);
+            else if (i > 40 && i % 40 == 0) { bytes.AddRange(Frame(Update(0, Stat(0x08, Odyle, 0, (uint)(1000 + i))))); updates.Add(1000 + i); }
+            else
+            {
+                var payload = new byte[random.Next(4, random.Next(10) == 0 ? 2000 : 300)]; random.NextBytes(payload);
+                byte first = (byte)random.Next(0x01, 0xf0), second = (byte)random.Next(256);
+                bytes.AddRange(Frame([first, second == 0x61 ? (byte)0x62 : second, .. payload]));
+            }
+        }
+        return (bytes.ToArray(), updates);
+    }
+    // One segment of a burst retransmitted long after the segments behind it: held segments are
+    // bounded by their bytes, so it is waited for instead of resyncing (and losing a third of the
+    // burst) once more than 64 segments wait behind it.
+    static void LateRetransmissions()
+    {
+        var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328);
+        foreach (var (count, size, lateBy) in new[] { (200, 1400, 100), (1200, 0, 1000) })
+        {
+            var statuses = new List<CaptureStatus>(); var candidates = new List<int>();
+            var streams = new GameStreams(decoder => decoder.Candidate += c => candidates.Add(c.Total), (kind, _) => statuses.Add(kind));
+            var segments = new List<byte[]>();
+            for (var i = 0; i < count; i++)
+            {
+                var body = new List<byte> { 0x06, 0x00, 0x36 }; body.AddRange(Frame(Update(0, Stat(0x08, Odyle, 0, (uint)(2000 + i)))));
+                while (body.Count < size - 8) body.AddRange(Frame([0x44, 0x01, 0, 0, 0, 0]));
+                segments.Add(body.ToArray());
+            }
+            const uint isn = 7000; streams.Feed(game, isn, 0x12, []);
+            var sequences = new uint[count]; var at = isn + 1;
+            for (var i = 0; i < count; i++) { sequences[i] = at; at += (uint)segments[i].Length; }
+            var order = Enumerable.Range(0, count).Where(i => i != 20).ToList(); order.Insert(20 + lateBy, 20);
+            foreach (var i in order) streams.Feed(game, sequences[i], 0x18, segments[i]);
+            streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
+            Assert(candidates.SequenceEqual(Enumerable.Range(2000, count)) && statuses.SequenceEqual([CaptureStatus.Listening]), $"a segment {lateBy} segments late is waited for ({count} segments)");
+        }
+    }
+    // After a resync the first segment may be an old retransmission: it is ignored, so newer data
+    // is read at once instead of waiting three seconds as a gap (and resyncing again), and bytes
+    // already read are never read twice.
+    static void OldRetransmissions()
+    {
+        var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328); const uint isn = 3000;
+        byte[] tail = [0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 140)))];
+        byte[] first = [.. Frame(Snapshot(Stat(0x0c, Odyle, 100, 50))), .. tail];
+        byte[] lost = [0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 120)))];
+        byte[] after = [0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 110)))];
+        var end = isn + 1 + (uint)first.Length;
+        foreach (var straddles in new[] { false, true })
+        {
+            var statuses = new List<CaptureStatus>(); var candidates = new List<int>();
+            var streams = new GameStreams(decoder => decoder.Candidate += c => candidates.Add(c.Total), (kind, _) => statuses.Add(kind));
+            streams.Feed(game, isn, 0x12, []); streams.Feed(game, isn + 1, 0x18, first);
+            // The segment after the first goes missing for longer than three seconds.
+            streams.Feed(game, end + (uint)lost.Length, 0x18, after);
+            streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
+            Assert(candidates.SequenceEqual([150, 140]) && statuses.Last() == CaptureStatus.Resyncing, "a lost segment resyncs");
+            if (!straddles)
+            {
+                Assert(streams.Feed(game, isn + 1, 0x18, first) == 0 && candidates.Count == 2, "an old retransmission after a resync is not read again");
+                Assert(streams.Feed(game, end + (uint)lost.Length, 0x18, after) == after.Length && candidates.SequenceEqual([150, 140, 110]) && statuses.Last() == CaptureStatus.Resumed, "newer data after it is read at once");
+            }
+            else
+            {
+                // A retransmission that repeats the end of the bytes read and carries the lost ones.
+                Assert(streams.Feed(game, end - (uint)tail.Length, 0x18, [.. tail, .. lost]) == lost.Length && candidates.SequenceEqual([150, 140, 120]) && statuses.Last() == CaptureStatus.Resumed, "a retransmission reaching past the bytes read resumes after them without repeating a reading");
+                streams.Feed(game, end + (uint)lost.Length, 0x18, after);
+                Assert(candidates.SequenceEqual([150, 140, 120, 110]), "the stream reads on after it");
+            }
+            streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(8));
+            Assert(statuses.Count(s => s == CaptureStatus.Resyncing) == 1, "no gap is left to resync again");
+        }
     }
     // One stat record; the tag decides which values are written.
     static byte[] Stat(byte tag, uint resource, uint value = 0, uint bonus = 0)
