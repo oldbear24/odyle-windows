@@ -62,6 +62,13 @@ if (release.Package("win-x64", true)?.Name != "odyle-0.5.0.2-win-x64-self-contai
 if (release.Checksum(small)?.Name != "odyle-0.5.0.2-win-x64.zip.sha256") throw new Exception("Checksum asset lookup failed.");
 if (!release.IsNewerThan(new Version(0, 5, 0, 1)) || !release.IsNewerThan(new Version(0, 5, 0)) || release.IsNewerThan(new Version(0, 5, 0, 2)) || release.IsNewerThan(new Version(0, 6, 0, 1))) throw new Exception("Release version comparison failed.");
 if (ReleaseFeed.Parse(releaseJson.Replace("\"prerelease\":false", "\"prerelease\":true")) is not null || ReleaseFeed.Parse("""{"tag_name":"nightly","assets":[]}""") is not null || ReleaseFeed.Parse("[]") is not null) throw new Exception("Pre-releases and unversioned tags must never be offered.");
+// An answer that is not release data (a TLS-inspecting proxy's page, a cut-off body, a size that is no
+// whole number) is a FormatException with a readable message, which the update check counts as a failed check.
+foreach (var unreadable in new[] { "<html><body>Sign in to the proxy</body></html>", "", """{"tag_name":"v0.5.0.2","assets":[""", releaseJson.Replace("\"size\":217557", "\"size\":2.5") })
+{
+    try { ReleaseFeed.Parse(unreadable); throw new Exception("An unreadable release answer was accepted: " + unreadable); }
+    catch (FormatException error) when (error.Message == "GitHub sent an answer the app cannot read.") { }
+}
 const string hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 if (ReleaseFeed.ExpectedHash(hash.ToUpperInvariant() + "  odyle-0.5.0.2-win-x64.zip\n", "odyle-0.5.0.2-win-x64.zip") != hash) throw new Exception("Checksum file parsing failed.");
 if (ReleaseFeed.ExpectedHash(hash + "  odyle-0.5.0.2-win-x64-self-contained.zip", "odyle-0.5.0.2-win-x64.zip") is not null || ReleaseFeed.ExpectedHash("not-a-hash  odyle-0.5.0.2-win-x64.zip", "odyle-0.5.0.2-win-x64.zip") is not null) throw new Exception("A checksum for another file or a malformed hash was accepted.");

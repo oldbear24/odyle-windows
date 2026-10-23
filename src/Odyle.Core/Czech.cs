@@ -249,7 +249,7 @@ public static class Czech
         ["update check failed: {0}"] = "kontrola aktualizací selhala: {0}", ["could not check for updates: {0}"] = "aktualizace se nepodařilo zkontrolovat: {0}",
         ["Could not install the update: {0} Download it from the release page instead."] = "Aktualizaci se nepodařilo nainstalovat: {0} Stáhni ji raději ze stránky s verzemi.",
         ["Installing Odyle {0} · restarting…"] = "Instaluji Odyle {0} · restartuji…",
-        ["GitHub answered {0}."] = "GitHub odpověděl kódem {0}.", ["Release {0} has no package for this PC ({1})."] = "Verze {0} nemá balíček pro tento počítač ({1}).",
+        ["GitHub answered {0}."] = "GitHub odpověděl kódem {0}.", ["GitHub sent an answer the app cannot read."] = "GitHub poslal odpověď, které aplikace nerozumí.",["Release {0} has no package for this PC ({1})."] = "Verze {0} nemá balíček pro tento počítač ({1}).",
         ["Release {0} has no checksum for {1}."] = "Verze {0} nemá kontrolní součet pro {1}.", ["The release checksum does not name {0}."] = "Kontrolní součet verze neuvádí {0}.",
         ["The downloaded package does not match the release checksum."] = "Stažený balíček neodpovídá kontrolnímu součtu verze.", ["The package does not contain Odyle {0}."] = "Balíček neobsahuje Odyle {0}.",
         ["The application folder is unknown."] = "Složka aplikace není známá.", ["The application path is unknown."] = "Cesta k aplikaci není známá.",

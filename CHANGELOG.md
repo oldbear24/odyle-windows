@@ -2,6 +2,13 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.27.2 · 2026-10-23
+
+### Fixed
+- **One slow room no longer hides every party**: when one of your rooms answered slowly or not at all, the whole party list stopped updating for up to five minutes, and a room that failed to load vanished from the card. Now the other rooms update as usual and the slow one keeps showing what it showed until it answers again.
+- **News from a room fetches only that room**: a change in one room (a planned run, a new member's character) now loads just that room instead of all of your rooms, so the card follows it sooner and with less load on the server.
+- **Update checks keep running after a bad answer**: an answer that was not GitHub's (a company network's sign-in page, say) stopped Odyle from looking for updates until the next start and could show an error box. Now it counts as a failed check and Odyle tries again later.
+
 ## 0.27.1 · 2026-10-23
 
 ### Fixed

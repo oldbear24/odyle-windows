@@ -61,6 +61,19 @@ static class RealtimeChecks
 
         var rooms = new[] { snapshots[0].Room, snapshots[1].Room };
         Check(RealtimeTopics.For("u", rooms).SequenceEqual(new[] { "odyle.user.u", "odyle.room.r", "odyle.presence.r", "odyle.room.other", "odyle.presence.other" }), "the account's topic and each room's two");
+        // After a refresh (PartySnapshots): a room whose fetch failed or timed out keeps what it showed,
+        // a room no longer listed or gone on the server is dropped, and the rooms keep the list's order.
+        var at = Readiness.Parse("2026-10-12T12:00:30.000Z")!.Value;
+        RoomSnapshot In(string id, string serverNow = "2026-10-12T12:00:00.000Z") => Snapshot() with { Room = Snapshot().Room with { Id = id }, ServerNow = serverNow };
+        Room Listed(string id) => Snapshot().Room with { Id = id };
+        var shown = new[] { In("r"), In("other"), In("left") };
+        var fresh = In("r", "2026-10-12T12:05:00.000Z") with { Members = [] };
+        var merged = PartySnapshots.Merge([Listed("other"), Listed("r"), Listed("new")], shown, [new("r", fresh, at), new("other", null, at), new("new", null, at), new("left", In("left"), at)]);
+        Check(merged.Length == 2 && merged[0] == shown[1] && merged[1] == fresh, "one failing room keeps its snapshot and the others take theirs; a room no longer listed is dropped");
+        Check(PartySnapshots.Merge([Listed("r"), Listed("other")], shown, [new("other", null, at, Gone: true)]) is [var only] && only == shown[0], "a room the server no longer shows is dropped; rooms not fetched keep theirs");
+        Check(PartySnapshots.Merge([Listed("r")], [], [new("r", null, at)]).Length == 0, "a room never fetched shows nothing until it is");
+        // The server's clock comes from a snapshot just fetched, against the moment it arrived; never from one kept.
+        Check(PartySnapshots.ClockOffset([new("other", null, at), new("r", fresh, at)]) == TimeSpan.FromSeconds(270) && PartySnapshots.ClockOffset([new("other", null, at)]) is null, "the server's clock from a fresh snapshot only");
         Check(new[] { 0, 1, 2, 3, 4, 9 }.Select(RealtimeClient.Backoff).SequenceEqual(new[] { 1, 2, 5, 10, 30, 30 }.Select(s => TimeSpan.FromSeconds(s))), "reconnects after 1, 2, 5, 10 s, then every 30 s");
         Console.WriteLine("Realtime news, applied snapshots, presence, topics and reconnect schedule passed.");
     }
