@@ -10,7 +10,7 @@ public sealed record TcpFlow(string Local, ushort LocalPort, string Remote, usho
 // count as game traffic, so 20 seconds without decodable bytes mark a value stale.
 // A lost segment that does not arrive within three seconds, a conflicting retransmission
 // or bytes that do not frame resync the connection: reassembly starts again at the next
-// segment and the decoder waits for the next protocol heartbeat, keeping the character it
+// segment with bytes not yet read (an old retransmission is ignored) and the decoder waits for the next protocol heartbeat, keeping the character it
 // knows. The lost bytes may have held a character switch, so the status says Resyncing and
 // the app holds the next reading until the game names its character. More than five resyncs in a minute block the connection until it closes, so a
 // changed protocol shows up as a problem instead of a loop.
@@ -39,6 +39,9 @@ public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<
             var aligned = (flags & 2) != 0;
             if (!aligned && payload.Length == 0) return 0;
             streams[flow] = stream = new Stream(aligned); attach(stream.Decoder);
+            // The SYN names the sequence number the stream starts after, so a first data segment
+            // that is lost or arrives after the second is waited for instead of skipped.
+            if (aligned) stream.Tcp.Start(sequence);
             // Joining an established connection means the startup snapshot and identity already
             // passed; live updates still carry the total, and the game repeats the identity every
             // few minutes. A new connection replaces that warning.
@@ -46,6 +49,8 @@ public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<
             else status(CaptureStatus.Midstream, T("Started after login · the value appears at the next Odyle change; the game names your character within a few minutes, or at once after a relog or channel change."));
         }
         if (stream.Blocked) return 0;
+        // The SYN itself takes one sequence number; data sent with it follows that.
+        if ((flags & 2) != 0) sequence = unchecked(sequence + 1);
         var decoded = 0;
         try { foreach (var chunk in stream.Tcp.Feed(sequence, payload)) { stream.Decoder.Feed(chunk); decoded += chunk.Length; } }
         catch (InvalidDataException)

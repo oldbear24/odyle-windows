@@ -212,20 +212,34 @@ public sealed class PacketCapture : IAsyncDisposable
     }
     // The game's connections, shared by every capture worker: refreshed every two
     // seconds, or at once when a packet arrives on an unknown flow (at most ten
-    // times a second), instead of each worker enumerating processes on its own.
+    // times a second, a SYN-ACK always), instead of each worker enumerating processes on its own.
     private readonly object flowsLock = new();
     private TcpFlow[] knownFlows = Array.Empty<TcpFlow>();
     // How many game processes own those connections: more than one is two clients on this PC.
     private int knownClients;
     private bool reportedTwoClients;
     private DateTimeOffset knownFlowsAt = DateTimeOffset.MinValue;
+    // A connection's SYN-ACK always gets its own look: the table read just before it may predate
+    // the connection, and without the SYN-ACK the connection would be joined midstream and its
+    // login snapshot lost. Only the capture filter's game-port packets get here, and at most
+    // OpeningLooks a second, so a flood of SYN-ACKs cannot keep the table reads going.
+    private const int OpeningLooks = 20;
+    private DateTimeOffset openingLooksSince = DateTimeOffset.MinValue;
+    private int openingLooks;
     private void ForgetFlows() { lock (flowsLock) knownFlowsAt = DateTimeOffset.MinValue; }
-    private TcpFlow[] CurrentFlows(bool immediate)
+    private TcpFlow[] CurrentFlows(bool immediate, bool opening = false)
     {
         lock (flowsLock)
         {
-            if (DateTimeOffset.UtcNow - knownFlowsAt < (immediate ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(2))) return knownFlows;
-            knownFlows = GameFlows(out knownClients); knownFlowsAt = DateTimeOffset.UtcNow; return knownFlows;
+            var now = DateTimeOffset.UtcNow;
+            if (now - knownFlowsAt < (immediate ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(2)))
+            {
+                if (!opening) return knownFlows;
+                if (now - openingLooksSince >= TimeSpan.FromSeconds(1)) { openingLooksSince = now; openingLooks = 0; }
+                if (openingLooks >= OpeningLooks) return knownFlows;
+                openingLooks++;
+            }
+            knownFlows = GameFlows(out knownClients); knownFlowsAt = now; return knownFlows;
         }
     }
     private static string ProcessName(int pid, Dictionary<int, string> cache)
@@ -260,7 +274,8 @@ public sealed class PacketCapture : IAsyncDisposable
         {
             // Only live connections to the game port are checked against their owning
             // process; the game's HTTPS/login connections and every other program need
-            // no process lookup at all.
+            // no process lookup at all. Live is SYN_SENT (3, where a connection is when its
+            // SYN-ACK arrives), SYN_RCVD (4) or ESTABLISHED (5).
             if (result.Count >= 32 || PortAt(row, 16) != GameConnection.Port || Marshal.ReadInt32(row) is not (3 or 4 or 5)) return;
             var owner = Marshal.ReadInt32(row, 20);
             if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
@@ -344,9 +359,10 @@ public sealed class PacketCapture : IAsyncDisposable
                     var tcpLength = (bytes[tcp + 12] >> 4) * 4; if (tcpLength < 20 || ipLength + tcpLength > total) continue;
                     var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
                     var flow = new TcpFlow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
-                    if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true); if (!flows.Contains(flow)) continue; }
+                    var flags = bytes[tcp + 13];
+                    if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true, opening: (flags & 2) != 0); if (!flows.Contains(flow)) continue; }
                     if (!owners.Claim(flow, name, DateTimeOffset.UtcNow)) continue;
-                    var decoded = streams.Feed(flow, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), bytes[tcp + 13], bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength));
+                    var decoded = streams.Feed(flow, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), flags, bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength));
                     if (decoded > 0) Interlocked.Add(ref gameBytes, decoded);
                 }
                 finally { Array.Clear(bytes); }

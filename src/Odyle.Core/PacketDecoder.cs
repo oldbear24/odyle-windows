@@ -6,8 +6,17 @@ namespace Odyle.Core;
 // Bounded, receive-only TCP reassembly. Gaps never become guessed bytes.
 public sealed class TcpReceiveStream
 {
-    private const int HistoryBytes = 65536, PendingLimit = 524288;
+    // Held segments are bounded by their bytes (PendingLimit); the count limit only guards
+    // against a flood of tiny segments, since every arriving segment is compared with each
+    // held one. 2048 keeps that comparison cheap and still holds the whole 512 KB in segments
+    // of 256 bytes or more, so a retransmission arriving hundreds of segments late is waited
+    // for instead of resyncing the connection.
+    private const int HistoryBytes = 65536, PendingLimit = 524288, PendingSegments = 2048;
     private uint? next;
+    // After a reset: the sequence number just past the last byte delivered before it. A segment
+    // that ends there or earlier is an old retransmission and must not decide where the stream
+    // resumes, or newer data would wait behind it as a gap (and old bytes would be read again).
+    private uint? resume;
     private readonly Dictionary<uint, byte[]> pending = new();
     private int pendingBytes;
     // The last 64 KB delivered, for overlap checks. It lives in the front of a
@@ -16,17 +25,31 @@ public sealed class TcpReceiveStream
     private readonly byte[] history = new byte[HistoryBytes * 2];
     private int historyLength;
     public DateTimeOffset? GapSince { get; private set; }
-    public void Reset() { next = null; pending.Clear(); pendingBytes = 0; historyLength = 0; GapSince = null; }
+    public void Reset() { resume = next ?? resume; next = null; pending.Clear(); pendingBytes = 0; historyLength = 0; GapSince = null; }
+    // The connection's SYN: its sequence number is the server's initial one and the first data
+    // byte follows it. Knowing that, a first data segment that arrives late (or never) is a gap
+    // instead of the start of the stream, so reading never begins in the middle of a message.
+    public void Start(uint initialSequence)
+    {
+        if (next is not null) return;
+        next = unchecked(initialSequence + 1); resume = null;
+    }
     public IEnumerable<byte[]> Feed(uint sequence, ReadOnlySpan<byte> payload)
     {
         if (payload.Length == 0) return Array.Empty<byte[]>();
+        if (next is null && resume is { } delivered)
+        {
+            if (unchecked((int)(sequence + (uint)payload.Length - delivered)) <= 0) return Array.Empty<byte[]>();
+            // A segment reaching past the last delivered byte resumes right after it, without repeating it.
+            next = unchecked((int)(sequence - delivered)) < 0 ? delivered : sequence;
+        }
         next ??= sequence;
         var distance = unchecked((int)(sequence - next.Value));
         CheckOverlap(sequence, payload, next.Value - (uint)historyLength, history.AsSpan(0, historyLength));
         foreach (var piece in pending) CheckOverlap(sequence, payload, piece.Key, piece.Value);
         if (distance > 0)
         {
-            if (distance > PendingLimit || pending.Count >= 64 || pendingBytes + payload.Length > PendingLimit) throw new InvalidDataException("TCP gap exceeds buffer limit.");
+            if (distance > PendingLimit || pending.Count >= PendingSegments || pendingBytes + payload.Length > PendingLimit) throw new InvalidDataException("TCP gap exceeds buffer limit.");
             if (pending.TryGetValue(sequence, out var old)) { if (old.Length >= payload.Length) return Array.Empty<byte[]>(); pendingBytes -= old.Length; }
             pending[sequence] = payload.ToArray(); pendingBytes += payload.Length; GapSince ??= DateTimeOffset.UtcNow; return Array.Empty<byte[]>();
         }
