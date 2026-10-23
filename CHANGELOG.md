@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.27.0 · 2026-10-23
+
+### New
+- **Calls to a run now**: when someone in your room calls the party with **Run now** on the dashboard and you play or hold enough Odyle for a cube, the tray says so (“Lumina calls the party to Fire Temple”, with the start time), unless it is your quiet hours. Needs a dashboard server from 0.41.0; with an older one nothing changes.
+
 ## 0.26.3 · 2026-10-21
 
 ### Fixed
