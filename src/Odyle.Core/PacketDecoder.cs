@@ -170,6 +170,8 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<OdyleUpdateObservation>? UpdateObserved;
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
+    /// <summary>The own character's map and position at a world load or arrival, or where one of its own effects landed (GameLocation).</summary>
+    public event Action<GameLocation>? LocationObserved;
     public void Reset() { start = end = 0; ownCharacter = null; synchronized = startsAligned; probation = false; }
     /// <summary>Drops the undecoded bytes and waits for the next heartbeat; the own character stays known.</summary>
     public void Resync() { start = end = 0; synchronized = false; probation = false; }
@@ -244,7 +246,7 @@ public sealed class ExperimentalOdyleDecoder
         if (data.Length > 10) Drop(data.Length - 10);
         return false;
     }
-    private static bool Readable(byte first, byte second) => (first, second) is (0xff, 0xff) or (0x33, 0x36) or (0x0b, 0x61) or (0x0c, 0x61);
+    private static bool Readable(byte first, byte second) => (first, second) is (0xff, 0xff) or (0x33, 0x36) or (0x0b, 0x61) or (0x0c, 0x61) or (0x21, 0x36) or (0x23, 0x36) or (0x2a, 0x38);
     private void DecodeFrame(ReadOnlySpan<byte> frame, int depth)
     {
         // Global frames can carry one transport flag (F0 to FE) before the opcode. It is taken for one
@@ -288,6 +290,13 @@ public sealed class ExperimentalOdyleDecoder
             ownCharacter = id;
             if (switched) CharacterChanged?.Invoke(id);
             if (identity is not null) IdentityObserved?.Invoke(identity);
+            return;
+        }
+        // World loads and arrivals (21 36, 23 36), and effects naming the own entity (2A 38) for its
+        // position; another entity's effect, and every other effect or combat frame, is never read.
+        if (frame[0] is 0x21 or 0x23 && frame[1] == 0x36 || frame[0] == 0x2a && frame[1] == 0x38)
+        {
+            if (GameLocation.Read(frame, ownCharacter) is { } location) LocationObserved?.Invoke(location);
             return;
         }
         if (frame[1] != 0x61) return; // Sprint/dash fields never enter this adapter.

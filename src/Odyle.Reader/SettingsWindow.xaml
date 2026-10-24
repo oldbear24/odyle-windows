@@ -42,7 +42,7 @@
    <!-- Npcap is checked each time settings open -->
    <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><Ellipse x:Name="NpcapDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,1,7,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="11.5" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
    <!-- Scope notice, the same text as on the installer's welcome page and the dashboard -->
-   <TextBlock Style="{StaticResource Hint}" Text="Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic, automates play or collects combat data. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk." Margin="2,6,0,0"/>
+   <TextBlock Style="{StaticResource Hint}" Text="Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic, automates play or collects combat data. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk." Margin="2,6,0,0"/>
 
    <!-- Window: how the card is shown on this PC; the header buttons toggle the same -->
    <TextBlock Style="{StaticResource Section}" Text="WINDOW"/>

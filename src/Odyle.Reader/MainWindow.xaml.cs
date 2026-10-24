@@ -808,7 +808,7 @@ public partial class MainWindow : Window
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
-        NoteReaderPause(session.ReaderPaused ?? false);
+        NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
@@ -1568,7 +1568,7 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; }
+    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); }
     // `latest` belongs to the character the game named: its updates follow it from now on.
     private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
@@ -1659,6 +1659,7 @@ public partial class MainWindow : Window
         next.SnapshotWithoutOdyle += () => Dispatcher.BeginInvoke(() => OnSnapshotWithoutOdyle(next));
         next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await CharacterChangedAsync(next, character));
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
+        next.LocationObserved += location => Dispatcher.BeginInvoke(() => OnLocation(next, location));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
         // snapshot and identity, and once per run each distinct stat frame layout and each other
         // stat resource that sends updates (not every frame). The patch-day trace counts them all.
@@ -1666,8 +1667,10 @@ public partial class MainWindow : Window
         if (trace is { } counting)
         {
             next.FrameObserved += counting.Frame; next.SnapshotObserved += counting.Snapshot; next.UpdateObserved += counting.Update;
-            next.LayoutObserved += counting.Layout; next.IdentityObserved += counting.Identity;
+            next.LayoutObserved += counting.Layout; next.IdentityObserved += counting.Identity; next.LocationObserved += counting.Location;
         }
+        // The map of every world load, for naming maps on the dashboard; positions are never logged.
+        next.LocationObserved += l => { if (l.Map is { } map) Log.Info($"Decoder: world load on map {map}."); };
         next.UpdateObserved += u =>
         {
             var odyle = u.Resource == ExperimentalOdyleDecoder.OdyleResource;
@@ -1862,7 +1865,7 @@ public partial class MainWindow : Window
             if (capture != source || character == gameCharacterId) return;
             // The game switched characters on this connection. Until it names the
             // new one, no reading may be attributed to either character.
-            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = "";
+            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = ""; locations.Switched();
             if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
             await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
         }
@@ -1879,7 +1882,7 @@ public partial class MainWindow : Window
             {
                 // The game now plays a different character. A reading the previous
                 // one owns must not move over to it.
-                gameCharacterKey = key; gameCharacterName = identity.CharacterName; detectedCharacterKey = ""; namedHasReading = false; odyleMissingKey = "";
+                gameCharacterKey = key; gameCharacterName = identity.CharacterName; detectedCharacterKey = ""; namedHasReading = false; odyleMissingKey = ""; locations.Switched();
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
@@ -1914,6 +1917,8 @@ public partial class MainWindow : Window
                 Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
             }
             if (odyleMissingKey == key) _ = MarkNoOdyleAsync();
+            // A world load still waiting for its owner is where the character just named arrived.
+            if (detectedCharacterKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
             if (latest is not null) await PublishCoreAsync();
@@ -1939,6 +1944,50 @@ public partial class MainWindow : Window
         var id = currentCharacterId; noOdyleSent = id;
         try { await api.NoOdyleAsync(id); Log.Info($"No Odyle yet on {gameCharacterName}: the rooms are told."); }
         catch (Exception error) { Log.Info($"No Odyle yet on {gameCharacterName}, not told to the server: {Describe(error)}"); }
+    }
+
+    // ----- Location sharing -----
+    // An account that shares its location with its rooms (an opt-in on the dashboard; the session and
+    // heartbeat answers say so) sends where its named character is (LocationReporter): one position at a
+    // time, the newest waiting while one is on its way. Without the opt-in nothing leaves the PC.
+    private readonly LocationReporter locations = new();
+    private bool shareLocation, locationRefused, locationSending, locationFailing; private LocationReport? locationQueued; private DateTimeOffset locationBlockedUntil;
+    private void NoteShareLocation(bool? share)
+    {
+        var now = share == true;
+        if (now == shareLocation) return;
+        shareLocation = now; locationQueued = null;
+        Log.Info(now ? "This account shares its location with its rooms." : "This account does not share its location.");
+        if (now && locations.Current is { } current) _ = SendLocationAsync(current);
+    }
+    private void OnLocation(PacketCapture source, GameLocation location)
+    {
+        if (capture != source || twoClients) return;
+        if (locations.Observe(location, DateTimeOffset.UtcNow) is { } report) _ = SendLocationAsync(report);
+    }
+    private async Task SendLocationAsync(LocationReport report)
+    {
+        if (!shareLocation || locationRefused || api is not { } current || sessionId.Length == 0 || DateTimeOffset.UtcNow < locationBlockedUntil) return;
+        if (locationSending) { locationQueued = report; return; }
+        locationSending = true;
+        try
+        {
+            if (!await current.LocationAsync(sessionId, report)) { shareLocation = false; locationQueued = null; Log.Info("The server says this account does not share its location; nothing is sent until it does."); }
+            locationFailing = false;
+        }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.LocationAdapterRefused)
+        {
+            locationRefused = true; locationQueued = null;
+            Log.Warn($"The server does not accept the location adapter {LocationReporter.Adapter}; no positions are sent until Odyle restarts.");
+        }
+        catch (ServerBusyException error) { locationBlockedUntil = error.Until; }
+        // Paused readers, an expired session, no connection: the position is dropped, the next one is tried.
+        catch (Exception error) { if (!locationFailing) Log.Info($"A position was not sent: {Describe(error)}"); locationFailing = true; }
+        finally
+        {
+            locationSending = false;
+            if (locationQueued is { } next) { locationQueued = null; await SendLocationAsync(next); }
+        }
     }
 
     // ----- Restart hand-over -----
@@ -2080,7 +2129,7 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account.")); NoteReaderPause(session.ReaderPaused);
+        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account.")); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
@@ -2106,7 +2155,7 @@ public partial class MainWindow : Window
             }
             var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
-            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync();
+            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation);
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
             if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
@@ -2125,7 +2174,7 @@ public partial class MainWindow : Window
     {
         await StopReaderAsync();
         // The pause is the server's: without a connection there is none.
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) SessionStore.Clear();
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);

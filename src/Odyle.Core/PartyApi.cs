@@ -46,8 +46,12 @@ public sealed record RoomMember(string Id, string User, string Role, string Disp
 // A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
 public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
-public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null);
-public sealed record HeartbeatResponse(bool? ReaderPaused = null);
+// ShareLocation: the account shares its characters' location with its rooms (an opt-in on the
+// dashboard); backends from before location sharing leave it out, which means no.
+public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null);
+public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null);
+// Shared is false when the account does not share its location: the server stored nothing.
+public sealed record LocationResponse(bool Shared);
 // Base is the natural pool (it regenerates up to a cap), Bonus what items added; Kind and Delta
 // say what changed since the reading before it (OdyleChange). All four are optional: older
 // backends ignore them, and the total in Value is what they store.
@@ -61,6 +65,9 @@ public sealed class PartyApi : IDisposable
     // The backend's 503 answer to a reading while its operators pause packet readers; the app then
     // stops capturing until the rooms, session or heartbeat answer says readerPaused is false.
     public const string ReadersPaused = "Packet readers are paused by the server operators.";
+    // The backend's 400 answer to a position whose adapter it does not accept; the app sends no more
+    // positions until it restarts.
+    public const string LocationAdapterRefused = "This location adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;
@@ -175,6 +182,10 @@ public sealed class PartyApi : IDisposable
     // A character the game sent a complete snapshot of without its Odyle record (under level 22):
     // rooms say so until its first reading. Sent on its own, so a server from before it answers 404.
     public Task NoOdyleAsync(string characterId) => PostAsync<JsonElement>("api/odyle/no-odyle", new { characterId });
+    // The named character's map and position, for an account that shares its location; false when it
+    // does not (nothing was stored). Sent on its own, so a server from before it answers 404.
+    public async Task<bool> LocationAsync(string sessionId, LocationReport report) =>
+        (await PostAsync<LocationResponse>("api/odyle/location", new { sessionId, characterId = report.CharacterId, adapter = LocationReporter.Adapter, map = report.Map, x = Math.Round(report.X, 1), y = Math.Round(report.Y, 1), z = Math.Round(report.Z, 1), heading = report.Heading is { } h ? Math.Round(h, 1) : (double?)null, source = report.Source })).Shared;
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));

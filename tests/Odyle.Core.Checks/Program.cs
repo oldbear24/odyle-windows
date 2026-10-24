@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Odyle.Core;
 PacketChecks.Run();
+await LocationChecks.Run();
 IdentityChecks.Run();
 ChecklistChecks.Run();
 LocalizationChecks.Run();
