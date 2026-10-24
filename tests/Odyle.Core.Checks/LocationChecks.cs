@@ -32,8 +32,12 @@ static class LocationChecks
         decoder.Feed(Frame(Effect(42, 1000, 2000, 3000)));
         Check(seen.Last() is { Source: GameLocation.Flight, Map: null } f && Near(f.X, 1000) && Near(f.Z, 3000), "an own effect gives the position");
         decoder.Feed(Frame([0xf1, .. Effect(42, 1500, 2000, 3000)])); Check(seen.Count == 5 && Near(seen.Last().X, 1500), "a flagged own effect is read");
+        // Effect 231 is the tick while gliding or flying; any other effect on the character is an effect.
+        decoder.Feed(Frame(Effect(42, 1600, 2000, 3000, effect: 200))); decoder.Feed(Frame(Effect(42, 1700, 2000, 3000, effect: 10002)));
+        Check(seen.Count == 7 && seen[^2] is { Source: GameLocation.Effect, Map: null } && seen[^1].Source == GameLocation.Effect && Near(seen[^1].X, 1700), "other own effects are effects, not flights");
         decoder.Feed(Frame(Effect(43, 1000, 2000, 3000))); decoder.Feed(Frame(Effect(42, 1000, 2000, 3000, second: 43)));
-        Check(seen.Count == 5, "another entity's effect is never read");
+        decoder.Feed(Frame(Effect(43, 1000, 2000, 3000, effect: 200)));
+        Check(seen.Count == 7, "another entity's effect is never read");
         var count = seen.Count;
         foreach (var odd in new byte[][]
         {
@@ -56,10 +60,10 @@ static class LocationChecks
             byte[] opcode = (i % 3) switch { 0 => [0x21, 0x36], 1 => [0x23, 0x36], _ => [0x2a, 0x38, 42] };
             decoder.Feed(Frame([.. opcode, .. body]));
         }
-        var trace = new DecoderTrace(); trace.Location(seen[0]); trace.Location(seen[0]); trace.Location(seen.Last(l => l.Source == GameLocation.Flight));
+        var trace = new DecoderTrace(); trace.Location(seen[0]); trace.Location(seen[0]); trace.Location(seen.Last(l => l.Source == GameLocation.Flight)); trace.Location(seen.Last(l => l.Source == GameLocation.Effect));
         using var json = JsonDocument.Parse(trace.ToJson("0.28.0", ExperimentalOdyleDecoder.Version));
         var counts = json.RootElement.GetProperty("locations");
-        Check(counts.GetProperty("load").GetInt64() == 2 && counts.GetProperty("flight").GetInt64() == 1 && !trace.ToJson("0.28.0", "x").Contains("83475"), "the trace counts positions without keeping them");
+        Check(counts.GetProperty("load").GetInt64() == 2 && counts.GetProperty("flight").GetInt64() == 1 && counts.GetProperty("effect").GetInt64() == 1 && !trace.ToJson("0.28.0", "x").Contains("83475"), "the trace counts positions without keeping them");
     }
     static void Reporting()
     {
@@ -67,6 +71,7 @@ static class LocationChecks
         GameLocation Load(int map, float x, float heading = 10) => new(map, x, 0, 100, heading, GameLocation.Load);
         GameLocation Arrive(float x) => new(null, x, 0, 100, null, GameLocation.Arrival);
         GameLocation Fly(float x) => new(null, x, 0, 100, null, GameLocation.Flight);
+        GameLocation Affect(float x) => new(null, x, 0, 100, null, GameLocation.Effect);
         var r = new LocationReporter();
         // Nothing is known before the game names a character.
         Check(r.Observe(Fly(10), at) is null && r.Named("a", at) is null && r.Observe(Fly(10), at) is null, "no map without a world load");
@@ -78,8 +83,12 @@ static class LocationChecks
         Check(r.Observe(Fly(1400), at.AddSeconds(20)) is null && r.Current is { X: 1400 }, "less than 500 units is not sent, but is the current position");
         Check(r.Observe(Fly(2000), at.AddSeconds(21)) is { Source: GameLocation.Flight, Map: 1110, X: 2000 }, "a flight after 500 units is sent");
         Check(r.Observe(Fly(3000), at.AddSeconds(23)) is null && r.Observe(Fly(3100), at.AddSeconds(26.5)) is { X: 3100 }, "flights at most every five seconds");
+        // Other own effects follow the same five seconds and 500 units, together with flights.
+        Check(r.Observe(Affect(4000), at.AddSeconds(28)) is null && r.Current is { X: 4000, Source: GameLocation.Effect }, "an effect within five seconds of a flight waits");
+        Check(r.Observe(Affect(3300), at.AddSeconds(32)) is null, "an effect that moved less than 500 units waits");
+        Check(r.Observe(Affect(3700), at.AddSeconds(33)) is { Source: GameLocation.Effect, Map: 1110, X: 3700 } && r.Observe(Fly(4300), at.AddSeconds(35)) is null, "effects and flights share the throttle");
         // An arrival after the name is sent when it moved the character.
-        Check(r.Observe(Arrive(3100), at.AddSeconds(30)) is null && r.Observe(Arrive(3200), at.AddSeconds(31)) is { Source: GameLocation.Arrival, X: 3200 }, "an arrival after the name only when it moved");
+        Check(r.Observe(Arrive(4300), at.AddSeconds(36)) is null && r.Observe(Arrive(4400), at.AddSeconds(37)) is { Source: GameLocation.Arrival, X: 4400 }, "an arrival after the name only when it moved");
         // A switch: the load before the new character's name goes to the new character, never the previous one.
         r.Observe(Load(1220, 50), at.AddSeconds(40)); r.Switched();
         Check(r.Observe(Fly(5000), at.AddSeconds(41)) is null, "nothing goes out between a switch and the new name");
@@ -117,6 +126,8 @@ static class LocationChecks
         }
         await api.LocationAsync("s", new LocationReport("c", 1110, 1, 2, 3, null, GameLocation.Flight));
         using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("heading").ValueKind == JsonValueKind.Null && sent.RootElement.GetProperty("source").GetString() == "flight", "a position without heading sends null");
+        await api.LocationAsync("s", new LocationReport("c", 1110, 1, 2, 3, null, GameLocation.Effect));
+        using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("source").GetString() == "effect", "an own effect is sent as effect");
         shared = false; Check(!await api.LocationAsync("s", new LocationReport("c", 1110, 1, 2, 3, null, GameLocation.Flight)), "an account that does not share answers shared false");
         status = HttpStatusCode.BadRequest; message = PartyApi.LocationAdapterRefused;
         try { await api.LocationAsync("s", new LocationReport("c", 1110, 1, 2, 3, null, GameLocation.Flight)); throw new Exception("Location check failed: a refused adapter was accepted."); }
@@ -135,9 +146,9 @@ static class LocationChecks
     // 23 36: six zero bytes, f32 x, y, z, u32, u16.
     static byte[] Arrival(float x, float y, float z) { var p = new byte[24]; Floats(p.AsSpan(6), x, y, z); p[18] = 3; return [0x23, 0x36, .. p]; }
     // 2A 38: varint entity, 01 11, counter, u32 effect, u32 duration, u32, u64 time, varint entity, 01 00, f32 x, y, z.
-    static byte[] Effect(ulong entity, float x, float y, float z, ulong? second = null)
+    static byte[] Effect(ulong entity, float x, float y, float z, ulong? second = null, uint effect = 231)
     {
-        var middle = new byte[21]; middle[0] = 0x36; BinaryPrimitives.WriteUInt32LittleEndian(middle.AsSpan(1), 231); BinaryPrimitives.WriteUInt32LittleEndian(middle.AsSpan(5), 200);
+        var middle = new byte[21]; middle[0] = 0x36; BinaryPrimitives.WriteUInt32LittleEndian(middle.AsSpan(1), effect); BinaryPrimitives.WriteUInt32LittleEndian(middle.AsSpan(5), 200);
         BinaryPrimitives.WriteUInt64LittleEndian(middle.AsSpan(13), 1_792_859_851_517);
         var position = new byte[12]; Floats(position, x, y, z);
         return [0x2a, 0x38, .. Varint(entity), 1, 0x11, .. middle, .. Varint(second ?? entity), 1, 0, .. position];

@@ -3,10 +3,12 @@ using System.Buffers.Binary;
 namespace Odyle.Core;
 // Where the own character is, for the rooms of an account that shares its location (an opt-in on
 // the dashboard). Map is null for an arrival or an own effect, which carry no map; heading (degrees)
-// comes with a world load only. Coordinates are the game's world units.
+// comes with a world load only. Coordinates are the game's world units. An own effect is a flight
+// (effect 231, the tick while gliding or flying) or any other effect on the character (effect).
 public sealed record GameLocation(int? Map, float X, float Y, float Z, float? Heading, string Source)
 {
-    public const string Load = "load", Arrival = "arrival", Flight = "flight";
+    public const string Load = "load", Arrival = "arrival", Flight = "flight", Effect = "effect";
+    private const uint FlightTick = 231;
     private const float Limit = 1_000_000f;
     // A whole frame, opcode first; null for anything without the layout seen on Global. Other
     // entities' effects (2A 38 naming another entity) are never read.
@@ -33,15 +35,15 @@ public sealed record GameLocation(int? Map, float X, float Y, float Z, float? He
         return new(null, x, y, z, null, Arrival);
     }
     // 2A 38, an effect on an entity: varint entity, 01 11, u8 counter, u32 effect, u32 duration (ms),
-    // u32, u64 time (ms), the varint entity again, 01 00, f32 x, y, z, nothing after. It ticks about
-    // once a second while the character glides or flies.
+    // u32, u64 time (ms), the varint entity again, 01 00, f32 x, y, z, nothing after. Effect 231 ticks
+    // about once a second while the character glides or flies.
     private static GameLocation? OwnEffect(ReadOnlySpan<byte> p, ulong own)
     {
         var o = 0;
         if (!ExperimentalOdyleDecoder.TryVarint(p, ref o, out var actor) || actor != own || o + 23 > p.Length || p[o] != 1 || p[o + 1] != 0x11) return null;
-        o += 23;
+        var effect = BinaryPrimitives.ReadUInt32LittleEndian(p[(o + 3)..]); o += 23;
         if (!ExperimentalOdyleDecoder.TryVarint(p, ref o, out var again) || again != own || p.Length != o + 14 || p[o] != 1 || p[o + 1] != 0) return null;
-        return Position(p[(o + 2)..], out var x, out var y, out var z) ? new(null, x, y, z, null, Flight) : null;
+        return Position(p[(o + 2)..], out var x, out var y, out var z) ? new(null, x, y, z, null, effect == FlightTick ? Flight : Effect) : null;
     }
     private static bool Position(ReadOnlySpan<byte> p, out float x, out float y, out float z)
     {
@@ -57,8 +59,8 @@ public sealed record LocationReport(string CharacterId, int Map, float X, float 
 // Like a reading, a position belongs to the character the game names. A world load waits for the
 // name the game sends after the loading screen (6 to 10 seconds), so a switch never gives the next
 // character's position to the one before; one still unnamed after 30 seconds is dropped. Between
-// loads the named character's own effects follow it on its map, at most every five seconds and only
-// after it moved 500 units. Nothing arrives while it walks: the map shows the last known position.
+// loads the named character's own effects (flights and other effects alike) follow it on its map, at
+// most every five seconds and only after it moved 500 units. Nothing arrives while it walks: the map shows the last known position.
 public sealed class LocationReporter
 {
     // The backend's location adapter registry lists this name (backend/odyle/protocols.go).
