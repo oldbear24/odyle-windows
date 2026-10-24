@@ -54,8 +54,8 @@ Name: "cs"; MessagesFile: "compiler:Languages\Czech.isl"
 
 [Messages]
 ; What Odyle is and is not: the same notice as Settings -> Packet reader and the dashboard.
-en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nOdyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic, automates play or collects combat data. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk.
-cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení vaší vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nesbírá data o boji. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáte na vlastní riziko.
+en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nOdyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic, automates play or collects combat data. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk.
+cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení vaší vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nesbírá data o boji. Mapu a polohu vaší vlastní postavy posílá vašim místnostem, jen když na dashboardu zapnete sdílení polohy. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáte na vlastní riziko.
 
 [CustomMessages]
 en.AutostartTask=Start Odyle with Windows (it waits in the tray)

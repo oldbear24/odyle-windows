@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.28.0 · 2026-10-24
+
+### New
+- **Your party can see where you are, if you want them to**: turn on **Share my location with my rooms** on the dashboard (it is off until you do) and Odyle sends your own character's map and position to your rooms: at every login, teleport and channel change, every few seconds while you glide or fly, and when an effect such as a buff lands on your character. Walking alone sends no position, so your rooms see your last known place and how long ago it was. Turn it off on the dashboard and Odyle stops within about 20 seconds.
+- Like your Odyle, a position always goes to the character the game names after the loading screen, never to the character you just switched away from.
+
 ## 0.27.2 · 2026-10-23
 
 ### Fixed
