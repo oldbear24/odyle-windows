@@ -23,7 +23,13 @@ namespace Odyle.Reader;
 public sealed record CharacterSharing(string Title, string Rooms);
 public sealed record LanguageChoice(string Code, string Name);
 public sealed record CompactMate(string Name, string Value, string Cubes, Brush Dot, string Hint);
-public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint);
+// Place: where the character was last seen while its player shares their location, "" otherwise; it
+// follows the detail with a map pin, in place of the server.
+public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint, string Place = "")
+{
+    public string PlaceGap => Place.Length > 0 && Detail.Length > 0 ? " · " : "";
+    public string Pin => Place.Length > 0 ? "\uE707 " : "";
+}
 // Summary is the room's party line (RunChip.PartyLine), mint while the party can do a cube.
 public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = "", Brush? SummaryBrush = null)
 {
@@ -92,6 +98,8 @@ public partial class MainWindow : Window
     // The reader line's last states, for Copy diagnostics.
     private readonly Queue<string> readerHistory = new();
     private Character[] characters = [];
+    // The game's maps as the server's superusers named them, for the places of location sharing.
+    private GameMap[] maps = [];
     private Room[] rooms = [];
     // Server-wide Odyle per cube: the cost shown while the account has no room yet.
     private int odylePerCube = 40;
@@ -352,10 +360,11 @@ public partial class MainWindow : Window
         settings.Show(); settings.WindowState = WindowState.Normal; settings.Activate();
     }
     private void Settings_Click(object sender, RoutedEventArgs e) => OpenSettings();
+    // The footer says only what needs attention; "" clears it once that is over (connected again, saved).
     private void Status(string message)
     {
         StatusLabel.Text = message;
-        if (message != lastStatus) { lastStatus = message; Log.Info("Status: " + message); Translation.Announce(StatusLabel); }
+        if (message != lastStatus) { lastStatus = message; if (message.Length > 0) { Log.Info("Status: " + message); Translation.Announce(StatusLabel); } }
     }
     // What a failed request means for the person at the PC, in their language.
     private static string Describe(Exception error) => error switch
@@ -502,7 +511,7 @@ public partial class MainWindow : Window
             : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet");
         ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
-        EnergyTrack.Visibility = CubeLabel.Visibility = AgeLabel.Visibility = connected || offline ? Visibility.Visible : Visibility.Collapsed;
+        EnergyTrack.Visibility = CubeLabel.Visibility = connected || offline ? Visibility.Visible : Visibility.Collapsed;
         CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         // With several rooms the count is at the cost of the first one the character is shared in; the tooltip names it.
         CubeLabel.ToolTip = CubeLabel.Text.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", CubeLabel.Text, costRoom.Name) : CubeLabel.Text;
@@ -533,8 +542,9 @@ public partial class MainWindow : Window
             : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
             : reading is not null ? (adapterOutdated ? OutdatedHint : publishFailure ?? "")
             // The game's snapshot of the named character has no Odyle record; it is thought to unlock at level 22.
+            // Waiting for the snapshot needs no caption: the reader line says so.
             : capture is not null ? (odyleMissingKey.Length > 0 && odyleMissingKey == gameCharacterKey ? T("No Odyle on {0} yet · it may unlock at level 22.", gameCharacterName)
-                : character is null ? T("Log into a character · it is detected automatically.") : T("Listening for the game's Odyle snapshot…"))
+                : character is null ? T("Log into a character · it is detected automatically.") : "")
             : character is null ? T("Start the reader, then log into your character.")
             : character.Confirmed ? T("Last saved value · start the reader for live values.")
             : T("No reading yet · start the reader before logging in.");
@@ -585,9 +595,10 @@ public partial class MainWindow : Window
         PartyList.ItemsSource = groups;
         PartyPanel.Visibility = api is not null && rooms.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         PartyEmptyLabel.Visibility = groups.All(g => g.Mates.Length == 0) ? Visibility.Visible : Visibility.Collapsed;
+        // Live updates are the rule and go unmentioned; only a party fetched every 15 seconds says so.
         var live = realtime?.IsConnected == true;
-        PartyModeLabel.Text = live ? T("live updates") : T("refreshed every 15 s"); PartyModeLabel.Foreground = Brush(live ? "MintSoft" : "Faint");
-        PartyModeLabel.ToolTip = live ? T("The party follows changes as they happen.") : realtime?.LastProblem is { } problem ? T("Live updates are off: {0}", T(problem)) : T("Live updates are not connected; the party is fetched every 15 seconds.");
+        PartyModeLabel.Visibility = live ? Visibility.Collapsed : Visibility.Visible; PartyModeLabel.Text = T("refreshed every 15 s");
+        PartyModeLabel.ToolTip = realtime?.LastProblem is { } problem ? T("Live updates are off: {0}", T(problem)) : T("Live updates are not connected; the party is fetched every 15 seconds.");
         RenderRunChip();
     }
     // The next planned run under the card: soonest first, ones you go to before others, with a
@@ -622,12 +633,25 @@ public partial class MainWindow : Window
         cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
         var seen = !live && Readiness.Parse(c.LastSeenAt) is { } at ? " · " + T("seen {0}", Age(at)) : "";
-        // The class leads the detail, so a narrow row trims the server rather than the class.
-        var where = c.CharacterName == member.DisplayName ? c.Location : $"{member.DisplayName} · {c.Server}";
-        var detail = c.ClassLine.Length > 0 ? $"{c.ClassLine} · {where}" : where;
-        return new PartyMate(c.CharacterName, live ? detail : T("stale") + seen + " · " + detail,
+        // The class leads the detail, so a narrow row trims the server rather than the class. A place
+        // the player shares takes the server's place (the player's name stays in the tooltip).
+        var place = PlaceLine(c.Location);
+        var where = place.Length > 0 ? "" : c.CharacterName == member.DisplayName ? c.ServerLine : $"{member.DisplayName} · {c.Server}";
+        var detail = string.Join(" · ", new[] { c.ClassLine, where }.Where(part => part.Length > 0));
+        return new PartyMate(c.CharacterName, live ? detail : T("stale") + seen + (detail.Length > 0 ? " · " + detail : ""),
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes"), Brush(live ? "Mint" : "Amber"),
-            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)));
+            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)), place);
+    }
+    // Where a character was last seen (location sharing): the map and how long ago, or "" without a place.
+    private string PlaceLine(Place? place) => place is { Map: > 0 } p && Readiness.Parse(p.At) is { } at ? $"{Places.MapName(p.Map, maps)} · {Age(at)}" : "";
+    // The card's character's place, ticking with the clock: what your rooms see of it.
+    private void RenderPlace()
+    {
+        var place = api is not null && CurrentCharacter is { Location: { } shared } ? shared : null;
+        var line = PlaceLine(place);
+        PlaceText.Text = line; PlaceLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var how = place is null ? "" : Places.SourceName(place.Source);
+        PlaceLabel.ToolTip = line.Length == 0 ? null : how.Length > 0 ? T("Last place the game reported · {0}", how) : T("Last place the game reported");
     }
     // The Odyle clock under the split: from the reading on screen, or the saved character's last
     // one (an estimate then), with the operators' rules. Ticked every second with the age.
@@ -677,11 +701,12 @@ public partial class MainWindow : Window
     private void RenderClock()
     {
         var character = CurrentCharacter;
-        AgeLabel.Text = capture is not null && latest is not null ? T("updated {0}", Age(latestAt))
-            : character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
+        // A live reading needs no age; a saved value says how old it is.
+        AgeLabel.Text = (capture is null || latest is null) && character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
+        AgeLabel.Visibility = AgeLabel.Text.Length > 0 && (api is not null || Offline) ? Visibility.Visible : Visibility.Collapsed;
         if (capture is { } running)
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
-        RenderOdyleClock();
+        RenderOdyleClock(); RenderPlace();
     }
     private void ShareHint_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/");
 
@@ -813,7 +838,7 @@ public partial class MainWindow : Window
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
         await ReloadAsync();
-        Status(T("Connected to your account."));
+        Status("");
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start(); StartRealtime();
         await FollowReaderPauseAsync();
@@ -898,7 +923,7 @@ public partial class MainWindow : Window
     private async Task ReloadAsync()
     {
         if (api is null) return;
-        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
+        characters = await api.GetCharactersAsync(); var listed = await api.GetRoomsAsync(); rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; maps = listed.Maps ?? []; await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         // Until the game names a character, show the one read most recently.
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
@@ -977,7 +1002,7 @@ public partial class MainWindow : Window
         var listed = await current.GetRoomsAsync();
         var fetched = await Task.WhenAll(listed.Rooms.Select(r => FetchSnapshotAsync(current, r.Id)));
         if (api != current) return;
-        rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock;
+        rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; maps = listed.Maps ?? [];
         snapshots = PartySnapshots.Merge(rooms, snapshots, fetched); if (PartySnapshots.ClockOffset(fetched) is { } offset) serverOffset = offset;
         await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
@@ -1326,7 +1351,7 @@ public partial class MainWindow : Window
         CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", HeroTitle.Text, StateText.Text);
         var (mates, more) = connected ? CompactStrip.Mates(snapshots, accountId, now, odylePerCube) : ([], 0);
         CompactMates.ItemsSource = mates.Select(m => new CompactMate(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "Amber"),
-            m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player))).ToArray();
+            (m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player)) + (PlaceLine(m.Location) is { Length: > 0 } place ? " · " + place : ""))).ToArray();
         CompactNote.Text = !connected ? T("Open settings to pair with the dashboard.")
             : readerPaused ? T("Paused by the server")
             : more > 0 ? T("+{0} more online", more)
@@ -1689,7 +1714,6 @@ public partial class MainWindow : Window
         capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
         RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
         SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
-        Status(T("Reader running · log into your character to read its Odyle."));
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
@@ -1707,7 +1731,7 @@ public partial class MainWindow : Window
         // After a resync the lost bytes may have held a switch, so the next reading waits the same way.
         if ((observation.Source == CandidateSource.Snapshot || identityDue) && !duplicate) { identityDue = false; readingOwnerKey = ""; nameDue = true; odyleMissingDue = false; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
         else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
-        if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle from the game · saving…", observation.Total));
+        if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Saving…"));
         RenderHero();
         if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
     }
@@ -1723,7 +1747,7 @@ public partial class MainWindow : Window
         if (latest is null && gameCharacterKey.Length > 0 && gameCharacterKey != UnknownOwner && DateTimeOffset.UtcNow - namedAt < TimeSpan.FromSeconds(10))
         {
             odyleMissingDue = false; odyleMissingKey = gameCharacterKey;
-            SetReaderState(ReaderState.Listening, T("Listening to AION2 · {0} has no Odyle yet.", gameCharacterName));
+            SetReaderState(ReaderState.Listening, T("Listening to AION2"));
             _ = MarkNoOdyleAsync(); RenderHero(); return;
         }
         odyleMissingDue = true;
@@ -1785,18 +1809,18 @@ public partial class MainWindow : Window
         {
             // Without any identity this run (a start after login) the game names the character when it
             // repeats its identity every few minutes, or at once at a relog or channel change; after a
-            // snapshot it names it by itself once the loading screen ends.
-            SetReaderState(ReaderState.Listening, gameCharacterKey.Length == 0 && !nameDue ? T("Read {0:N0} Odyle · the game names your character within a few minutes, or at once after a relog or channel change.", reading.Total) : T("Read {0:N0} Odyle · waiting for the game to name the character.", reading.Total)); RenderHero(); return;
+            // snapshot it names it by itself once the loading screen ends. The card's caption says which.
+            SetReaderState(ReaderState.Listening, T("Listening to AION2")); RenderHero(); return;
         }
         if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
         {
-            SetReaderState(ReaderState.Listening, T("Read {0:N0} Odyle · this character's server is not supported, so it is not saved.", reading.Total)); RenderHero(); return;
+            SetReaderState(ReaderState.Listening, T("This character's server is not supported, so it is not saved.")); RenderHero(); return;
         }
         if (DateTimeOffset.UtcNow < publishBlockedUntil) return;
         // A fresh snapshot of the value already saved (reconnect, channel change) is live again.
         if (publishedTotal == reading.Total && activeCharacterId == character.Id)
         {
-            if (readerState == ReaderState.Listening) SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
+            if (readerState == ReaderState.Listening) SetReaderState(ReaderState.Live, T("Live"));
             return;
         }
         try
@@ -1810,7 +1834,7 @@ public partial class MainWindow : Window
             if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
             activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; adapterOutdated = false;
             UpdateCharacterInList(saved);
-            SetReaderState(ReaderState.Live, T("Live · {0:N0} Odyle saved to your account.", reading.Total));
+            SetReaderState(ReaderState.Live, T("Live"));
             OfferAutostart();
         }
         // The server's operators paused packet readers: the capture stops below until they resume them.
@@ -1892,7 +1916,7 @@ public partial class MainWindow : Window
             if (odyleMissingDue)
             {
                 odyleMissingDue = false;
-                if (latest is null) { odyleMissingKey = key; SetReaderState(ReaderState.Listening, T("Listening to AION2 · {0} has no Odyle yet.", identity.CharacterName)); }
+                if (latest is null) { odyleMissingKey = key; SetReaderState(ReaderState.Listening, T("Listening to AION2")); }
             }
             // Offline the character is followed as online, so a reading never moves to another one; only
             // saving it and sending its reading wait for the server (after the next connection or heartbeat).
@@ -1914,7 +1938,7 @@ public partial class MainWindow : Window
                 }
                 var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.RegionFor(naWest == true)!);
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
-                Status(T("{0} · {1} saved to your account.", identity.CharacterName, identity.Server));
+                Log.Info($"{identity.CharacterName} · {identity.Server} is saved to the account."); Status("");
             }
             if (odyleMissingKey == key) _ = MarkNoOdyleAsync();
             // A world load still waiting for its owner is where the character just named arrived.
@@ -1960,6 +1984,16 @@ public partial class MainWindow : Window
         Log.Info(now ? "This account shares its location with its rooms." : "This account does not share its location.");
         if (now && locations.Current is { } current) _ = SendLocationAsync(current);
     }
+    // A place the server stored shows on the card at once, also without realtime; the server's news of
+    // the character brings the same place.
+    private void ShowOwnPlace(LocationReport report)
+    {
+        var index = Array.FindIndex(characters, c => c.Id == report.CharacterId);
+        if (index < 0) return;
+        var at = (DateTimeOffset.UtcNow + serverOffset).ToString("yyyy-MM-dd HH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
+        characters[index] = characters[index] with { Location = new Place(report.Map, report.X, report.Y, report.Z, report.Heading, report.Source, at) };
+        RenderPlace();
+    }
     private void OnLocation(PacketCapture source, GameLocation location)
     {
         if (capture != source || twoClients) return;
@@ -1973,6 +2007,7 @@ public partial class MainWindow : Window
         try
         {
             if (!await current.LocationAsync(sessionId, report)) { shareLocation = false; locationQueued = null; Log.Info("The server says this account does not share its location; nothing is sent until it does."); }
+            else ShowOwnPlace(report);
             locationFailing = false;
         }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.LocationAdapterRefused)
@@ -2013,7 +2048,6 @@ public partial class MainWindow : Window
         latest = new PacketCandidate(handed.Total, handed.ParserVersion, handed.Source); latestAt = DateTimeOffset.UtcNow;
         Log.Info($"Took over {handed.CharacterName} ({handed.Total} Odyle) from before the restart.");
         await PublishCoreAsync();
-        if (activeCharacterId == character.Id) Status(T("Reader running · {0} stays live after the restart.", character.CharacterName));
         RenderHero();
     }
 
@@ -2090,7 +2124,6 @@ public partial class MainWindow : Window
                 Notify(T("Odyle {0} is ready", staged.Version), T("Restart Odyle to update, or it installs at the next start."));
                 PreferencesStore.Save(preferences = preferences with { NotifiedUpdate = staged.Version.ToString() });
             }
-            Status(T("Odyle {0} is ready · restart to update, or it installs at the next start.", staged.Version));
         }
         // An answer that is not GitHub's release data (a proxy's page, say) is a failed check too (ReleaseFeed.Parse).
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
@@ -2129,7 +2162,7 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(T("Reconnected to your account.")); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation);
+        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
@@ -2156,7 +2189,7 @@ public partial class MainWindow : Window
             var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
             NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation);
-            if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(T("Connected to your account.")); }
+            if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(""); }
             if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
         // With a device key the request already signed in again; still 401 means the pairing
@@ -2176,7 +2209,7 @@ public partial class MainWindow : Window
         // The pause is the server's: without a connection there is none.
         DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
-        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
+        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
         Status(message); RenderHero();
     }

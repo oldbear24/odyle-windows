@@ -2,6 +2,14 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.29.0 · 2026-10-27
+
+### New
+- **See where you and your party are**: while you share your location (turned on on the dashboard), the card shows where your character was last seen, like *Altgard · 4m ago* beside a map pin, the place your rooms see. Mates who share theirs show it in the party list instead of their server, and in the tooltip of their row in compact mode.
+
+### Changed
+- **Less text on the card**: the reader line says just **Live** while it reads, the age shows only for a saved value, *live updates* is no longer written above the party (only *refreshed every 15 s* when live updates do not work), and the bottom line stays empty unless something needs your attention, such as a problem or an unavailable server.
+
 ## 0.28.0 · 2026-10-24
 
 ### New

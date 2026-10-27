@@ -139,7 +139,7 @@ static class ReaderChecks
                 Call(window, "OnSnapshotWithoutOdyle", inert);
                 Check(Field("latest").GetValue(window) is null, "an unnamed reading is dropped by a snapshot without Odyle");
                 await (Task)Call(window, "SaveDetectedCharacterAsync", inert, new GameIdentity(50, "Newcomer", 2304, "Lumiel", "GLOBAL_EU"))!;
-                Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2 · Newcomer has no Odyle yet.", "a named character without Odyle says so");
+                Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2", "a named character without Odyle says so, once");
                 // Its first Odyle replaces the note. A server that refuses this build's adapter makes the card ask for an
                 // update instead of repeating the server's message, and the update check runs at once.
                 Call(window, "OnCandidate", inert, new PacketCandidate(15, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
@@ -153,6 +153,8 @@ static class ReaderChecks
                 Field("staged").SetValue(window, null);
                 server.Refusal = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); await (Task)Call(window, "PublishLatestAsync")!;
                 Check(server.Reports == 2 && !(bool)Field("adapterOutdated").GetValue(window)! && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
+                // A live reading says no more than that: the value is on the card, so neither the reader line nor an age repeats it.
+                Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Live" && Control<TextBlock>(window, "AgeLabel").Visibility == Visibility.Collapsed, "a live reading has a short reader line and no age: " + Control<TextBlock>(window, "PacketStateLabel").Text);
                 // The first live reading offers to start with Windows (answered below, with Start with Windows).
                 Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Visible, "the first live reading offers to start with Windows");
                 // The reading carries the game's two numbers and what changed since the one saved before it.
@@ -546,6 +548,21 @@ static class ReaderChecks
                 Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Visible, "a character no room sees says so");
                 Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true, ["c1"]) }); Call(window, "RenderHero");
                 Check(Control<Button>(window, "ShareHintButton").Visibility == Visibility.Collapsed, "a shared character does not");
+                // Location sharing: the card's character and your mates show where they were last seen, by the map's
+                // name (its id until superusers name it) and how long ago; without a place nothing changes.
+                Check(Control<TextBlock>(window, "PlaceLabel").Visibility == Visibility.Collapsed, "no place, no line");
+                string Placed() => ((System.Windows.Documents.Run)window.FindName("PlaceText")).Text;
+                Field("maps").SetValue(window, new[] { new GameMap(1110, "Altgard") });
+                Field("characters").SetValue(window, new[] { Member("c1", "u", "Ayla", 130) with { Location = new Place(1110, 1, 2, 3, 90, "load", Stamp(DateTimeOffset.UtcNow.AddSeconds(-250))) } }); Call(window, "RenderHero");
+                Check(Control<TextBlock>(window, "PlaceLabel").Visibility == Visibility.Visible && Placed() == "Altgard · 4m ago" && Control<TextBlock>(window, "PlaceLabel").ToolTip as string == "Last place the game reported · loading screen", "the card shows where its character was last seen: " + Placed());
+                Call(window, "ShowOwnPlace", new LocationReport("c1", 2220, 4, 5, 6, null, GameLocation.Arrival));
+                Check(System.Text.RegularExpressions.Regex.IsMatch(Placed(), @"^Map 2220 · \ds ago$") && Control<TextBlock>(window, "PlaceLabel").ToolTip as string == "Last place the game reported · arrived", "a place the server stored shows at once, an unnamed map by its id: " + Placed());
+                Field("snapshots").SetValue(window, new[] { new RoomSnapshot(new Room("r1", "Evening", 40, "owner", true), [new RoomMember("m2", "k", "reporter", "Kaelen", [Member("c2", "k", "Kael", 85) with { Level = 45, ClassName = "Chanter", Location = new Place(1110, 1, 2, 3, null, "flight", Stamp(DateTimeOffset.UtcNow.AddSeconds(-70))) }], true)], DateTime.UtcNow.ToString("O")) });
+                Call(window, "RenderParty");
+                Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource) is [{ Mates: [{ Detail: "Chanter · Lv 45", PlaceGap: " · ", Pin: "\uE707 ", Place: "Altgard · 1m ago", Hint: "Chanter · Lv 45 · Kaelen · live from the game" }] }], "a mate's place takes the server's: " + ((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource)[0].Mates[0]);
+                // Live updates go unmentioned; a party fetched every 15 seconds says so.
+                Check(Control<TextBlock>(window, "PartyModeLabel") is { Visibility: Visibility.Visible, Text: "refreshed every 15 s" }, "a party without live updates says it is refreshed every 15 seconds");
+                Field("maps").SetValue(window, Array.Empty<GameMap>());
                 await PartyRefreshChecks(window);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>());
                 Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Field("api").SetValue(window, null);
@@ -558,6 +575,7 @@ static class ReaderChecks
                     Field("api").SetValue(window, api);
                     await (Task)Call(window, "ConnectAsync", auth)!;
                     Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
+                    Check(Control<TextBlock>(window, "StatusLabel").Text == "", "once connected the footer says nothing: " + Control<TextBlock>(window, "StatusLabel").Text);
                     Check(Control<Button>(window, "ReportButton").Content as string == "Start", "a paired account can start the reader");
                     var capture = new PacketCapture(); Field("capture").SetValue(window, capture);
                     var detected = new GameIdentity(42, "DetectedHero", 2304, "Lumiel", "GLOBAL_EU");
@@ -818,7 +836,6 @@ static class ReaderChecks
     {
         Directory.CreateDirectory(directory);
         var settings = Settings(window);
-        Control<TextBlock>(window, "StatusLabel").Text = "Pair the app in settings to start.";
         // Previews show a released build, which keeps itself current.
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · installs new releases at every start and looks for them once a day.";
         ((Button)settings.FindName("CheckUpdateButton")).Visibility = Visibility.Visible;
@@ -841,10 +858,9 @@ static class ReaderChecks
         Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
-        Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
+        Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live");
         Call(window, "RenderHero"); Call(window, "RenderParty");
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
-        Control<TextBlock>(window, "StatusLabel").Text = "TestHero · Lumiel saved to your account.";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
         // The account's characters on the card (W#17), opened.
         Field("altsOpened").SetValue(window, true); Call(window, "RenderHero");
@@ -858,7 +874,7 @@ static class ReaderChecks
             var bitmap = icon.GetType().GetMethod("ToBitmap")!.Invoke(icon, null)!;
             bitmap.GetType().GetMethod("Save", [typeof(string)])!.Invoke(bitmap, [Path.Combine(directory, $"tray-{name.ToLowerInvariant()}.png")]);
         }
-        Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live · 390 Odyle saved to your account.");
+        Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live");
         FadePreview(window, directory);
         // The same moment in compact mode.
         Call(window, "SetCompact", true, false);

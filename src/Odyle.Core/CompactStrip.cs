@@ -10,8 +10,8 @@ public static class CompactStrip
     public const int MateLimit = 10;
 
     // An other member's character as the compact window lists it: its Odyle, the cubes it
-    // can open in its room, whether it is live (else stale) and whose it is.
-    public sealed record Mate(string Name, int Value, int Cubes, bool Live, string Player);
+    // can open in its room, whether it is live (else stale), whose it is and where it was last seen.
+    public sealed record Mate(string Name, int Value, int Cubes, bool Live, string Player, Place? Location = null);
 
     // Other members' characters shared in your rooms that are live or recently stale, each once
     // however many rooms show it: live ones first, then the most Odyle. Like the card's party
@@ -27,7 +27,7 @@ public static class CompactStrip
                 {
                     var state = Readiness.Of(c, now);
                     if (state is Presence.Live or Presence.Stale && seen.Add(c.Id.Length > 0 ? c.Id : member.User + "|" + c.CharacterName))
-                        found.Add(new(c.CharacterName, c.Value, c.Value / cost, state == Presence.Live, member.DisplayName));
+                        found.Add(new(c.CharacterName, c.Value, c.Value / cost, state == Presence.Live, member.DisplayName, c.Location));
                 }
         }
         var ordered = found.OrderByDescending(m => m.Live).ThenByDescending(m => m.Value).ToArray();

@@ -56,6 +56,26 @@ public sealed record GameLocation(int? Map, float X, float Y, float Z, float? He
 }
 // A position to send (POST /api/odyle/location), for the saved character the game named.
 public sealed record LocationReport(string CharacterId, int Map, float X, float Y, float Z, float? Heading, string Source);
+// A character's latest place as the server keeps it (characters.location), null while its player does
+// not share their location: the map, the position, how the game reported it (GameLocation's sources)
+// and when (a PocketBase date).
+public sealed record Place(int Map, double X, double Y, double Z, double? Heading = null, string Source = "", string At = "");
+// The game names maps by id only; the server's superusers name them (the dashboard's Game settings → Maps).
+public sealed record GameMap(int Id, string Name = "", string Thgl = "");
+public static class Places
+{
+    // The map's name, or "Map 1110" until it is named, as the dashboard shows it.
+    public static string MapName(int map, IEnumerable<GameMap>? maps) => maps?.FirstOrDefault(m => m.Id == map) is { Name.Length: > 0 } named ? named.Name : Localizer.T("Map {0}", map);
+    // How the game reported a place, in the dashboard's words; "" for a source it does not know.
+    public static string SourceName(string source) => source switch
+    {
+        GameLocation.Load => Localizer.T("loading screen"),
+        GameLocation.Arrival => Localizer.T("arrived"),
+        GameLocation.Flight => Localizer.T("in flight"),
+        GameLocation.Effect => Localizer.T("skill or effect"),
+        _ => "",
+    };
+}
 // Like a reading, a position belongs to the character the game names. A world load waits for the
 // name the game sends after the loading screen (6 to 10 seconds), so a switch never gives the next
 // character's position to the one before; one still unnamed after 30 seconds is dropped. Between

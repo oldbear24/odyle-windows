@@ -82,6 +82,8 @@
       <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
       <!-- Readings above the cap the account's membership answer settled -->
       <TextBlock x:Name="CapMismatchLabel" FontSize="10" Foreground="{StaticResource Amber}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+      <!-- Where the character was last seen, while you share your location with your rooms (on the dashboard) -->
+      <TextBlock x:Name="PlaceLabel" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"><Run Text="&#xE707; " FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run x:Name="PlaceText"/></TextBlock>
       <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
       <!-- The account's characters (W#17): on demand, and by itself while the game switches characters -->
       <Button x:Name="AltToggle" Style="{StaticResource Ghost}" Click="AltToggle_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="-4,3,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Muted}"/>
@@ -135,8 +137,8 @@
 
     <!-- Party: other members' characters that are online in your rooms, one header per room -->
     <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">
-     <!-- Whether the party follows the server's live news or is fetched every 15 seconds -->
-     <TextBlock x:Name="PartyModeLabel" HorizontalAlignment="Right" FontSize="9.5" Margin="0,2,2,-4"/>
+     <!-- Only while the party does not follow the server's live news: it is fetched every 15 seconds -->
+     <TextBlock x:Name="PartyModeLabel" HorizontalAlignment="Right" FontSize="9.5" Foreground="{StaticResource Faint}" Margin="0,2,2,-4" Visibility="Collapsed"/>
      <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
       <ItemsControl x:Name="PartyList" Focusable="False">
        <ItemsControl.ItemTemplate><DataTemplate>
@@ -146,14 +148,14 @@
          <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
           <ItemsControl.ItemTemplate><DataTemplate>
            <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">
-            <!-- Two lines: the name and its Odyle, then class, level or staleness and the cubes -->
+            <!-- Two lines: the name and its Odyle, then class, level or staleness, where it was last seen, and the cubes -->
             <Grid>
              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
              <Ellipse Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
              <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
              <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
-             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"/>
+             <TextBlock Grid.Row="1" Grid.Column="1" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"><Run Text="{Binding Detail, Mode=OneWay}"/><Run Text="{Binding PlaceGap, Mode=OneWay}"/><Run Text="{Binding Pin, Mode=OneWay}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run Text="{Binding Place, Mode=OneWay}"/></TextBlock>
              <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="8,0,0,0"/>
             </Grid>
            </Border>
@@ -167,9 +169,9 @@
     </StackPanel>
    </StackPanel>
 
-   <!-- Footer -->
+   <!-- Footer: only what needs attention (a problem, an unavailable server, a pairing under way), the update and Quit -->
    <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,4,6,4">
-    <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" AutomationProperties.LiveSetting="Polite" Text="Your connection is remembered on this PC." Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
+    <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
    </Border>
   </Grid>
 
