@@ -20,16 +20,18 @@ public sealed record Announcement(string Text, string Level = "info")
 // ReaderPaused: the server's operators paused every packet reader (Server controls); the rooms,
 // session and heartbeat answers carry it. Backends from before the switch leave it out (null),
 // as they leave out Clock, the Odyle clock's rules (OdyleClock.cs).
-public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null);
+// Maps are the game's maps as the server's superusers named them (location sharing); null from backends before it.
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null, GameMap[]? Maps = null);
 public sealed record NotificationsResponse(NotificationSettings Notifications);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null, int? AnsweredCap = null, int Level = 0, string? ClassName = null,
-    string? Portrait = null, string? OfficialId = null, string? OfficialRegion = null, int? OfficialServerId = null)
+    string? Portrait = null, string? OfficialId = null, string? OfficialRegion = null, int? OfficialServerId = null, Place? Location = null)
 {
     // Portrait: the game's portrait the server keeps (a public file); OfficialId, OfficialRegion and
     // OfficialServerId: its PLAYNC profile once the daily lookup found it. The Discord status shows both.
+    // Location: where the character was last seen, while its player shares their location (Places).
     public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA-E", "NAW" => "NA-W", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
-    public string Location => $"{Server} · {RegionLabel}";
+    public string ServerLine => $"{Server} · {RegionLabel}";
     // Class and level as PLAYNC's official search lists them (the dashboard's daily lookup, #25):
     // "Chanter · Lv 45", either alone, or "" until the character was found. Never typed in (R1).
     public string ClassLine => string.Join(" · ", new[] { ClassName ?? "", Level > 0 ? Localizer.T("Lv {0}", Level) : "" }.Where(part => part.Length > 0));

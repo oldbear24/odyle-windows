@@ -77,7 +77,7 @@ public static class DiscordPresence
         var icon = home + "/icon-512.png";
         var portrait = character.Portrait is { Length: > 0 } file ? $"{home}/api/files/characters/{Uri.EscapeDataString(character.Id)}/{Uri.EscapeDataString(file)}" : null;
         if (portrait is { Length: > MaxImage }) portrait = null;
-        var about = character.ClassLine.Length > 0 ? $"{character.CharacterName} · {character.ClassLine} · {character.Server}" : $"{character.CharacterName} · {character.Location}";
+        var about = character.ClassLine.Length > 0 ? $"{character.CharacterName} · {character.ClassLine} · {character.Server}" : $"{character.CharacterName} · {character.ServerLine}";
         return activity with
         {
             LargeImage = portrait ?? icon, LargeText = Fit(about),

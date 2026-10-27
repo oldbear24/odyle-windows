@@ -110,6 +110,16 @@ static class LocationChecks
         Check(JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x","readerPaused":false,"shareLocation":true}""", options)!.ShareLocation == true
             && JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x","readerPaused":false}""", options)!.ShareLocation is null
             && JsonSerializer.Deserialize<PublisherSession>("""{"sessionId":"s","sequence":0,"readerPaused":false,"shareLocation":false}""", options)!.ShareLocation == false, "heartbeat and session answers carry shareLocation, absent on older backends");
+        // The latest place rides on the character (null while its player does not share), the named maps on
+        // the rooms answer; older backends send neither. A map nobody named yet shows by its id.
+        const string character = """{"id":"c","user":"u","characterName":"Ayla","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
+        var placed = JsonSerializer.Deserialize<Character>(character[..^1] + ""","location":{"map":1110,"x":-83475.7,"y":-33883.7,"z":19698,"heading":null,"source":"flight","at":"2026-10-24 19:00:00.000Z"}}""", options)!;
+        Check(placed.Location is { Map: 1110, X: -83475.7, Y: -33883.7, Z: 19698, Heading: null, Source: "flight", At: "2026-10-24 19:00:00.000Z" }
+            && JsonSerializer.Deserialize<Character>(character[..^1] + ""","location":null}""", options)!.Location is null && JsonSerializer.Deserialize<Character>(character, options)!.Location is null, "a character carries its latest place, or none");
+        var listed = JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[],"maps":[{"id":1110,"name":"Altgard","thgl":"Altgard"},{"id":1220,"name":"","thgl":""}]}""", options)!;
+        Check(listed.Maps is [{ Id: 1110, Name: "Altgard" }, _] && JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.Maps is null, "the rooms answer carries the named maps, absent on older backends");
+        Check(Places.MapName(1110, listed.Maps) == "Altgard" && Places.MapName(1220, listed.Maps) == "Map 1220" && Places.MapName(3330, null) == "Map 3330"
+            && Places.SourceName(GameLocation.Load) == "loading screen" && Places.SourceName(GameLocation.Effect) == "skill or effect" && Places.SourceName("teleport") == "", "map names and how a place was reported");
         var requests = new List<(string Route, string Body)>(); var shared = true; var status = HttpStatusCode.OK; var message = "";
         using var api = new PartyApi("https://party.example", "token", null, new Stub(async request =>
         {
