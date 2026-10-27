@@ -1,9 +1,10 @@
 name: Windows checks
-# Pushes to main run the same checks in the release workflow.
+# Pull requests only: a push to a branch with a pull request would run everything twice.
+# Every change reaches main through a pull request, and pushes to main run the same checks
+# in the release workflow; a branch without a pull request can be checked by hand.
 on:
-  push:
-    branches-ignore: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
