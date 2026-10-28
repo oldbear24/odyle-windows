@@ -207,7 +207,7 @@ public partial class MainWindow : Window
         menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAskedAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
-        settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("#/"); settings.LogoutButton.Click += Logout_Click;
+        settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
@@ -221,7 +221,7 @@ public partial class MainWindow : Window
         settings.FollowGameToggle.Click += (_, _) => PreferencesStore.Save(preferences = preferences with { FollowGame = settings.FollowGameToggle.IsChecked == true });
         settings.DiscordToggle.Click += (_, _) => SetDiscordStatus(settings.DiscordToggle.IsChecked == true, persist: true); discord.Changed += () => Dispatcher.BeginInvoke(RenderDiscordNote);
         gameFocusTimer.Tick += (_, _) => RenderFade(); MouseEnter += (_, _) => RenderFade(); MouseLeave += (_, _) => RenderFade();
-        settings.NotificationsButton.Click += (_, _) => OpenDashboard("#/account");
+        settings.NotificationsButton.Click += (_, _) => OpenDashboard("/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
         restoreTimer.Tick += async (_, _) =>
@@ -708,7 +708,7 @@ public partial class MainWindow : Window
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
         RenderOdyleClock(); RenderPlace();
     }
-    private void ShareHint_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/");
+    private void ShareHint_Click(object sender, RoutedEventArgs e) => OpenDashboard("/");
 
     // ----- Operations -----
     private void SetBusy(bool value)
@@ -806,7 +806,7 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next; naWest = null; discordApp = null; discordMissing = false; discordAskedAt = DateTimeOffset.MinValue; next.AppVersion = Updater.Current.ToString();
+        api = next; naWest = null; discordApp = null; discordMissing = false; discordAskedAt = DateTimeOffset.MinValue; dashboardPaths = null; pathsAskedAt = DateTimeOffset.MinValue; next.AppVersion = Updater.Current.ToString();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
@@ -836,7 +836,7 @@ public partial class MainWindow : Window
         NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
-        settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true);
+        settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true); UsesPaths();
         await ReloadAsync();
         Status("");
         lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
@@ -906,6 +906,7 @@ public partial class MainWindow : Window
         if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
         // Versions the operators hold back (#19): a downloaded one is dropped, and this build moves off one it runs.
         if (news.HeldBack is { } held) await HeldBackAsync(held);
+        if (news.UpdateNow is { } asked) await UpdateNowAsync(asked);
         if (!news.Refresh && news.Characters.Length > 0)
         {
             var mine = PartyNews.WithCharacters(characters, news.Characters, out var complete);
@@ -928,11 +929,31 @@ public partial class MainWindow : Window
         if (CurrentCharacter is null) currentCharacterId = characters.OrderByDescending(c => c.LastReadingAt, StringComparer.Ordinal).FirstOrDefault()?.Id ?? "";
         RenderRooms(); RenderHero();
     }
-    // The backend also serves the dashboard; "#/" opens My rooms & characters.
+    // The backend also serves the dashboard; "/" opens My rooms & characters. A page opens at its own
+    // path once the server said it serves them (DashboardPages), else in the #/ form every server opens.
     private void OpenDashboard(string page)
     {
-        try { Process.Start(new ProcessStartInfo(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text) + "/" + page) { UseShellExecute = true }); }
+        try { Process.Start(new ProcessStartInfo(DashboardPages.Url(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text), page, UsesPaths())) { UseShellExecute = true }); }
         catch (Exception error) { Status(T(error.Message)); }
+    }
+    // Whether the server serves the dashboard's pages at their own paths: asked once per connection
+    // (again after ten minutes when that failed); until it answers, links keep the #/ form.
+    private bool? dashboardPaths;
+    private DateTimeOffset pathsAskedAt = DateTimeOffset.MinValue;
+    private bool UsesPaths()
+    {
+        if (dashboardPaths is null && api is { } current && DateTimeOffset.UtcNow - pathsAskedAt > TimeSpan.FromMinutes(10)) { pathsAskedAt = DateTimeOffset.UtcNow; _ = AskPathsAsync(current); }
+        return dashboardPaths == true;
+    }
+    private async Task AskPathsAsync(PartyApi current)
+    {
+        try
+        {
+            var paths = await current.ServesPathsAsync();
+            if (api != current) return;
+            dashboardPaths = paths; Log.Info(paths ? "The server serves the dashboard's pages at their own paths." : "The server's dashboard takes #/ links only.");
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Log.Warn("Whether the server serves the dashboard's paths could not be read: " + error.Message); }
     }
     private async void Pair_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(PairAsync);
     private async void PasteConnect_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
@@ -1181,7 +1202,7 @@ public partial class MainWindow : Window
         var reading = latest;
         if (reading is not null && !(readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey)) return null;
         if (reading is null && !character.Confirmed) return null;
-        return DiscordPresence.Dress(DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince), api.Endpoint, character);
+        return DiscordPresence.Dress(DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince), api.Endpoint, character, UsesPaths());
     }
     private void RenderDiscordNote()
     {
@@ -1403,7 +1424,7 @@ public partial class MainWindow : Window
         RenderTasks(); if (on) _ = RefreshTasksAsync();
     }
     private void Tasks_Click(object sender, RoutedEventArgs e) => SetTasksShown(TasksPanel.Visibility != Visibility.Visible, persist: true);
-    private void ManageTasks_Click(object sender, RoutedEventArgs e) => OpenDashboard("#/tasks");
+    private void ManageTasks_Click(object sender, RoutedEventArgs e) => OpenDashboard("/tasks");
     // Growing (the checklist opened, a longer party list) must not push the window off its screen.
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -1414,6 +1435,27 @@ public partial class MainWindow : Window
         if (left != Left) Left = left;
         if (top != Top) Top = top;
     }
+    // The window sizes itself to its content. Now and then it came up with a dark strip on the right
+    // and its bottom cut off: a frame drawn before its size settled, or a size that missed a change of
+    // the content while it was hidden or minimized. Each time it shows, once drawn, its size is checked
+    // against the content (and fitted again when they differ) and the whole window is drawn again.
+    protected override void OnContentRendered(EventArgs e) { base.OnContentRendered(e); FitWindow(); }
+    private void Window_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e) { if (IsVisible) Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, FitWindow); }
+    private void Window_StateChanged(object? sender, EventArgs e) { if (WindowState == WindowState.Normal) Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, FitWindow); }
+    private void FitWindow()
+    {
+        if (!IsVisible || WindowState != WindowState.Normal || Content is not FrameworkElement content || PresentationSource.FromVisual(this) is not HwndSource { CompositionTarget: { } target } source || !GetClientRect(source.Handle, out var client)) return;
+        var shown = target.TransformFromDevice.Transform(new Point(client.Right - client.Left, client.Bottom - client.Top)); var wanted = content.DesiredSize;
+        if (Math.Abs(shown.X - wanted.Width) > 2 || Math.Abs(shown.Y - wanted.Height) > 2)
+        {
+            Log.Warn($"The window showed {shown.X:0}×{shown.Y:0} for content of {wanted.Width:0}×{wanted.Height:0}; fitting it again.");
+            SizeToContent = SizeToContent.Manual; SizeToContent = SizeToContent.WidthAndHeight;
+        }
+        InvalidateRect(source.Handle, IntPtr.Zero, false);
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct ClientRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr window, out ClientRect rect);
+    [DllImport("user32.dll")] private static extern bool InvalidateRect(IntPtr window, IntPtr rect, bool erase);
     // The window opens where it was last, while that is still on a connected screen;
     // otherwise centred as on a first start. Screens are converted with the system DPI,
     // which is what this system-aware app's coordinates use.
@@ -2092,6 +2134,19 @@ public partial class MainWindow : Window
         try { if (staged is null && updateSchedule.Due(DateTimeOffset.UtcNow)) { Updater.CleanUp(); await CheckForUpdatesAsync(manual: false); } }
         finally { if (!quitting) { updateTimer.Interval = updateSchedule.Next; updateTimer.Start(); } }
     }
+    // "Update all apps now" on the dashboard's admin pages: a build older than the latest release
+    // installs it at once and restarts, handing its live character over (QuitAsync). The release is
+    // checked and verified like any update, so a held-back version is never installed.
+    private bool updateNow;
+    private async Task UpdateNowAsync(UpdateRequest asked)
+    {
+        if (!Updater.IsReleaseBuild || quitting) return;
+        if (!asked.Needed(Updater.Current)) { Log.Info($"The server's operators asked every app to update; Odyle {Updater.Current} is up to date."); return; }
+        Log.Info($"The server's operators asked every app to update{(asked.Version is { } latest ? $" to {latest}" : "")}; updating now.");
+        updateNow = true;
+        if (staged is not null) await InstallUpdateAsync(automatic: true);
+        else await CheckForUpdatesAsync(manual: false);
+    }
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (updating || staged is not null || !Updater.IsReleaseBuild) return;
@@ -2105,7 +2160,7 @@ public partial class MainWindow : Window
             install = updateSchedule.AtStart && !manual; updateSchedule.Reached(DateTimeOffset.UtcNow, upToDate: release is null);
             // Moving off a held-back version is installed at once: the next start would not install an older package.
             if (release is not null && release.Version < Updater.Current) { install = true; Log.Info($"Odyle {Updater.Current} is held back; going back to {release.Version}."); }
-            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); return; }
+            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); updateNow = false; return; }
             // A package an earlier start downloaded but could not install is not fetched again.
             // (Not when going back: a staged package is always newer than this build.)
             if (release.Version > Updater.Current && Updater.Staged() is { } ready && ready.Version >= release.Version && !heldBack.Contains(ready.Version)) staged = ready;
@@ -2117,7 +2172,7 @@ public partial class MainWindow : Window
                 staged = await Updater.DownloadAsync(release, progress, CancellationToken.None);
             }
             updateNote = ""; Log.Info($"Odyle {staged.Version} is downloaded, verified and waiting in {staged.Directory}.");
-            if (install) return;
+            if (install || updateNow) return;
             // Once per version, also from the tray.
             if (preferences.NotifiedUpdate != staged.Version.ToString())
             {
@@ -2132,7 +2187,9 @@ public partial class MainWindow : Window
             updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
         }
         finally { updating = false; RenderUpdate(); }
-        if (install && staged is not null) await InstallUpdateAsync(automatic: true);
+        // A request to update now that came while this check ran is honoured here too.
+        if ((install || updateNow) && staged is not null) await InstallUpdateAsync(automatic: true);
+        else updateNow = false;
     }
     private async void Install_Click(object sender, RoutedEventArgs e) => await InstallUpdateAsync(automatic: false);
     // The files are swapped while this build still runs; only then does it stop and
@@ -2141,7 +2198,7 @@ public partial class MainWindow : Window
     private async Task InstallUpdateAsync(bool automatic)
     {
         if (staged is not { } update || quitting || (busy && !automatic)) return;
-        Log.Info($"Installing Odyle {update.Version}{(automatic ? " found at start" : "")} and restarting.");
+        Log.Info($"Installing Odyle {update.Version}{(updateNow ? " as the server's operators asked" : automatic ? " found at start" : "")} and restarting.");
         try { Updater.Apply(update); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         {

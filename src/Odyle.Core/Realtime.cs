@@ -17,6 +17,8 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
     public Version? Release { get; init; }
     // The Windows versions held back, when the server's operators changed them (#19); null otherwise.
     public Version[]? HeldBack { get; init; }
+    // The server's operators asked every app to update now (the dashboard's admin pages); null otherwise.
+    public UpdateRequest? UpdateNow { get; init; }
     public bool AnnouncementChanged { get; init; }
     public Announcement? Announcement { get; init; }
     public NotificationSettings? Notifications { get; init; }
@@ -63,8 +65,18 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         Version[]? heldBack = null;
         if (data.TryGetProperty("windowsBlocked", out var held) && held.ValueKind == JsonValueKind.Array)
             heldBack = ReleaseFeed.HeldBack(held.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!));
-        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, PartyReady = ready, Invites = invites, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
+        UpdateRequest? update = null;
+        if (data.TryGetProperty("windowsUpdate", out var asked) && asked.ValueKind == JsonValueKind.Object)
+            update = new(asked.TryGetProperty("version", out var latest) && latest.ValueKind == JsonValueKind.String && ReleaseFeed.TryParseTag(latest.GetString(), out var known) ? known : null);
+        return new(Flag("refresh"), Flag("removed"), characters, seen) { Release = release, HeldBack = heldBack, UpdateNow = update, PartyReady = ready, Invites = invites, AnnouncementChanged = changed, Announcement = announcement, Notifications = notifications, CapAlerts = alerts };
     }
+}
+// "Update all apps now" (windowsUpdate): Version is the latest release the server knows, null when it
+// knows none. An app at that version or newer stays as it is; an older one installs the latest release
+// it is allowed (never a held-back one) and restarts, handing its live character over.
+public sealed record UpdateRequest(Version? Version)
+{
+    public bool Needed(Version current) => Version is not { } latest || latest > ReleaseFeed.Normalize(current);
 }
 // The topics the app listens to: its account's own and, for each of its rooms, the room's
 // changes and its heartbeats.

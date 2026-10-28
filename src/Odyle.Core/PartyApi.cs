@@ -143,6 +143,12 @@ public sealed class PartyApi : IDisposable
     public async Task<bool> KnowsNaWestAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Region == "GLOBAL_NAW");
     // The Discord application the server signs in with, for the Discord status; null without Discord sign-in.
     public async Task<string?> GetDiscordApplicationAsync() => DiscordPresence.ApplicationOf((await GetAsync<JsonElement>("api/collections/users/auth-methods")).GetRawText());
+    // Whether the backend serves the dashboard's pages at their own paths (DashboardPages): its public start page says so.
+    public async Task<bool> ServesPathsAsync()
+    {
+        using var response = await client.GetAsync("");
+        return response.IsSuccessStatusCode && DashboardPages.ServesPaths(await response.Content.ReadAsStringAsync());
+    }
     public async Task<Character[]> GetCharactersAsync() => (await GetAsync<RecordList<Character>>("api/collections/characters/records?perPage=500&sort=created")).Items;
     // A paired app names its device key, so a PC removed on the dashboard gets 401 here
     // and ends its pairing like an unknown key at sign-in. Absent fields are left out;

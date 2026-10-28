@@ -2,6 +2,16 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.30.0 · 2026-10-28
+
+### New
+- **Updates the moment your server asks**: when your server's operators press **Update all apps now**, Odyle downloads the latest release straight away, installs it and restarts by itself. Your character stays read, as with **Restart to update**. Odyle already on the latest version carries on as it was.
+
+### Fixed
+- **Dashboard links open the page itself**: the **Manage**, **Notifications**, **Share** and checklist buttons open the dashboard page at its own address (like */tasks*) instead of an old *#/* link that the dashboard had to forward. Servers older than dashboard 0.49.0 still get the old links, which they understand.
+- **Your armory profile in the Discord status links to the profile's own page**: when someone copies the **View in the armory** link into Discord or a chat, the preview now shows your character's name, class, level and portrait instead of the general Odyle preview.
+- **The window no longer opens with a dark strip on the right and its bottom cut off**: when it shows, Odyle now checks its size against what it holds, fits it again if they differ, and draws the whole window again.
+
 ## 0.29.0 · 2026-10-27
 
 ### New

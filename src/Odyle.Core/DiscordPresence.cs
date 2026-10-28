@@ -70,7 +70,8 @@ public static class DiscordPresence
     // The pictures and buttons, all on the server's public HTTPS address so Discord can fetch and open
     // them (a local test server gets none): the portrait the server keeps from the game, Odyle's icon,
     // the character's armory profile (PLAYNC's, else the armory's search for it) and Odyle itself.
-    public static DiscordActivity Dress(DiscordActivity activity, string endpoint, Character character)
+    // paths: the server serves the profile at its own path, with the character's link preview (DashboardPages).
+    public static DiscordActivity Dress(DiscordActivity activity, string endpoint, Character character, bool paths = false)
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var server) || server.Scheme != "https") return activity;
         var home = server.AbsoluteUri.TrimEnd('/');
@@ -82,7 +83,7 @@ public static class DiscordPresence
         {
             LargeImage = portrait ?? icon, LargeText = Fit(about),
             SmallImage = portrait is null ? null : icon, SmallText = portrait is null ? null : "Odyle",
-            ArmoryUrl = ArmoryPath(character) is { } path ? home + "/#" + path : null, HomeUrl = home + "/",
+            ArmoryUrl = ArmoryPath(character) is { } path ? DashboardPages.Url(home, path, paths) : null, HomeUrl = home + "/",
         };
     }
     // The armory page of a character, as the dashboard's src/armory.js builds and accepts it.

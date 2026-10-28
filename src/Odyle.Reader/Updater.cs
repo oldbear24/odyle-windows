@@ -20,8 +20,8 @@ namespace Odyle.Reader;
 public sealed record StagedUpdate(Version Version, string Directory, string ReleaseUrl);
 // Keeps a released Odyle current from the GitHub releases of its repository.
 //
-// Release builds carry the workflow's run number (0.5.0.12); `dotnet run` and the
-// checks are 0.x.y.0 and never replace themselves. The package kind (small or
+// Release builds are marked by the publish script (Released); `dotnet run` and the
+// checks are not, and never replace themselves. The package kind (small or
 // self-contained) is stamped into the assembly by the publish script and the CPU
 // architecture comes from the running process, so the same kind is downloaded.
 // Windows lets a running executable be renamed but not overwritten or deleted, so

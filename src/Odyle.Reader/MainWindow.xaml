@@ -1,6 +1,6 @@
 <Window x:Class="Odyle.Reader.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Title="Odyle" SizeToContent="WidthAndHeight" ResizeMode="CanMinimize" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
- Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" SizeChanged="Window_SizeChanged" LocationChanged="Window_LocationChanged"
+ Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" SizeChanged="Window_SizeChanged" LocationChanged="Window_LocationChanged" IsVisibleChanged="Window_IsVisibleChanged" StateChanged="Window_StateChanged"
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
  <!-- The compact 280 px card; the checklist opens beside it and the window grows to the right -->
  <Grid>
