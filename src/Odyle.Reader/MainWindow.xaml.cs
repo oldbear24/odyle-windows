@@ -1635,7 +1635,7 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); }
+    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); groups.Reset(); }
     // `latest` belongs to the character the game named: its updates follow it from now on.
     private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
@@ -1727,6 +1727,7 @@ public partial class MainWindow : Window
         next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await CharacterChangedAsync(next, character));
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
         next.LocationObserved += location => Dispatcher.BeginInvoke(() => OnLocation(next, location));
+        next.GroupObserved += change => Dispatcher.BeginInvoke(() => OnGroup(next, change));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
         // snapshot and identity, and once per run each distinct stat frame layout and each other
         // stat resource that sends updates (not every frame). The patch-day trace counts them all.
@@ -1952,7 +1953,7 @@ public partial class MainWindow : Window
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
-            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow;
+            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow; groups.Named(identity.Id);
             // A snapshot without Odyle that waited for a name belongs to this character, unless its
             // Odyle was read already (the reading is kept).
             if (odyleMissingDue)
@@ -1985,6 +1986,8 @@ public partial class MainWindow : Window
             if (odyleMissingKey == key) _ = MarkNoOdyleAsync();
             // A world load still waiting for its owner is where the character just named arrived.
             if (detectedCharacterKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
+            // Its party and force, each time the game names it (every few minutes): a reading that ended cleared them on the server.
+            _ = SendGroupAsync();
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
             if (latest is not null) await PublishCoreAsync();
@@ -2064,6 +2067,38 @@ public partial class MainWindow : Window
         {
             locationSending = false;
             if (locationQueued is { } next) { locationQueued = null; await SendLocationAsync(next); }
+        }
+    }
+
+    // ----- Parties and forces -----
+    // The party and force the named character is in (GroupTracker), sent when either changes and each
+    // time the game names the character, so rooms can put players of one party or force together.
+    // One request at a time; a change meanwhile sends the newest state after it.
+    private readonly GroupTracker groups = new();
+    private bool groupRefused, groupSending, groupAgain, groupFailing;
+    private void OnGroup(PacketCapture source, GameGroupEvent change)
+    {
+        if (capture != source || twoClients || !groups.Observe(change)) return;
+        Log.Info($"Decoder: {(groups.Party.Length > 0 ? "in a party" : "in no party")}, {(groups.Force.Length > 0 ? "in a force" : "in no force")} ({change.Change}).");
+        _ = SendGroupAsync();
+    }
+    private async Task SendGroupAsync()
+    {
+        if (groupRefused || api is not { } current || sessionId.Length == 0 || currentCharacterId.Length == 0 || gameCharacterId == 0 || detectedCharacterKey != gameCharacterKey || groups.Owner is not 0 && groups.Owner != gameCharacterId) return;
+        if (groupSending) { groupAgain = true; return; }
+        groupSending = true;
+        try { await current.GameGroupAsync(sessionId, currentCharacterId, groups.Party, groups.Force); groupFailing = false; }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.GroupAdapterRefused)
+        {
+            groupRefused = true;
+            Log.Warn($"The server does not accept the group adapter {GroupTracker.Adapter}; parties and forces are not sent until Odyle restarts.");
+        }
+        // A server from before parties (404), paused readers, an expired session, no connection: the next change or naming tries again.
+        catch (Exception error) { if (!groupFailing) Log.Info($"The party and force were not sent: {Describe(error)}"); groupFailing = true; }
+        finally
+        {
+            groupSending = false;
+            if (groupAgain) { groupAgain = false; await SendGroupAsync(); }
         }
     }
 

@@ -60,7 +60,7 @@ All of these choices (window, position, language, notifications, whether the Sta
 The app deliberately does not:
 
 - **Read combat.** No DPS meter, damage, HP or skill logs, and no other combat data.
-- **Read other players.** It decodes only your own character: its identity, its Odyle and, for location sharing, its map and position. No party rosters, no other players' characters, gear or whereabouts.
+- **Read other players.** It decodes only your own character: its identity, its Odyle, for location sharing its map and position, and the ids the game gives its party and force. Never who else is in them, no other players' characters, gear or whereabouts.
 - **Share your location unasked.** Your character's map and position leave the PC only after you turn on **Share my location with my rooms** on the dashboard (off by default); turning it off there stops them within about 20 seconds.
 - **Take typed values.** Characters and their Odyle come from the game only: no character picker, manual entry or override.
 - **Touch the game.** No memory reading, packet injection, automation or in-game overlay; the card is an ordinary window. Raw game traffic never leaves the PC.

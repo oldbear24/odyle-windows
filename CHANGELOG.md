@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.31.0 · 2026-10-28
+
+### New
+- **Your rooms see who plays together**: Odyle now notices when your character joins a party or a force, or leaves one, and tells your server. Your room's page then shows the players of one party, and of one force, together. Only the ids the game gives the party and the force are sent, never who else is in them. When Odyle starts while you are already in a party, it notices once the party changes.
+
 ## 0.30.0 · 2026-10-28
 
 ### New

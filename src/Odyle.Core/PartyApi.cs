@@ -70,6 +70,8 @@ public sealed class PartyApi : IDisposable
     // The backend's 400 answer to a position whose adapter it does not accept; the app sends no more
     // positions until it restarts.
     public const string LocationAdapterRefused = "This location adapter is not accepted.";
+    // The same for the party and force ids (POST /api/odyle/game-group).
+    public const string GroupAdapterRefused = "This group adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;
@@ -194,6 +196,10 @@ public sealed class PartyApi : IDisposable
     // does not (nothing was stored). Sent on its own, so a server from before it answers 404.
     public async Task<bool> LocationAsync(string sessionId, LocationReport report) =>
         (await PostAsync<LocationResponse>("api/odyle/location", new { sessionId, characterId = report.CharacterId, adapter = LocationReporter.Adapter, map = report.Map, x = Math.Round(report.X, 1), y = Math.Round(report.Y, 1), z = Math.Round(report.Z, 1), heading = report.Heading is { } h ? Math.Round(h, 1) : (double?)null, source = report.Source })).Shared;
+    // The party and force the named character is in (GroupTracker), null outside one, so rooms can put
+    // players of one party together. Sent on its own, so a server from before it answers 404.
+    public Task GameGroupAsync(string sessionId, string characterId, string party, string force) =>
+        PostAsync<JsonElement>("api/odyle/game-group", new { sessionId, characterId, adapter = GroupTracker.Adapter, party = party.Length > 0 ? party : null, force = force.Length > 0 ? force : null });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));
