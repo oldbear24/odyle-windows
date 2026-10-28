@@ -172,7 +172,11 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     /// <summary>The own character's map and position at a world load or arrival, or where one of its own effects landed (GameLocation).</summary>
     public event Action<GameLocation>? LocationObserved;
-    public void Reset() { start = end = 0; ownCharacter = null; synchronized = startsAligned; probation = false; }
+    /// <summary>The own character's party or force formed, changed or ended (GameGroups): only the ids the game gives them.</summary>
+    public event Action<GameGroupEvent>? GroupObserved;
+    // A roster that came before the own character's id, read once the id is known.
+    private byte[]? heldRoster;
+    public void Reset() { start = end = 0; ownCharacter = null; heldRoster = null; synchronized = startsAligned; probation = false; }
     /// <summary>Drops the undecoded bytes and waits for the next heartbeat; the own character stays known.</summary>
     public void Resync() { start = end = 0; synchronized = false; probation = false; }
     private void Push(ReadOnlySpan<byte> bytes)
@@ -289,7 +293,17 @@ public sealed class ExperimentalOdyleDecoder
             var switched = ownCharacter is { } previous && previous != id;
             ownCharacter = id;
             if (switched) CharacterChanged?.Invoke(id);
+            // A roster held for this id comes before the name, so the name finds it.
+            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) GroupObserved?.Invoke(group); }
             if (identity is not null) IdentityObserved?.Invoke(identity);
+            return;
+        }
+        // The own party's and force's rosters and ends (GameGroups); other players' names, and every
+        // other party or force message, are never read.
+        if (frame[1] is 0x92 or 0x96)
+        {
+            if (ownCharacter is null && GameGroups.IsRoster(frame)) heldRoster = frame.ToArray();
+            else if (GameGroups.Read(frame, ownCharacter) is { } group) GroupObserved?.Invoke(group);
             return;
         }
         // World loads and arrivals (21 36, 23 36), and effects naming the own entity (2A 38) for its

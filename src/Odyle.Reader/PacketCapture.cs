@@ -36,6 +36,7 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<OdyleFrameLayout>? LayoutObserved;
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     public event Action<GameLocation>? LocationObserved;
+    public event Action<GameGroupEvent>? GroupObserved;
     private long receivedPackets, gameBytes;
     public long ReceivedPackets => Interlocked.Read(ref receivedPackets);
     // Payload bytes that reached a decoder; blocked or unknown connections add nothing.
@@ -318,7 +319,7 @@ public sealed class PacketCapture : IAsyncDisposable
         decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += id => CharacterChanged?.Invoke(id); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
         decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value); decoder.SnapshotWithoutOdyle += () => SnapshotWithoutOdyle?.Invoke();
-        decoder.LocationObserved += value => LocationObserved?.Invoke(value);
+        decoder.LocationObserved += value => LocationObserved?.Invoke(value); decoder.GroupObserved += value => GroupObserved?.Invoke(value);
     }
     // Each game connection is decoded on one interface only, the first to deliver it (FlowOwners).
     private readonly FlowOwners owners = new(TimeSpan.FromSeconds(10));
