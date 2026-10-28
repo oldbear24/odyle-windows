@@ -25,7 +25,11 @@ static class RealtimeChecks
         // Held-back Windows versions (#19) come as their own news; other news leaves them unknown.
         Check(RealtimeNews.Parse(Json("""{"windowsBlocked":["0.18.0","bad"]}""")).HeldBack is [{ Major: 0, Minor: 18, Build: 0 }] && RealtimeNews.Parse(Json("""{"windowsBlocked":[]}""")).HeldBack is [] && refresh.HeldBack is null, "held-back versions news");
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");
-        Check(RealtimeNews.Parse(Json("""{"refresh":true,"removed":true}""")) is { Refresh: true, Removed: true }, "a removed member");
+        // Update all apps now (the dashboard's admin pages): the latest version the server knows, if any.
+        var update = RealtimeNews.Parse(Json("""{"windowsUpdate":{"version":"0.30.0","at":"2026-10-28T18:00:00Z"}}""")).UpdateNow;
+        Check(update is { Version: { Major: 0, Minor: 30, Build: 0 } } && update.Needed(new Version(0, 29, 0, 0)) && !update.Needed(new Version(0, 30, 0, 0)) && !update.Needed(new Version(0, 31, 0)), "an update request names the latest version; apps at it or newer stay");
+        Check(RealtimeNews.Parse(Json("""{"windowsUpdate":{"at":"2026-10-28T18:00:00Z"}}""")).UpdateNow is { Version: null } unknown && unknown.Needed(new Version(0, 30, 0)) && RealtimeNews.Parse(Json("""{"windowsUpdate":{"version":"nightly"}}""")).UpdateNow is { Version: null }
+            && refresh.UpdateNow is null && RealtimeNews.Parse(Json("""{"windowsUpdate":true}""")).UpdateNow is null, "without a known version every app asks GitHub; no request, no update");
         var changed = RealtimeNews.Parse(Json("""{"refresh":true,"characters":[""" + Lumina.Replace("\"value\":180", "\"value\":220").Replace("}", ",\"shared\":true}") + """]}"""));
         Check(changed.Characters.Single() is { Id: "c", Value: 220, Parts: null }, "changed characters with their snapshot fields");
         var split = RealtimeNews.Parse(Json("""{"characters":[""" + Lumina.Replace("}", ",\"parts\":{\"base\":90,\"bonus\":990}}") + """]}"""));

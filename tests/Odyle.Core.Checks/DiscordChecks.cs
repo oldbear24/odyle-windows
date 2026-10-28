@@ -44,6 +44,9 @@ static class DiscordChecks
         var plain = DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "https://odyle.example", lumina with { Portrait = null, OfficialId = null, Level = 0, ClassName = null });
         Check(plain is { LargeImage: "https://odyle.example/icon-512.png", LargeText: "Lumina · Lumiel · EU", SmallImage: null, ArmoryUrl: "https://odyle.example/#/armory/find/GLOBAL_EU/Lumiel/Lumina" }, "without a portrait Odyle's icon, and the armory searches for the character: " + plain);
         Check(DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "http://127.0.0.1:8090", lumina) == new DiscordActivity("ab", "cd", null), "a local test server gets no pictures and no buttons");
+        // A backend that serves paths (dashboard 0.49.0, #71) gets the profile's own address, which link previews show with the character.
+        Check(DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "https://odyle.example", lumina, paths: true).ArmoryUrl == "https://odyle.example/armory/eu/2304/AbCdEfGh12_-=="
+            && DiscordPresence.Dress(new DiscordActivity("ab", "cd", null), "https://odyle.example/", lumina with { OfficialId = null }, paths: true).ArmoryUrl == "https://odyle.example/armory/find/GLOBAL_EU/Lumiel/Lumina", "with paths the armory button opens the profile's own address");
         Check(DiscordPresence.ArmoryPath(lumina with { OfficialId = null, CharacterName = new string('x', 61) }) is null && DiscordPresence.ArmoryPath(lumina with { OfficialId = "../../x" }) == "/armory/find/GLOBAL_EU/Lumiel/Lumina", "only armory pages the dashboard accepts are linked");
         using (var set = System.Text.Json.JsonDocument.Parse(DiscordPresence.SetActivityJson(42, dressed, "n")))
         {

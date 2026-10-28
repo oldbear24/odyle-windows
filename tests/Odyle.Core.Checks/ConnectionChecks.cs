@@ -147,6 +147,19 @@ static class ConnectionChecks
         Check(JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.ReaderPaused is null && JsonSerializer.Deserialize<PublisherSession>("""{"sessionId":"s","sequence":0}""", options)!.ReaderPaused is null && JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x"}""", options)!.ReaderPaused is null, "a backend without the switch says nothing about it");
         Check(PartyApi.NameOf("  DESKTOP-ODYLE  ") == "DESKTOP-ODYLE" && PartyApi.NameOf(new string('x', 55)).Length == 40 && PartyApi.NameOf("") == "Windows PC" && PartyApi.DeviceName.Length is > 0 and <= 40, "device names are trimmed to 40 characters");
 
+        // Dashboard links (#70): a page's own path on a backend whose start page marks odyle-routes, the #/ form on older ones.
+        const string marked = """<!doctype html><html><head><meta charset="UTF-8"/><base href="./"><meta name="odyle-routes" content="paths"><title>Odyle</title>""";
+        var pages = new Stub((route, _) => route == "/" ? Answer(HttpStatusCode.OK, marked, "text/html") : Answer(HttpStatusCode.NotFound, "{}"));
+        using (var api = new PartyApi("https://party.example", "token", "key", pages)) Check(await api.ServesPathsAsync() && pages.Requests[^1].Route == "/", "a backend from dashboard 0.49.0 serves paths");
+        using (var api = new PartyApi("https://party.example", "token", "key", new Stub((_, _) => Answer(HttpStatusCode.OK, "<!doctype html><title>Odyle</title>", "text/html"))))
+            Check(!await api.ServesPathsAsync(), "an older backend's page has no mark");
+        using (var api = new PartyApi("https://party.example", "token", "key", new Stub((_, _) => Answer(HttpStatusCode.BadGateway, marked, "text/html"))))
+            Check(!await api.ServesPathsAsync(), "a failing answer is no mark");
+        Check(DashboardPages.Url("https://party.example", "/tasks", paths: true) == "https://party.example/tasks" && DashboardPages.Url("https://party.example/", "account", paths: true) == "https://party.example/account", "pages open at their own paths");
+        Check(DashboardPages.Url("https://party.example", "/tasks", paths: false) == "https://party.example/#/tasks" && DashboardPages.Url("https://party.example", "/account", paths: false) == "https://party.example/#/account", "older backends get the #/ form");
+        Check(DashboardPages.Url("https://party.example", "", paths: false) == "https://party.example/" && DashboardPages.Url("https://party.example", "/", paths: true) == "https://party.example/", "the start page is / either way");
+        Check(!DashboardPages.ServesPaths("""<meta name="odyle-routes" content="hash">""") && DashboardPages.ServesPaths("""<META NAME='odyle-routes' CONTENT='paths'>"""), "only the paths mark counts");
+
         // The log rotates at its limit, keeps one previous file, takes writes from many threads and masks secrets.
         var folder = Directory.CreateTempSubdirectory("odyle-log-check-").FullName;
         try
@@ -165,7 +178,7 @@ static class ConnectionChecks
             Check(File.ReadAllText(target) == "{\"a\":2}" && !Directory.GetFiles(folder, "*.tmp").Any(), "atomic writes replace the file and leave no temporary file");
         }
         finally { Directory.Delete(folder, true); }
-        Console.WriteLine("Failure bodies, 429 pause with Retry-After, renewal without loops, ended pairings, device names, retry schedule, log rotation and redaction passed.");
+        Console.WriteLine("Failure bodies, 429 pause with Retry-After, renewal without loops, ended pairings, device names, dashboard links, retry schedule, log rotation and redaction passed.");
     }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("Connection check failed: " + message); }
 }

@@ -817,6 +817,19 @@ static class ReaderChecks
         Check(window.IsVisible && window.Left == 300 && window.Top == 200 && window.ActualWidth < width && window.ActualHeight < height, "compact mode keeps the window where it is and only makes it smaller");
         Call(window, "SetCompact", false, false); Settle();
         Check(window.Left == 300 && window.Top == 200 && Math.Abs(window.ActualWidth - width) < 1, "the full card comes back in the same place");
+        // The window fits its content each time it shows (FitWindow): a fitting window is left as it is, and one whose
+        // size missed its content (here size-to-content off and the window resized, as a resize from outside leaves it)
+        // is fitted again when it shows, and the log says so.
+        var fittingLog = Path.Combine(Log.Folder, "odyle.log");
+        Check(!File.Exists(fittingLog) || !File.ReadAllText(fittingLog).Contains("fitting it again"), "a window that fits its content is left as it is");
+        var handle = new System.Windows.Interop.WindowInteropHelper(window).Handle; GetWindowRect(handle, out var fits);
+        window.SizeToContent = SizeToContent.Manual; SetWindowPos(handle, IntPtr.Zero, 0, 0, fits.Right - fits.Left + 120, fits.Bottom - fits.Top - 80, 0x0002 | 0x0004 | 0x0010); Settle();
+        GetWindowRect(handle, out var off);
+        Check(off.Right - off.Left == fits.Right - fits.Left + 120, "the probe made the window too wide and too short");
+        window.Hide(); window.Show(); Settle(); Settle();
+        GetWindowRect(handle, out var again);
+        Check(window.SizeToContent == SizeToContent.WidthAndHeight && again.Right - again.Left == fits.Right - fits.Left && again.Bottom - again.Top == fits.Bottom - fits.Top && File.ReadAllText(fittingLog).Contains("fitting it again"),
+            $"a window shown at a size that missed its content is fitted to it again ({again.Right - again.Left}×{again.Bottom - again.Top}, wanted {fits.Right - fits.Left}×{fits.Bottom - fits.Top})");
         window.Hide(); Call(window, "UseHotkey", "");
         Console.WriteLine("Compact probe passed; the shortcut Ctrl+Alt+F12 " + (taken.Length == 0 ? "was registered and released." : "is taken here: " + taken));
     }
@@ -1023,6 +1036,7 @@ static class ReaderChecks
     }
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct ScreenRect { public int Left, Top, Right, Bottom; }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out ScreenRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     // The layered state and opacity of a window (W#18).
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong(IntPtr window, int index);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetLayeredWindowAttributes(IntPtr window, out uint key, out byte alpha, out uint flags);
