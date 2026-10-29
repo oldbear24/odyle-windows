@@ -10,8 +10,6 @@ public sealed record Band(string Party = "", string Force = "", bool YourParty =
 {
     public static readonly Band None = new();
     public bool Any => Party.Length > 0 || Force.Length > 0;
-    // Two rows next to each other that share a band, so its line runs on unbroken.
-    public bool Continues(Band before) => Party.Length > 0 && Party == before.Party || Force.Length > 0 && Force == before.Force;
 }
 
 // The players the game put together, as the dashboard's room page shows them (partyview.js
@@ -60,4 +58,29 @@ public static class GameBands
         Band BandOf(int i) => new(party[i], force[i], party[i].Length > 0 && party[i] == party[0], force[i].Length > 0 && force[i] == force[0]);
         return (BandOf(0), order.Where(i => i > 0).Select(i => (rows[i - 1], BandOf(i))).ToArray());
     }
+
+    // The arranged rows as the lists frame them: a force's band holds its parties' bands and its
+    // players in no party here, a party's band its players; the rest stay single rows. Arrange
+    // keeps a band's rows together, so a band is a run of rows.
+    public static Nested<T>[] Nest<T>(IReadOnlyList<(T Item, Band Band)> rows) =>
+        Runs(rows, b => b.Force, "force", b => b.YourForce, inForce => Runs(inForce, b => b.Party, "party", b => b.YourParty, single => single.Select(r => new Nested<T>(r.Item)).ToArray()));
+    private static Nested<T>[] Runs<T>(IReadOnlyList<(T Item, Band Band)> rows, Func<Band, string> key, string kind, Func<Band, bool> yours, Func<(T Item, Band Band)[], Nested<T>[]> inner)
+    {
+        var nested = new List<Nested<T>>();
+        for (int i = 0, end; i < rows.Count; i = end)
+        {
+            var k = key(rows[i].Band);
+            for (end = i + 1; end < rows.Count && key(rows[end].Band) == k; end++) { }
+            var run = rows.Skip(i).Take(end - i).ToArray();
+            if (k.Length == 0) nested.AddRange(inner(run)); else nested.Add(new(default, kind, yours(rows[i].Band), inner(run)));
+        }
+        return nested.ToArray();
+    }
+}
+// An entry of a list: one row (Item), or a band (Kind "party" or "force", whether it is yours) of
+// Children. Rows counts the rows in it, a player each.
+public sealed record Nested<T>(T? Item, string Kind = "", bool Yours = false, Nested<T>[]? Children = null)
+{
+    public bool IsBand => Kind.Length > 0;
+    public int Rows => IsBand ? Children!.Sum(c => c.Rows) : 1;
 }

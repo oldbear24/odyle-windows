@@ -22,16 +22,16 @@
 <SolidColorBrush x:Key="PillLive" Color="#1F3A2A"/>
 <SolidColorBrush x:Key="PillAmber" Color="#3A3220"/>
 <SolidColorBrush x:Key="PillRose" Color="#3A2326"/>
-<!-- Players in one party (blue) or one force (violet) in the game, as on the dashboard's room page: the line beside
-     their rows, the tint behind a row on the window, and a party list card's background and edge -->
+<!-- Players in one party (blue) or one force (violet) in the game, framed as on the dashboard's room page: the label,
+     the frame's edge, its fill behind compact mode's rows, and its lighter wash around the party list's cards -->
 <SolidColorBrush x:Key="PartyBand" Color="#8FC3EA"/>
 <SolidColorBrush x:Key="ForceBand" Color="#B9A7EE"/>
-<SolidColorBrush x:Key="PartyTint" Color="#248FC3EA"/>
-<SolidColorBrush x:Key="ForceTint" Color="#21B9A7EE"/>
-<SolidColorBrush x:Key="PartyCard" Color="#243231"/>
-<SolidColorBrush x:Key="ForceCard" Color="#292E32"/>
-<SolidColorBrush x:Key="PartyEdge" Color="#598FC3EA"/>
-<SolidColorBrush x:Key="ForceEdge" Color="#59B9A7EE"/>
+<SolidColorBrush x:Key="PartyEdge" Color="#668FC3EA"/>
+<SolidColorBrush x:Key="ForceEdge" Color="#66B9A7EE"/>
+<SolidColorBrush x:Key="PartyTint" Color="#1C8FC3EA"/>
+<SolidColorBrush x:Key="ForceTint" Color="#14B9A7EE"/>
+<SolidColorBrush x:Key="PartyWash" Color="#128FC3EA"/>
+<SolidColorBrush x:Key="ForceWash" Color="#10B9A7EE"/>
 
 <!-- Text -->
 <Style x:Key="Eyebrow" TargetType="TextBlock"><Setter Property="FontSize" Value="10"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{StaticResource Faint}"/></Style>

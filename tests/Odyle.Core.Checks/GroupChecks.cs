@@ -45,7 +45,12 @@ static class GroupChecks
         var others = Arrange(new("p1"), P("Bram"), P("Tor", "p3"), P("Vex", "p3"));
         Check(Shape(others) == "Bram Tor:p3/ Vex:p3/" && others.Own == Band.None && !others.Rows[1].Band.YourParty, "others' party is a band that is not yours");
         Check(Shape(Arrange(null, P("me", "p1"), P("Anna", "p1"))) == "me Anna" && Arrange(null).Rows.Length == 0, "your own rows never speak for you");
-        Check(new Band("p1", "f1").Continues(new Band("p2", "f1")) && new Band("p1").Continues(new Band("p1")) && !new Band("p1").Continues(new Band("p2")) && !Band.None.Continues(Band.None), "rows of one band run on");
+        // The lists frame them: a force around its parties and its other players, a party around its players (* yours).
+        string Frames(Nested<(string, GameGroup?)>[] nested) => string.Join(" ", nested.Select(n => n.IsBand ? $"{n.Kind}{(n.Yours ? "*" : "")}[{Frames(n.Children!)}]" : n.Item.Item1));
+        var framed = GameBands.Nest(Arrange(null, room).Rows);
+        Check(Frames(framed) == "force[party[Anna Cleo] Dax] Bram" && framed[0].Rows == 3 && framed[1].Rows == 1, "a party's frame sits inside its force's, with the force's other players");
+        Check(Frames(GameBands.Nest(yours.Rows)) == "force*[party*[Anna] Dax] Bram Zed" && Frames(GameBands.Nest(others.Rows)) == "Bram party[Tor Vex]" && GameBands.Nest(Arrange(null).Rows).Length == 0,
+            "your frames lead and say so; others' parties are framed too");
         // The character's gameGroup as room snapshots and realtime news carry it.
         var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         Check(JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"A","server":"S","region":"GLOBAL_EU","value":1,"confirmed":true,"valid":true,"lastReadingAt":"","gameGroup":{"party":"ab","at":"2026-10-28 12:00:00.000Z"}}""", json)!.GameGroup == new GameGroup("ab", null, "2026-10-28 12:00:00.000Z")

@@ -276,6 +276,7 @@ public static class Czech
     public static readonly IReadOnlyDictionary<string, string[]> Plurals = new Dictionary<string, string[]>
     {
         ["{0} cube|{0} cubes"] = ["{0} kostka", "{0} kostky", "{0} kostek"],
+        ["{0} player|{0} players"] = ["{0} hráč", "{0} hráči", "{0} hráčů"],
         ["{1} starts in {0} minute|{1} starts in {0} minutes"] = ["{1} začíná za {0} minutu", "{1} začíná za {0} minuty", "{1} začíná za {0} minut"],
         ["Daily reset in {1} · {0} task open|Daily reset in {1} · {0} tasks open"] = ["Denní reset za {1} · otevřený {0} úkol", "Denní reset za {1} · otevřené {0} úkoly", "Denní reset za {1} · otevřených {0} úkolů"],
         ["Weekly reset in {1} · {0} task open|Weekly reset in {1} · {0} tasks open"] = ["Týdenní reset za {1} · otevřený {0} úkol", "Týdenní reset za {1} · otevřené {0} úkoly", "Týdenní reset za {1} · otevřených {0} úkolů"],

@@ -5,7 +5,7 @@ What changed in each release of Odyle for Windows, newest first, written for pla
 ## 0.32.0 · 2026-10-29
 
 ### New
-- **See who plays together, in the window too**: on the card and in compact mode, the players of your room who are in your party in the game now stand right under you, with a blue line beside them and a faint blue background; players in your force get a violet line. Other parties in your room are grouped the same way. Hover over a player to see which group they are in. Only players whose Odyle 0.31.0 or newer is reading show up in a group, as on your room page.
+- **See who plays together, in the window too**: on the card and in compact mode, the players of your room who are in your party in the game now stand right under you in a blue frame, and the players of your force in a violet frame around their parties, as on your room page. On the card each frame is labelled, with how many players it holds; in compact mode the frames stay tight and your own row sits inside yours. Other parties and forces in your room are framed the same way. Only players whose Odyle 0.31.0 or newer is reading show up in a frame.
 
 ## 0.31.0 · 2026-10-28
 
