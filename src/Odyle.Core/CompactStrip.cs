@@ -10,16 +10,21 @@ public static class CompactStrip
     public const int MateLimit = 10;
 
     // An other member's character as the compact window lists it: its Odyle, the cubes it
-    // can open in its room, whether it is live (else stale), whose it is and where it was last seen.
-    public sealed record Mate(string Name, int Value, int Cubes, bool Live, string Player, Place? Location = null);
+    // can open in its room, whether it is live (else stale), whose it is and where it was last seen;
+    // Band, the party or force the game put it in with you or others listed (GameBands).
+    public sealed record Mate(string Name, int Value, int Cubes, bool Live, string Player, Place? Location = null)
+    {
+        public Band Band { get; init; } = Band.None;
+    }
 
     // Other members' characters shared in your rooms that are live or recently stale, each once
-    // however many rooms show it: live ones first, then the most Odyle. Like the card's party
-    // list, offline characters and your own are left out.
-    public static (Mate[] Mates, int More) Mates(IEnumerable<RoomSnapshot> snapshots, string accountId, DateTimeOffset now, int perCube, int limit = MateLimit)
+    // however many rooms show it: live ones first, then the most Odyle, with the players of one
+    // party or force in the game together, yours first. Like the card's party list, offline
+    // characters and your own are left out; Own is your row's band.
+    public static (Mate[] Mates, int More, Band Own) Mates(IEnumerable<RoomSnapshot> snapshots, string accountId, DateTimeOffset now, int perCube, int limit = MateLimit)
     {
-        var seen = new HashSet<string>(); var found = new List<Mate>();
-        foreach (var snapshot in snapshots)
+        var all = snapshots.ToArray(); var seen = new HashSet<string>(); var found = new List<(Mate Mate, string User, GameGroup? Group)>();
+        foreach (var snapshot in all)
         {
             var cost = snapshot.Room.Cost > 0 ? snapshot.Room.Cost : Math.Max(1, perCube);
             foreach (var member in snapshot.Members.Where(m => m.User != accountId))
@@ -27,11 +32,12 @@ public static class CompactStrip
                 {
                     var state = Readiness.Of(c, now);
                     if (state is Presence.Live or Presence.Stale && seen.Add(c.Id.Length > 0 ? c.Id : member.User + "|" + c.CharacterName))
-                        found.Add(new(c.CharacterName, c.Value, c.Value / cost, state == Presence.Live, member.DisplayName, c.Location));
+                        found.Add((new(c.CharacterName, c.Value, c.Value / cost, state == Presence.Live, member.DisplayName, c.Location), member.User, state == Presence.Live ? c.GameGroup : null));
                 }
         }
-        var ordered = found.OrderByDescending(m => m.Live).ThenByDescending(m => m.Value).ToArray();
-        return (ordered.Take(limit).ToArray(), Math.Max(0, ordered.Length - limit));
+        var ordered = found.OrderByDescending(f => f.Mate.Live).ThenByDescending(f => f.Mate.Value).ToArray();
+        var (own, rows) = GameBands.Arrange(ordered, f => (f.User, f.Group), accountId, GameBands.Own(all, accountId, now));
+        return (rows.Take(limit).Select(r => r.Item.Mate with { Band = r.Band }).ToArray(), Math.Max(0, rows.Length - limit), own);
     }
 
     // The shortcut that switches compact mode on and off from anywhere, chosen in Settings; ""

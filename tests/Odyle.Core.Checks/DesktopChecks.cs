@@ -26,10 +26,10 @@ static class DesktopChecks
         var lumina = Seen("l1", "l", "Lumina", 180, 5);
         var rooms = new[] { Room("r1", 40, Member("u", "Me", Seen("u1", "u", "Hero", 300, 5)), Member("l", "Lu", lumina), Member("k", "Kaelen", Seen("k1", "k", "Kael", 235, 60), Seen("k2", "k", "KaelAlt", 500, 200), Seen("k3", "k", "Hidden", 900, 5, shared: false))),
             Room("r2", 0, Member("l", "Lu", lumina), Member("n", "Nyx", Seen("n1", "n", "Nyx", 90, 10))) };
-        var (mates, more) = CompactStrip.Mates(rooms, "u", moment, 30);
+        var (mates, more, _) = CompactStrip.Mates(rooms, "u", moment, 30);
         Check(mates.Select(m => (m.Name, m.Value, m.Cubes, m.Live, m.Player)).SequenceEqual([("Lumina", 180, 4, true, "Lu"), ("Nyx", 90, 3, true, "Nyx"), ("Kael", 235, 5, false, "Kaelen")]) && more == 0,
             "compact mode lists the others' live and stale characters once, live first, with their room's cubes; not yours, offline or unshared ones");
-        Check(CompactStrip.Mates(rooms, "u", moment, 30, limit: 2) is ({ Length: 2 }, 1) && CompactStrip.Mates([], "u", moment, 40).Mates.Length == 0, "beyond the limit the rest are counted");
+        Check(CompactStrip.Mates(rooms, "u", moment, 30, limit: 2) is ({ Length: 2 }, 1, _) && CompactStrip.Mates([], "u", moment, 40).Mates.Length == 0, "beyond the limit the rest are counted");
         Check(CompactStrip.Parse("Ctrl+Alt+O") == (0x4003u, 'O') && CompactStrip.Parse("Ctrl+Shift+O") == (0x4006u, 'O') && CompactStrip.Parse("Ctrl+Alt+F12") == (0x4003u, 0x7Bu) && CompactStrip.Parse("") is null && CompactStrip.Parse("Ctrl+Alt+Delete") is null && CompactStrip.Parse("Alt+F4") is null,
             "the shortcuts map to RegisterHotKey, never repeating, and only offered ones");
         Check(CompactStrip.Hotkeys[0] == CompactStrip.DefaultHotkey && CompactStrip.Hotkeys.All(h => h.Length == 0 || CompactStrip.Parse(h) is not null), "every offered shortcut can be registered");

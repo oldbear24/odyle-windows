@@ -22,7 +22,13 @@ using Forms = System.Windows.Forms;
 namespace Odyle.Reader;
 public sealed record CharacterSharing(string Title, string Rooms);
 public sealed record LanguageChoice(string Code, string Name);
-public sealed record CompactMate(string Name, string Value, string Cubes, Brush Dot, string Hint);
+// Gap is the room above the row and Pad the room around it: a row right inside a force's frame in
+// compact mode sits in by as much as a party's frame, so the text of every row stays in line.
+public sealed record CompactMate(string Name, string Value, string Cubes, Brush Dot, string Hint)
+{
+    public Thickness Gap { get; init; }
+    public Thickness Pad { get; init; }
+}
 // Place: where the character was last seen while its player shares their location, "" otherwise; it
 // follows the detail with a map pin, in place of the server.
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint, string Place = "")
@@ -30,11 +36,17 @@ public sealed record PartyMate(string Name, string Detail, string Value, string 
     public string PlaceGap => Place.Length > 0 && Detail.Length > 0 ? " · " : "";
     public string Pin => Place.Length > 0 ? "\uE707 " : "";
 }
-// Summary is the room's party line (RunChip.PartyLine), mint while the party can do a cube.
-public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = "", Brush? SummaryBrush = null)
+// The players of one party (blue) or force (violet) in the game, framed together (GameBands.Nest):
+// its label, player count and icon (the party list shows them), Items its rows and, in a force, its
+// parties' frames; Gap is the room around the frame, Pad the room inside it.
+public sealed record MateBand(string Label, string Count, string Icon, Brush Accent, Brush Edge, Brush Fill, object[] Items, Thickness Gap, Thickness Pad);
+// Summary is the room's party line (RunChip.PartyLine), mint while the party can do a cube. Shown is
+// what the list shows: the cards, with the players the game put together framed (Entries).
+public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = "", Brush? SummaryBrush = null, object[]? Entries = null)
 {
     public string Header => Name.ToUpper(Culture);
     public string Online => T("{0} online", Mates.Length);
+    public object[] Shown => Entries ?? Mates;
 }
 // One checklist task as the panel shows it: done within the current reset period or not.
 public sealed record TaskItem(UserTask Task, bool Done, string Hint)
@@ -580,16 +592,18 @@ public partial class MainWindow : Window
     {
         var now = DateTimeOffset.UtcNow + serverOffset;
         // Each room with characters: its party line (your character included, same rules as the
-        // dashboard) and the other members' characters online.
+        // dashboard) and the other members' characters online, the players of one party or force
+        // in the game together (yours first).
         var groups = snapshots.Select(s =>
             {
                 var cost = s.Room.Cost > 0 ? s.Room.Cost : odylePerCube; var party = PartyReadiness.Party(PartyReadiness.Entries(s), now, cost);
-                var mates = s.Members.Where(m => m.User != accountId)
+                var listed = s.Members.Where(m => m.User != accountId)
                     .SelectMany(m => m.Characters.Where(c => c.Shared ?? true).Select(c => (Member: m, Character: c, State: Readiness.Of(c, now))))
                     .Where(x => x.State is Presence.Live or Presence.Stale)
-                    .OrderBy(x => x.State).ThenByDescending(x => x.Character.Value)
-                    .Select(x => Mate(x.Member, x.Character, x.State, s.Room.Cost, now)).ToArray();
-                return (Party: party, Room: new PartyRoom(s.Room.Name, mates, RunChip.PartyLine(party, accountId), Brush(party.Cubes > 0 ? "Mint" : "Muted")));
+                    .OrderBy(x => x.State).ThenByDescending(x => x.Character.Value).ToArray();
+                var (_, rows) = GameBands.Arrange(listed, x => (x.Member.User, x.State == Presence.Live ? x.Character.GameGroup : null), accountId, GameBands.Own([s], accountId, now));
+                var cards = rows.Select(r => (Card: Mate(r.Item.Member, r.Item.Character, r.Item.State, s.Room.Cost, now, r.Band), r.Band)).ToArray();
+                return (Party: party, Room: new PartyRoom(s.Room.Name, cards.Select(c => c.Card).ToArray(), RunChip.PartyLine(party, accountId), Brush(party.Cubes > 0 ? "Mint" : "Muted"), CardEntries(GameBands.Nest(cards), top: true)));
             })
             .Where(g => g.Party.Characters.Length > 0).Select(g => g.Room).ToArray();
         PartyList.ItemsSource = groups;
@@ -628,7 +642,7 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException) { Status(T(error.Message)); }
         finally { RunGoingButton.IsEnabled = true; }
     }
-    private PartyMate Mate(RoomMember member, Character c, Presence state, int cost, DateTimeOffset now)
+    private PartyMate Mate(RoomMember member, Character c, Presence state, int cost, DateTimeOffset now, Band band)
     {
         cost = cost > 0 ? cost : odylePerCube;
         var live = state == Presence.Live; var cubes = c.Value / cost;
@@ -640,8 +654,50 @@ public partial class MainWindow : Window
         var detail = string.Join(" · ", new[] { c.ClassLine, where }.Where(part => part.Length > 0));
         return new PartyMate(c.CharacterName, live ? detail : T("stale") + seen + (detail.Length > 0 ? " · " + detail : ""),
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes"), Brush(live ? "Mint" : "Amber"),
-            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)), place);
+            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)) + BandHint(band), place);
     }
+    // ----- The players the game put together -----
+    // Framed as on the dashboard's room page (GameBands.Nest): a party in a blue frame, a force in a
+    // violet one around its parties, yours first. The party list labels each frame with an icon and
+    // how many players it holds, you included; compact mode keeps them tight and unlabelled.
+    private static string BandLabel<TRow>(Nested<TRow> band) => band.Kind == "force"
+        ? band.Yours ? T("In your force in game") : T("In one force in game")
+        : band.Yours ? T("In your party in game") : T("In one party in game");
+    private MateBand Frame<TRow>(Nested<TRow> band, string count, string icon, string fill, object[] items, Thickness gap, Thickness pad)
+    {
+        var force = band.Kind == "force";
+        return new(BandLabel(band), count, icon, Brush(force ? "ForceBand" : "PartyBand"), Brush(force ? "ForceEdge" : "PartyEdge"), Brush(force ? "Force" + fill : "Party" + fill), items, gap, pad);
+    }
+    private object[] CardEntries(IEnumerable<Nested<PartyMate>> nested, bool top) => nested.Select(n => n.IsBand
+        ? Frame(n, Tn(n.Rows + (n.Yours ? 1 : 0), "{0} player", "{0} players"), n.Kind == "force" ? "\uEA18" : "\uE716", "Wash", CardEntries(n.Children!, top: false), new(0, top ? 5 : 4, 0, top ? 1 : 0), new(6, 0, 6, 6))
+        : (object)n.Item!).ToArray();
+    // Compact mode's frames reach into the window's margin: a party's 8 px, its text in line with the
+    // rows outside; a force's too, a row right inside it set in by 5 px and a party inside it lining up.
+    private static (Thickness Gap, Thickness Pad) CompactFrame(string kind, bool top, double gap) => kind == "force"
+        ? (new(-8, gap, -4, 0), new(2, 1, 2, 1))
+        : top ? (new(-8, gap, -4, 0), new(7, 1, 3, 1)) : (new(0, gap, 0, 0), new(4, 1, 0, 1));
+    // The entries inside a frame of kind parent ("" for the list itself), after a row or a frame
+    // ("" when first): a frame stands 3 px apart, rows 1 px.
+    private object[] CompactEntries(IEnumerable<Nested<CompactStrip.Mate>> nested, string parent, string before, Func<CompactStrip.Mate, CompactMate> row)
+    {
+        var entries = new List<object>();
+        foreach (var n in nested)
+        {
+            var gap = before.Length == 0 ? (parent.Length > 0 ? 0 : n.IsBand ? 3 : 1) : n.IsBand || before == "frame" ? 3 : 1;
+            if (n.IsBand)
+            {
+                var (margin, pad) = CompactFrame(n.Kind, top: parent.Length == 0, gap);
+                entries.Add(Frame(n, "", "", "Tint", CompactEntries(n.Children!, n.Kind, "", row), margin, pad));
+            }
+            else entries.Add(row(n.Item!) with { Gap = new(0, gap, 0, 0), Pad = parent == "force" ? new(5, 0, 1, 0) : default });
+            before = n.IsBand ? "frame" : "row";
+        }
+        return entries.ToArray();
+    }
+    // A row's tooltip says which band it is in.
+    private static string BandHint(Band band) => string.Concat(
+        band.Party.Length > 0 ? "\n" + (band.YourParty ? T("In your party in game") : T("In one party in game")) : "",
+        band.Force.Length > 0 ? "\n" + (band.YourForce ? T("In your force in game") : T("In one force in game")) : "");
     // Where a character was last seen (location sharing): the map and how long ago, or "" without a place.
     private string PlaceLine(Place? place) => place is { Map: > 0 } p && Readiness.Parse(p.At) is { } at ? $"{Places.MapName(p.Map, maps)} · {Age(at)}" : "";
     // The card's character's place, ticking with the clock: what your rooms see of it.
@@ -1361,7 +1417,8 @@ public partial class MainWindow : Window
     private void CompactPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) SetCompact(false, persist: true); }
     private void ToggleCompact() { SetCompact(!compactMode, persist: true); if (!IsVisible) ShowWindow(); }
     // Your row (the card's character, value, cubes and state dot), then the other members'
-    // characters online in your rooms (CompactStrip.Mates), then a short note when needed.
+    // characters online in your rooms (CompactStrip.Mates), the players of one party or force in
+    // the game framed together, then a short note when needed.
     private void RenderCompact()
     {
         if (!compactMode) return;
@@ -1369,16 +1426,35 @@ public partial class MainWindow : Window
         CompactName.Text = connected && CurrentCharacter is { } character ? character.CharacterName : HeroTitle.Text;
         CompactValue.Text = ValueLabel.Text; CompactDot.Fill = StateDot.Fill;
         CompactCubes.Text = connected && heroValue is { } value ? Tn(value / heroCost, "{0} cube", "{0} cubes") : "";
-        CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", HeroTitle.Text, StateText.Text);
-        var (mates, more) = connected ? CompactStrip.Mates(snapshots, accountId, now, odylePerCube) : ([], 0);
-        CompactMates.ItemsSource = mates.Select(m => new CompactMate(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "Amber"),
-            (m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player)) + (PlaceLine(m.Location) is { Length: > 0 } place ? " · " + place : ""))).ToArray();
+        var (mates, more, own) = connected ? CompactStrip.Mates(snapshots, accountId, now, odylePerCube) : ([], 0, Band.None);
+        CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", HeroTitle.Text, StateText.Text) + BandHint(own);
+        CompactMate Row(CompactStrip.Mate m) => new(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "Amber"),
+            (m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player)) + (PlaceLine(m.Location) is { Length: > 0 } place ? " · " + place : "") + BandHint(m.Band));
+        // Your force and party come first (GameBands.Arrange): your row goes into their frames, which
+        // take the divider's place, and the rest follow.
+        var rest = GameBands.Nest(mates.Select(m => (m, m.Band)).ToArray());
+        var ownForce = rest is [{ Kind: "force", Yours: true } force, ..] ? force : null;
+        if (ownForce is not null) rest = rest[1..];
+        var inForce = ownForce?.Children ?? [];
+        var ownParty = (ownForce is null ? rest : inForce) is [{ Kind: "party", Yours: true } party, ..] ? party : null;
+        if (ownParty is not null) { if (ownForce is null) rest = rest[1..]; else inForce = inForce[1..]; }
+        void Own(Border box, Nested<CompactStrip.Mate>? band, bool top)
+        {
+            var (margin, pad) = band is null ? default : CompactFrame(band.Kind, top, 0);
+            box.Margin = margin; box.Padding = pad; box.BorderThickness = new(band is null ? 0 : 1); box.ToolTip = band is null ? null : BandLabel(band);
+            box.BorderBrush = band is null ? null : Brush(band.Kind == "force" ? "ForceEdge" : "PartyEdge"); box.Background = band is null ? null : Brush(band.Kind == "force" ? "ForceTint" : "PartyTint");
+        }
+        Own(CompactOwnForce, ownForce, top: true); Own(CompactOwnParty, ownParty, top: ownForce is null);
+        CompactOwnRow.Padding = ownForce is not null && ownParty is null ? new(5, 0, 1, 0) : default;
+        CompactOwnPartyMates.ItemsSource = ownParty is null ? Array.Empty<object>() : CompactEntries(ownParty.Children!, "party", "row", Row);
+        CompactOwnForceMates.ItemsSource = ownForce is null ? Array.Empty<object>() : CompactEntries(inForce, "force", ownParty is null ? "row" : "frame", Row);
+        CompactMates.ItemsSource = CompactEntries(rest, "", ownForce is null && ownParty is null ? "" : "frame", Row);
         CompactNote.Text = !connected ? T("Open settings to pair with the dashboard.")
             : readerPaused ? T("Paused by the server")
             : more > 0 ? T("+{0} more online", more)
             : mates.Length == 0 ? (rooms.Length == 0 ? T("No rooms yet · create or join one on the dashboard.") : T("No one else is online in your rooms.")) : "";
         CompactNote.Visibility = CompactNote.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        CompactDivider.Visibility = mates.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        CompactDivider.Visibility = rest.Length > 0 && ownForce is null && ownParty is null ? Visibility.Visible : Visibility.Collapsed;
     }
     private void ChooseHotkey(string hotkey)
     {

@@ -68,6 +68,9 @@ public static class Czech
         // Party
         ["{0} online"] = "{0} online", ["No one else is online in your rooms."] = "Ve tvých místnostech teď nikdo další není online.",
         ["{0} · live from the game"] = "{0} · živě ze hry", ["{0} · last value; their reader stopped reporting"] = "{0} · poslední hodnota; jeho čtečka přestala hlásit",
+        // Players in one party or force in the game (GameBands), as the dashboard words them
+        ["In your party in game"] = "Ve hře v tvé partě", ["In one party in game"] = "Ve hře v jedné partě",
+        ["In your force in game"] = "Ve hře v tvé force", ["In one force in game"] = "Ve hře v jedné force",
         // Daily & weekly
         ["DAILY & WEEKLY"] = "DENNÍ A TÝDENNÍ", ["DAILY"] = "DENNÍ", ["WEEKLY"] = "TÝDENNÍ",
         ["Manage ↗"] = "Spravovat ↗", ["Add, rename or remove tasks on the dashboard"] = "Přidávej, přejmenovávej a odebírej úkoly na dashboardu",
@@ -273,6 +276,7 @@ public static class Czech
     public static readonly IReadOnlyDictionary<string, string[]> Plurals = new Dictionary<string, string[]>
     {
         ["{0} cube|{0} cubes"] = ["{0} kostka", "{0} kostky", "{0} kostek"],
+        ["{0} player|{0} players"] = ["{0} hráč", "{0} hráči", "{0} hráčů"],
         ["{1} starts in {0} minute|{1} starts in {0} minutes"] = ["{1} začíná za {0} minutu", "{1} začíná za {0} minuty", "{1} začíná za {0} minut"],
         ["Daily reset in {1} · {0} task open|Daily reset in {1} · {0} tasks open"] = ["Denní reset za {1} · otevřený {0} úkol", "Denní reset za {1} · otevřené {0} úkoly", "Denní reset za {1} · otevřených {0} úkolů"],
         ["Weekly reset in {1} · {0} task open|Weekly reset in {1} · {0} tasks open"] = ["Týdenní reset za {1} · otevřený {0} úkol", "Týdenní reset za {1} · otevřené {0} úkoly", "Týdenní reset za {1} · otevřených {0} úkolů"],

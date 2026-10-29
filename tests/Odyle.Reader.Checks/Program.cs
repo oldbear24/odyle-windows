@@ -221,6 +221,16 @@ static class ReaderChecks
                 Check(party[0].Mates.Select(m => m.Name).SequenceEqual(new[] { "Lumina", "KaelenAlt" }), "only others' online characters are listed, live first");
                 Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && party[0].Mates[1].Cubes == "5 cubes" && System.Text.RegularExpressions.Regex.IsMatch(party[0].Mates[1].Detail, @"^stale · seen \d+s ago · Kaelen · Lumiel$"), "each mate shows Odyle and cubes, and a stale one says when it was last seen: " + party[0].Mates[1].Detail);
                 Check(party[0].Mates[0] is { Detail: "Chanter · Lv 45 · Lumiel · EU", Hint: "Chanter · Lv 45 · Lumina · live from the game" } , "a mate PLAYNC listed leads with its class and level: " + party[0].Mates[0].Detail);
+                Check(party[0].Shown.SequenceEqual(party[0].Mates), "outside a band the list shows the cards alone");
+                // The players the game put together (GameBands): your party framed inside your force's frame first,
+                // with the force's other player, then another party's frame, each labelled with its players.
+                Field("snapshots").SetValue(window, new[] { PartySnapshot(inGame: true) }); Call(window, "RenderParty");
+                var together = ((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource)[0];
+                Check(together.Mates.Select(m => m.Name).SequenceEqual(["Lumina", "Rin", "Tor", "Vex", "KaelenAlt"]) && together.Mates[0].Hint.EndsWith("live from the game\nIn your party in game\nIn your force in game") && together.Mates[2].Hint.EndsWith("game\nIn one party in game"),
+                    "the party list puts the players of one party or force together, yours first, and the tooltips say so: " + string.Join(", ", together.Mates.Select(m => m.Name)));
+                Check(together.Shown is [MateBand { Label: "In your force in game", Count: "3 players", Items: [MateBand { Label: "In your party in game", Count: "2 players", Items: [PartyMate { Name: "Lumina" }] }, PartyMate { Name: "Rin" }] },
+                    MateBand { Label: "In one party in game", Count: "2 players", Items: [PartyMate { Name: "Tor" }, PartyMate { Name: "Vex" }] }, PartyMate { Name: "KaelenAlt" }],
+                    "a party's frame sits in its force's, each labelled with how many players it holds, you included");
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
@@ -381,12 +391,31 @@ static class ReaderChecks
                 Check(PreferencesStore.Load().CompactMode && Control<Border>(window, "CompactPanel").Visibility == Visibility.Visible && Control<Grid>(window, "Card").Visibility == Visibility.Collapsed && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && window.Left == 300 && window.Top == 200,
                     "compact mode replaces the card and the checklist in the same window and place, and is remembered");
                 Check(Control<TextBlock>(window, "CompactName").Text == "TestHero" && Control<TextBlock>(window, "CompactValue").Text == "130" && Control<TextBlock>(window, "CompactCubes").Text == "3 cubes", "your row shows your character, its Odyle and cubes");
-                Check(Control<ItemsControl>(window, "CompactMates").ItemsSource is CompactMate[] and [{ Name: "Lumina", Value: "180", Cubes: "4 cubes", Hint: "Lumina · live from the game" }] && Control<TextBlock>(window, "CompactNote").Visibility == Visibility.Collapsed, "your party's rows follow, with their Odyle and cubes");
+                Check(Control<ItemsControl>(window, "CompactMates").ItemsSource is object[] and [CompactMate { Name: "Lumina", Value: "180", Cubes: "4 cubes", Hint: "Lumina · live from the game" }] && Control<TextBlock>(window, "CompactNote").Visibility == Visibility.Collapsed, "your party's rows follow, with their Odyle and cubes");
                 var compactShell = (FrameworkElement)window.Content; compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
                 Check(Math.Abs(compactShell.ActualWidth - CompactStrip.Width) < 1 && compactShell.ActualHeight < 90, "compact mode is 220 px wide and only as tall as its rows");
                 Field("readerPaused").SetValue(window, true); Call(window, "RenderHero");
                 Check(Control<TextBlock>(window, "CompactNote").Text == "Paused by the server", "a server pause shows under the rows");
                 Field("readerPaused").SetValue(window, false);
+                Check(Control<Border>(window, "CompactDivider").Visibility == Visibility.Visible && Control<Border>(window, "CompactOwnParty") is { BorderBrush: null, BorderThickness.Left: 0 } && Control<ItemsControl>(window, "CompactOwnPartyMates").Items.Count == 0,
+                    "outside a band the divider parts your row from the others'");
+                // Your in-game party (GameBands) is framed around your row and its players, in place of the divider.
+                var outside = Field("snapshots").GetValue(window); GameGroup ours = new("0a0b0c0d0e0f0001");
+                Field("snapshots").SetValue(window, new[] { new RoomSnapshot(new Room("r1", "Evening", 40, "reporter", true), [new RoomMember("m0", "u", "reporter", "Me", [new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 130, true, true, mateSeen, mateSeen, "packet", GameGroup: ours)]),
+                    new RoomMember("m1", "l", "reporter", "Lumina", [new Character("l1", "l", "Lumina", "Lumiel", "GLOBAL_EU", 180, true, true, mateSeen, mateSeen, "packet", GameGroup: ours)]),
+                    new RoomMember("m2", "z", "reporter", "Zed", [new Character("z1", "z", "Zed", "Lumiel", "GLOBAL_EU", 900, true, true, mateSeen, mateSeen, "packet")])], mateSeen) });
+                Call(window, "RenderParty");
+                Check(Control<ItemsControl>(window, "CompactOwnPartyMates").ItemsSource is object[] and [CompactMate { Name: "Lumina" } lumina] && lumina.Hint.EndsWith("\nIn your party in game")
+                    && Control<ItemsControl>(window, "CompactMates").ItemsSource is object[] and [CompactMate { Name: "Zed", Gap.Top: 3 }] && Control<ItemsControl>(window, "CompactOwnForceMates").Items.Count == 0
+                    && Control<Border>(window, "CompactOwnParty") is { BorderBrush: not null, Background: not null, BorderThickness.Left: 1, Margin.Left: -8, ToolTip: "In your party in game" } && Control<Border>(window, "CompactOwnForce").BorderBrush is null
+                    && Control<Border>(window, "CompactDivider").Visibility == Visibility.Collapsed && ((string)Control<Border>(window, "CompactPanel").ToolTip).EndsWith("\nIn your party in game"),
+                    "your in-game party is framed around your row and its players, in place of the divider");
+                compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
+                var nameAt = (FrameworkElement f) => f.TranslatePoint(new Point(0, 0), compactShell).X;
+                var mateName = Visuals(Control<ItemsControl>(window, "CompactOwnPartyMates")).OfType<TextBlock>().First(t => t.Text == "Lumina");
+                var otherName = Visuals(Control<ItemsControl>(window, "CompactMates")).OfType<TextBlock>().First(t => t.Text == "Zed");
+                Check(Math.Abs(nameAt(Control<TextBlock>(window, "CompactName")) - nameAt(otherName)) < 1.5 && Math.Abs(nameAt(mateName) - nameAt(otherName)) < 1.5, "framed rows keep their names in line with the rest");
+                Field("snapshots").SetValue(window, outside); Call(window, "RenderParty");
                 var hotkey = (ComboBox)settings.FindName("CompactHotkeyInput");
                 Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the compact mode shortcuts, Ctrl+Alt+O first");
                 hotkey.SelectedValue = "";
@@ -859,7 +888,7 @@ static class ReaderChecks
         var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
         Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
-        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot() });
+        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot(inGame: true) });
         ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
@@ -875,6 +904,9 @@ static class ReaderChecks
         Call(window, "RenderHero"); Call(window, "RenderParty");
         Control<TextBlock>(window, "CaptureStatsLabel").Text = "1,284 packets · 96 KB from the game";
         Snapshot(window, Path.Combine(directory, "compact-preview.png"));
+        // The whole party list with its frames, unscrolled (the window scrolls it past 190 px).
+        var list = (ScrollViewer)Control<ItemsControl>(window, "PartyList").Parent; var listHeight = list.MaxHeight; list.MaxHeight = double.PositiveInfinity;
+        Snapshot(window, Path.Combine(directory, "party-bands-preview.png")); list.MaxHeight = listHeight;
         // The account's characters on the card (W#17), opened.
         Field("altsOpened").SetValue(window, true); Call(window, "RenderHero");
         Snapshot(window, Path.Combine(directory, "characters-preview.png"));
@@ -942,16 +974,24 @@ static class ReaderChecks
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(path); encoder.Save(file);
     }
-    // Synthetic room: your own live character, two live/stale mates and one offline mate.
-    static RoomSnapshot PartySnapshot()
+    // Synthetic room: your own live character, two live/stale mates and one offline mate. In game,
+    // you and Lumina are in a party inside a force, Rin in the force in another party, and two more
+    // mates in a party of their own.
+    static RoomSnapshot PartySnapshot(bool inGame = false)
     {
         string Ago(int seconds) => DateTime.UtcNow.AddSeconds(-seconds).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
-        Character Hero(string id, string user, string name, int value, bool valid, int seen) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet");
-        return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), [
-            new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2)]),
-            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5) with { Level = 45, ClassName = "Chanter" }]),
+        GameGroup? ours = inGame ? new("0a0b0c0d0e0f0001", "0f0e0d0c0b0a0001") : null, theirs = new("0a0b0c0d0e0f0003");
+        Character Hero(string id, string user, string name, int value, bool valid, int seen, GameGroup? group = null) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet", GameGroup: group);
+        RoomMember[] members = [
+            new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2, ours)]),
+            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5, ours) with { Level = 45, ClassName = "Chanter" }]),
             new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
-            new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
+            new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])];
+        if (inGame) members = [.. members,
+            new RoomMember("m5", "r", "reporter", "Rin", [Hero("c6", "r", "Rin", 220, true, 4, new("0a0b0c0d0e0f0002", ours!.Force)) with { Level = 44, ClassName = "Ranger" }]),
+            new RoomMember("m6", "t", "reporter", "Tor", [Hero("c7", "t", "Tor", 310, true, 6, theirs) with { Level = 43, ClassName = "Cleric" }]),
+            new RoomMember("m7", "v", "reporter", "Vex", [Hero("c8", "v", "Vex", 95, true, 3, theirs)])];
+        return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), members, DateTime.UtcNow.ToString("O"));
     }
     // Answers like the backend for the offline checks: the character the game names, the account's
     // characters and rooms, and readings, refused for their adapter while Refusal is set. Paused is
@@ -1046,6 +1086,7 @@ static class ReaderChecks
     static object? Call(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
     static T Control<T>(MainWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
     static IEnumerable<DependencyObject> Tree(DependencyObject at) { yield return at; foreach (var child in LogicalTreeHelper.GetChildren(at)) if (child is DependencyObject next) foreach (var below in Tree(next)) yield return below; }
+    static IEnumerable<DependencyObject> Visuals(DependencyObject at) { yield return at; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(at); i++) foreach (var below in Visuals(VisualTreeHelper.GetChild(at, i))) yield return below; }
     static void Check(bool condition, string message) { if (!condition) throw new Exception("UI check failed: " + message); }
     static async Task Until(Func<bool> condition, int attempts)
     {
