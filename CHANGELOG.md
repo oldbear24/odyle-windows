@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.32.0 · 2026-10-29
+
+### New
+- **See who plays together, in the window too**: on the card and in compact mode, the players of your room who are in your party in the game now stand right under you, with a blue line beside them and a faint blue background; players in your force get a violet line. Other parties in your room are grouped the same way. Hover over a player to see which group they are in. Only players whose Odyle 0.31.0 or newer is reading show up in a group, as on your room page.
+
 ## 0.31.0 · 2026-10-28
 
 ### New

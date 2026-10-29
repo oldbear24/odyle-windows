@@ -68,6 +68,9 @@ public static class Czech
         // Party
         ["{0} online"] = "{0} online", ["No one else is online in your rooms."] = "Ve tvých místnostech teď nikdo další není online.",
         ["{0} · live from the game"] = "{0} · živě ze hry", ["{0} · last value; their reader stopped reporting"] = "{0} · poslední hodnota; jeho čtečka přestala hlásit",
+        // Players in one party or force in the game (GameBands), as the dashboard words them
+        ["In your party in game"] = "Ve hře v tvé partě", ["In one party in game"] = "Ve hře v jedné partě",
+        ["In your force in game"] = "Ve hře v tvé force", ["In one force in game"] = "Ve hře v jedné force",
         // Daily & weekly
         ["DAILY & WEEKLY"] = "DENNÍ A TÝDENNÍ", ["DAILY"] = "DENNÍ", ["WEEKLY"] = "TÝDENNÍ",
         ["Manage ↗"] = "Spravovat ↗", ["Add, rename or remove tasks on the dashboard"] = "Přidávej, přejmenovávej a odebírej úkoly na dashboardu",

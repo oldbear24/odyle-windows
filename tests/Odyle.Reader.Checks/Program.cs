@@ -221,6 +221,15 @@ static class ReaderChecks
                 Check(party[0].Mates.Select(m => m.Name).SequenceEqual(new[] { "Lumina", "KaelenAlt" }), "only others' online characters are listed, live first");
                 Check(party[0].Mates[0].Value == "180" && party[0].Mates[0].Cubes == "4 cubes" && party[0].Mates[1].Cubes == "5 cubes" && System.Text.RegularExpressions.Regex.IsMatch(party[0].Mates[1].Detail, @"^stale · seen \d+s ago · Kaelen · Lumiel$"), "each mate shows Odyle and cubes, and a stale one says when it was last seen: " + party[0].Mates[1].Detail);
                 Check(party[0].Mates[0] is { Detail: "Chanter · Lv 45 · Lumiel · EU", Hint: "Chanter · Lv 45 · Lumina · live from the game" } , "a mate PLAYNC listed leads with its class and level: " + party[0].Mates[0].Detail);
+                Check(party[0].Mates.All(m => m.Look is { ForceLine: null, PartyLine: null, Lines.Left: 0, Gap.Top: 3 }), "outside a band the cards keep their place");
+                // The players the game put together (GameBands): your party inside your force first, then the
+                // force's other player, then another party; each band's lines run unbroken beside its cards.
+                Field("snapshots").SetValue(window, new[] { PartySnapshot(inGame: true) }); Call(window, "RenderParty");
+                var bands = ((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource)[0].Mates;
+                Check(bands.Select(m => m.Name).SequenceEqual(["Lumina", "Rin", "Tor", "Vex", "KaelenAlt"]) && bands[0].Hint.EndsWith("live from the game\nIn your party in game\nIn your force in game") && bands[1].Hint.EndsWith("game\nIn your force in game") && bands[2].Hint.EndsWith("game\nIn one party in game"),
+                    "the party list puts the players of one party or force together, yours first, and says so: " + string.Join(", ", bands.Select(m => m.Name)));
+                Check(bands[0].Look is { PartyLine: not null, ForceLine: not null, Lines.Left: 2, Gap.Top: 3 } && bands[1].Look is { PartyLine: null, ForceLine: not null, Gap.Top: 0, Inset.Top: 3 } && bands[2].Look.Gap.Top == 3 && bands[3].Look is { Gap.Top: 0, Inset.Top: 0, Indent.Top: 3 } && bands[4].Look is { ForceLine: null, Lines.Left: 0, Gap.Top: 3 },
+                    "a band's lines run on beside its cards and it stands apart");
                 Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
                 Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
                 Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
@@ -387,6 +396,17 @@ static class ReaderChecks
                 Field("readerPaused").SetValue(window, true); Call(window, "RenderHero");
                 Check(Control<TextBlock>(window, "CompactNote").Text == "Paused by the server", "a server pause shows under the rows");
                 Field("readerPaused").SetValue(window, false);
+                Check(Control<Border>(window, "CompactDivider").Visibility == Visibility.Visible && Control<Border>(window, "CompactOwnParty").BorderBrush is null, "outside a band the divider parts your row from the others'");
+                // Your in-game party (GameBands) goes on from your row in place of the divider, in its line and tint.
+                var outside = Field("snapshots").GetValue(window); GameGroup ours = new("0a0b0c0d0e0f0001");
+                Field("snapshots").SetValue(window, new[] { new RoomSnapshot(new Room("r1", "Evening", 40, "reporter", true), [new RoomMember("m0", "u", "reporter", "Me", [new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 130, true, true, mateSeen, mateSeen, "packet", GameGroup: ours)]),
+                    new RoomMember("m1", "l", "reporter", "Lumina", [new Character("l1", "l", "Lumina", "Lumiel", "GLOBAL_EU", 180, true, true, mateSeen, mateSeen, "packet", GameGroup: ours)]),
+                    new RoomMember("m2", "z", "reporter", "Zed", [new Character("z1", "z", "Zed", "Lumiel", "GLOBAL_EU", 900, true, true, mateSeen, mateSeen, "packet")])], mateSeen) });
+                Call(window, "RenderParty");
+                Check(Control<ItemsControl>(window, "CompactMates").ItemsSource is CompactMate[] and [{ Name: "Lumina", Look: { PartyLine: not null, ForceLine: null, Tint: not null, Gap.Top: 0 } } lumina, { Name: "Zed", Look: { PartyLine: null, Tint: null, Gap.Top: 3 } }] && lumina.Hint.EndsWith("\nIn your party in game")
+                    && Control<Border>(window, "CompactOwnParty").BorderBrush is not null && Control<Border>(window, "CompactOwnForce").Background is not null && Control<Border>(window, "CompactDivider").Visibility == Visibility.Collapsed && ((string)Control<Border>(window, "CompactPanel").ToolTip).EndsWith("\nIn your party in game"),
+                    "your in-game party leads under your row, in its line and tint, in place of the divider");
+                Field("snapshots").SetValue(window, outside); Call(window, "RenderParty");
                 var hotkey = (ComboBox)settings.FindName("CompactHotkeyInput");
                 Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the compact mode shortcuts, Ctrl+Alt+O first");
                 hotkey.SelectedValue = "";
@@ -859,7 +879,7 @@ static class ReaderChecks
         var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
         Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
-        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot() });
+        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot(inGame: true) });
         ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
@@ -942,16 +962,24 @@ static class ReaderChecks
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(path); encoder.Save(file);
     }
-    // Synthetic room: your own live character, two live/stale mates and one offline mate.
-    static RoomSnapshot PartySnapshot()
+    // Synthetic room: your own live character, two live/stale mates and one offline mate. In game,
+    // you and Lumina are in a party inside a force, Rin in the force in another party, and two more
+    // mates in a party of their own.
+    static RoomSnapshot PartySnapshot(bool inGame = false)
     {
         string Ago(int seconds) => DateTime.UtcNow.AddSeconds(-seconds).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
-        Character Hero(string id, string user, string name, int value, bool valid, int seen) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet");
-        return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), [
-            new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2)]),
-            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5) with { Level = 45, ClassName = "Chanter" }]),
+        GameGroup? ours = inGame ? new("0a0b0c0d0e0f0001", "0f0e0d0c0b0a0001") : null, theirs = new("0a0b0c0d0e0f0003");
+        Character Hero(string id, string user, string name, int value, bool valid, int seen, GameGroup? group = null) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, valid, Ago(600), Ago(seen), "packet", GameGroup: group);
+        RoomMember[] members = [
+            new RoomMember("m1", "u", "owner", "Sample account", [Hero("c1", "u", "TestHero", 390, true, 2, ours)]),
+            new RoomMember("m2", "l", "reporter", "Lumina", [Hero("c3", "l", "Lumina", 180, true, 5, ours) with { Level = 45, ClassName = "Chanter" }]),
             new RoomMember("m3", "k", "reporter", "Kaelen", [Hero("c4", "k", "KaelenAlt", 235, false, 10)]),
-            new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])], DateTime.UtcNow.ToString("O"));
+            new RoomMember("m4", "n", "reporter", "Nyx", [Hero("c5", "n", "Nyx", 400, true, 300)])];
+        if (inGame) members = [.. members,
+            new RoomMember("m5", "r", "reporter", "Rin", [Hero("c6", "r", "Rin", 220, true, 4, new("0a0b0c0d0e0f0002", ours!.Force)) with { Level = 44, ClassName = "Ranger" }]),
+            new RoomMember("m6", "t", "reporter", "Tor", [Hero("c7", "t", "Tor", 310, true, 6, theirs) with { Level = 43, ClassName = "Cleric" }]),
+            new RoomMember("m7", "v", "reporter", "Vex", [Hero("c8", "v", "Vex", 95, true, 3, theirs)])];
+        return new RoomSnapshot(new Room("r1", "Evening", 40, "", false), members, DateTime.UtcNow.ToString("O"));
     }
     // Answers like the backend for the offline checks: the character the game names, the account's
     // characters and rooms, and readings, refused for their adapter while Refusal is set. Paused is

@@ -8,7 +8,8 @@ using Odyle.Core;
 // Parties and forces: the own party's roster (00 92) and end (1F 92), the own force's roster (02 96),
 // a player leaving it (22 96) and its end (2E 96), read only for the own entity, what the tracker
 // keeps of them, and the wire contract of POST /api/odyle/game-group. Synthetic frames in the
-// layouts seen on Global, never captures.
+// layouts seen on Global, never captures. Then the bands the lists show (GameBands), the same
+// cases as the dashboard's tests/party.test.cjs.
 static class GroupChecks
 {
     const ulong Own = 606, Mate = 5069, OwnCharacter = 0x0900_0000_0003_6c9a, MateCharacter = 0x090e_0000_0003_b300;
@@ -19,7 +20,47 @@ static class GroupChecks
         Frames();
         Tracking();
         await Wire();
-        Console.WriteLine("Party and force frame, tracking and wire checks passed.");
+        Bands();
+        Console.WriteLine("Party and force frame, tracking, wire and band checks passed.");
+    }
+    static void Bands()
+    {
+        // Rows as the lists hand them over: the player and the group (null unless live). A shape
+        // lists the rows in order, a band's as player:party/force.
+        (string, GameGroup?) P(string player, string? party = null, string? force = null) => (player, party is null && force is null ? null : new GameGroup(party, force));
+        (Band Own, ((string, GameGroup?) Item, Band Band)[] Rows) Arrange(GameGroup? own, params (string, GameGroup?)[] rows) => GameBands.Arrange(rows, r => r, "me", own);
+        string Shape((Band Own, ((string, GameGroup?) Item, Band Band)[] Rows) arranged) => string.Join(" ", arranged.Rows.Select(r => r.Item.Item1 + (r.Band.Any ? $":{r.Band.Party}/{r.Band.Force}" : "")));
+        // Two players of one party, a third of the same force in another party, one outside both.
+        (string, GameGroup?)[] room = [P("Anna", "p1", "f1"), P("Bram"), P("Cleo", "p1", "f1"), P("Dax", "p2", "f1")];
+        Check(Shape(Arrange(null, room)) == "Anna:p1/f1 Cleo:p1/f1 Dax:/f1 Bram", "a party stands together inside its force, the force's other players after it");
+        Check(Shape(Arrange(null, room[1], room[3], room[0], room[2])) == "Bram Dax:/f1 Anna:p1/f1 Cleo:p1/f1", "a band takes the place of its first row");
+        Check(Shape(Arrange(null, room[..3])) == "Anna:p1/ Cleo:p1/ Bram" && Shape(Arrange(null, room[0], room[1])) == "Anna Bram", "a force whose players all share one party is that party; one player alone makes no band");
+        Check(Shape(Arrange(null, P("Anna", "p1"), P("Cleo", "p1", "f1"), P("Dax", force: "f1"))) == "Anna:p1/f1 Cleo:p1/f1 Dax:/f1", "a party without a force yet takes the force one of its players reported");
+        Check(Shape(Arrange(null, P("Anna", "p1"), P("Cleo"), P("Cleo", "p1"))) == "Anna:p1/ Cleo:p1/ Cleo" && Shape(Arrange(null, P("Cleo", "p1"), P("Cleo", "p2"), P("Anna", "p2"))) == "Cleo Cleo Anna",
+            "a player's first row with a group speaks for them");
+        // You count as listed first: your band leads, and says it is yours.
+        var yours = Arrange(new("p1", "f1"), P("Bram"), P("Zed", "p9"), P("Anna", "p1", "f1"), P("Dax", "p2", "f1"));
+        Check(Shape(yours) == "Anna:p1/f1 Dax:/f1 Bram Zed" && yours.Own == new Band("p1", "f1", true, true) && yours.Rows[0].Band is { YourParty: true, YourForce: true } && yours.Rows[1].Band is { YourParty: false, YourForce: true },
+            "your party and force come first and are marked yours");
+        var others = Arrange(new("p1"), P("Bram"), P("Tor", "p3"), P("Vex", "p3"));
+        Check(Shape(others) == "Bram Tor:p3/ Vex:p3/" && others.Own == Band.None && !others.Rows[1].Band.YourParty, "others' party is a band that is not yours");
+        Check(Shape(Arrange(null, P("me", "p1"), P("Anna", "p1"))) == "me Anna" && Arrange(null).Rows.Length == 0, "your own rows never speak for you");
+        Check(new Band("p1", "f1").Continues(new Band("p2", "f1")) && new Band("p1").Continues(new Band("p1")) && !new Band("p1").Continues(new Band("p2")) && !Band.None.Continues(Band.None), "rows of one band run on");
+        // The character's gameGroup as room snapshots and realtime news carry it.
+        var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        Check(JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"A","server":"S","region":"GLOBAL_EU","value":1,"confirmed":true,"valid":true,"lastReadingAt":"","gameGroup":{"party":"ab","at":"2026-10-28 12:00:00.000Z"}}""", json)!.GameGroup == new GameGroup("ab", null, "2026-10-28 12:00:00.000Z")
+            && JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"A","server":"S","region":"GLOBAL_EU","value":1,"confirmed":true,"valid":true,"lastReadingAt":"","gameGroup":null}""", json)!.GameGroup is null, "a character's gameGroup is read");
+        // Compact mode across your rooms: only live characters count, your own from any of your characters.
+        var moment = DateTimeOffset.Parse("2026-10-28T12:00:00Z"); string Ago(int seconds) => moment.AddSeconds(-seconds).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+        Character Seen(string id, string user, int value, int seconds, GameGroup? group = null) => new(id, user, id, "Lumiel", "GLOBAL_EU", value, true, true, Ago(600), Ago(seconds), "packet", GameGroup: group);
+        RoomMember Member(string user, params Character[] characters) => new(user + "-m", user, "reporter", user, characters);
+        RoomSnapshot Room(string id, params RoomMember[] members) => new(new Room(id, id, 40, "reporter", true), members, Ago(0));
+        var rooms = new[] { Room("r1", Member("u", Seen("Hero", "u", 300, 5, new("p1", "f1")) with { Shared = false }), Member("l", Seen("Lumina", "l", 180, 5, new("p1", "f1"))), Member("z", Seen("Zed", "z", 900, 5))),
+            Room("r2", Member("n", Seen("Nyx", "n", 90, 10, new("p2", "f1"))), Member("k", Seen("Kael", "k", 500, 60, new("p1", "f1")))) };
+        var (mates, _, own) = CompactStrip.Mates(rooms, "u", moment, 40);
+        Check(mates.Select(m => (m.Name, m.Band.Party, m.Band.Force)).SequenceEqual([("Lumina", "p1", "f1"), ("Nyx", "", "f1"), ("Zed", "", ""), ("Kael", "", "")]) && own == new Band("p1", "f1", true, true),
+            "compact mode puts your party and force first across your rooms; a stale character's group says nothing");
+        Check(CompactStrip.Mates(rooms, "u", moment.AddHours(3), 40) is { Own.Any: false } && GameBands.Own(rooms, "u", moment.AddHours(3)) is null, "without a live character you are in no band");
     }
     static void Frames()
     {

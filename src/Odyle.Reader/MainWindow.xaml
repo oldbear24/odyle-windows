@@ -9,6 +9,10 @@
        The header's compact button, the tray or the shortcut switch it; a double-click or ⤢ brings the card back. -->
   <Border x:Name="CompactPanel" Visibility="Collapsed" Padding="10,6,6,7" Background="Transparent" MouseLeftButtonDown="CompactPanel_MouseLeftButtonDown" ToolTip="Double-click for the full card">
    <StackPanel Grid.IsSharedSizeScope="True">
+    <!-- Your row and the others' carry the band the game put them in (GameBands): the force's violet line, the party's
+         blue line beside it and a tint, in the window's margin so the text stays in line -->
+    <Border x:Name="CompactOwnForce" Margin="-8,0,-4,0" BorderThickness="2,0,0,0" Padding="1,0,0,0">
+    <Border x:Name="CompactOwnParty" BorderThickness="2,0,0,0" Padding="3,1,4,1">
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
      <Ellipse x:Name="CompactDot" Width="6" Height="6" Fill="{StaticResource Faint}" VerticalAlignment="Center" Margin="0,1,6,0"/>
@@ -17,16 +21,22 @@
      <TextBlock x:Name="CompactCubes" Grid.Column="3" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
      <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE740;" FontSize="10" Padding="5,2" Margin="3,0,0,0" Click="Expand_Click" ToolTip="Full card"/>
     </Grid>
+    </Border>
+    </Border>
     <Border x:Name="CompactDivider" Height="1" Background="{StaticResource Line}" Margin="0,4,0,2"/>
     <ItemsControl x:Name="CompactMates" Focusable="False">
      <ItemsControl.ItemTemplate><DataTemplate>
-      <Grid Margin="0,1,0,0" Background="Transparent" ToolTip="{Binding Hint}">
+      <Border Margin="{Binding Look.Gap}" Background="{Binding Look.Tint}" BorderBrush="{Binding Look.ForceLine}" BorderThickness="{Binding Look.Lines}" Padding="{Binding Look.Inset}">
+      <Border BorderBrush="{Binding Look.PartyLine}" BorderThickness="{Binding Look.Lines}" Padding="{Binding Look.Indent}">
+      <Grid Background="Transparent" ToolTip="{Binding Hint}">
        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
        <Ellipse Width="5" Height="5" Fill="{Binding Dot}" VerticalAlignment="Center" Margin="0,1,7,0"/>
        <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="#D5E7DB" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
        <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
        <TextBlock Grid.Column="3" Text="{Binding Cubes}" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
       </Grid>
+      </Border>
+      </Border>
      </DataTemplate></ItemsControl.ItemTemplate>
     </ItemsControl>
     <TextBlock x:Name="CompactNote" FontSize="10.5" Foreground="{StaticResource Faint}" TextWrapping="Wrap" Margin="13,2,0,0"/>
@@ -147,7 +157,10 @@
          <TextBlock Text="{Binding Summary}" Foreground="{Binding SummaryBrush}" FontSize="10.5" Margin="2,1,2,0" TextTrimming="CharacterEllipsis"/>
          <ItemsControl ItemsSource="{Binding Mates}" Focusable="False">
           <ItemsControl.ItemTemplate><DataTemplate>
-           <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">
+           <!-- In a band the game put it in (GameBands): the force's violet line, the party's blue line, a tinted card -->
+           <Border Margin="{Binding Look.Gap}" BorderBrush="{Binding Look.ForceLine}" BorderThickness="{Binding Look.Lines}" Padding="{Binding Look.Inset}">
+           <Border BorderBrush="{Binding Look.PartyLine}" BorderThickness="{Binding Look.Lines}" Padding="{Binding Look.Indent}">
+           <Border Background="{Binding Look.Tint}" BorderBrush="{Binding Look.Edge}" BorderThickness="1" CornerRadius="7" Padding="8,4" ToolTip="{Binding Hint}">
             <!-- Two lines: the name and its Odyle, then class, level or staleness, where it was last seen, and the cubes -->
             <Grid>
              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -158,6 +171,8 @@
              <TextBlock Grid.Row="1" Grid.Column="1" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"><Run Text="{Binding Detail, Mode=OneWay}"/><Run Text="{Binding PlaceGap, Mode=OneWay}"/><Run Text="{Binding Pin, Mode=OneWay}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run Text="{Binding Place, Mode=OneWay}"/></TextBlock>
              <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="8,0,0,0"/>
             </Grid>
+           </Border>
+           </Border>
            </Border>
           </DataTemplate></ItemsControl.ItemTemplate>
          </ItemsControl>
