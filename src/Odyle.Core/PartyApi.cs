@@ -51,8 +51,12 @@ public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, stri
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 // ShareLocation: the account shares its characters' location with its rooms (an opt-in on the
 // dashboard); backends from before location sharing leave it out, which means no.
-public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null);
-public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null);
+// PvpStats: the account turned on PvP stats (an opt-in on the dashboard too), so the app reads and
+// sends its characters' kills, assists and deaths; left out by backends from before them: no.
+public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null);
+public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null);
+// Enabled is false when the account has PvP stats off: the server stored nothing.
+public sealed record PvpResponse(bool Enabled, int Stored = 0);
 // Shared is false when the account does not share its location: the server stored nothing.
 public sealed record LocationResponse(bool Shared);
 // Base is the natural pool (it regenerates up to a cap), Bonus what items added; Kind and Delta
@@ -73,6 +77,8 @@ public sealed class PartyApi : IDisposable
     public const string LocationAdapterRefused = "This location adapter is not accepted.";
     // The same for the party and force ids (POST /api/odyle/game-group).
     public const string GroupAdapterRefused = "This group adapter is not accepted.";
+    // The same for the PvP adapter (PvpTracker.Adapter): the app stops reading and sending PvP until it restarts.
+    public const string PvpAdapterRefused = "This PvP adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;
@@ -201,6 +207,11 @@ public sealed class PartyApi : IDisposable
     // players of one party together. Sent on its own, so a server from before it answers 404.
     public Task GameGroupAsync(string sessionId, string characterId, string party, string force) =>
         PostAsync<JsonElement>("api/odyle/game-group", new { sessionId, characterId, adapter = GroupTracker.Adapter, party = party.Length > 0 ? party : null, force = force.Length > 0 ? force : null });
+    // The named character's PvP kills, assists and deaths (PvpOutbox), up to 20 at a time, for an
+    // account that turned on PvP stats; Enabled is false when it has not (nothing was stored). An
+    // event the server already has is not stored twice. A server from before PvP stats answers 404.
+    public Task<PvpResponse> PvpAsync(string sessionId, string characterId, IReadOnlyCollection<PvpReport> events) =>
+        PostAsync<PvpResponse>("api/odyle/pvp", new { sessionId, characterId, adapter = PvpTracker.Adapter, events });
     public async Task<Character> SaveCharacterAsync(string characterName, string server, string region)
     {
         if (string.IsNullOrWhiteSpace(characterName) || characterName.Trim().Length > 40) throw new ArgumentException(Localizer.T("Enter a character name (up to 40 characters)."));

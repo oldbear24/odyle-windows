@@ -3,6 +3,7 @@ using Odyle.Core;
 PacketChecks.Run();
 await LocationChecks.Run();
 await GroupChecks.Run();
+await PvpChecks.Run();
 IdentityChecks.Run();
 ChecklistChecks.Run();
 LocalizationChecks.Run();
@@ -115,6 +116,12 @@ if (args.Length is 1 or 2)
     var character = await api.ReportAsync(new PacketReading(session.SessionId, 1, "Main", "EU", "GLOBAL_EU", 0, "test-fixture-v1"));
     if (saved.Id != character.Id) throw new Exception("First game reading duplicated the saved character.");
     await api.HeartbeatAsync(session.SessionId, character.Id); await api.InvalidateAsync(character.Id, session.SessionId);
+    // PvP stats are off for a new account, and the server knows the PvP route: the test backend lists
+    // only its own adapter, so it refuses the app's with the message the app stops reading at. A
+    // server from before PvP stats (0.57 or older) has neither.
+    if (session.PvpStats == true) throw new Exception("A new account must not have PvP stats on.");
+    try { await api.PvpAsync(session.SessionId, character.Id, [new("0123456789abcdef0123456789abcdef", "kill", "Vexa", "", "", "", "", "", 0)]); throw new Exception("The test backend accepted the Global PvP adapter."); }
+    catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.BadRequest && error.Message == PartyApi.PvpAdapterRefused || error.StatusCode == System.Net.HttpStatusCode.NotFound && session.PvpStats is null) { }
     if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
     await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");
     await RealtimeChecks.RunLive(api, paired.Record.Id, session.SessionId, character.Id);

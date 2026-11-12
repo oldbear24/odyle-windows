@@ -889,7 +889,7 @@ public partial class MainWindow : Window
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
-        NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation);
+        NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true); UsesPaths();
@@ -1804,6 +1804,7 @@ public partial class MainWindow : Window
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
         next.LocationObserved += location => Dispatcher.BeginInvoke(() => OnLocation(next, location));
         next.GroupObserved += change => Dispatcher.BeginInvoke(() => OnGroup(next, change));
+        next.ReadPvp = PvpWanted; next.PvpObserved += e => Dispatcher.BeginInvoke(() => OnPvp(next, e));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
         // snapshot and identity, and once per run each distinct stat frame layout and each other
         // stat resource that sends updates (not every frame). The patch-day trace counts them all.
@@ -1811,7 +1812,7 @@ public partial class MainWindow : Window
         if (trace is { } counting)
         {
             next.FrameObserved += counting.Frame; next.SnapshotObserved += counting.Snapshot; next.UpdateObserved += counting.Update;
-            next.LayoutObserved += counting.Layout; next.IdentityObserved += counting.Identity; next.LocationObserved += counting.Location;
+            next.LayoutObserved += counting.Layout; next.IdentityObserved += counting.Identity; next.LocationObserved += counting.Location; next.PvpFrameObserved += counting.Pvp;
         }
         // The map of every world load, for naming maps on the dashboard; positions are never logged.
         next.LocationObserved += l => { if (l.Map is { } map) Log.Info($"Decoder: world load on map {map}."); };
@@ -2064,6 +2065,8 @@ public partial class MainWindow : Window
             if (detectedCharacterKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
             // Its party and force, each time the game names it (every few minutes): a reading that ended cleared them on the server.
             _ = SendGroupAsync();
+            // PvP events read before the character was saved are its own.
+            _ = SendPvpAsync();
             // A snapshot still waiting for its owner belongs to the character just named.
             if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
             if (latest is not null) await PublishCoreAsync();
@@ -2176,6 +2179,61 @@ public partial class MainWindow : Window
             groupSending = false;
             if (groupAgain) { groupAgain = false; await SendGroupAsync(); }
         }
+    }
+
+    // ----- PvP stats -----
+    // An account that turned on PvP stats (an opt-in on the dashboard; the session and heartbeat
+    // answers say so) has its named character's kills, assists and deaths read (GamePvp) and sent,
+    // up to 20 at a time, one request at a time. Without the opt-in the decoder skips those frames:
+    // nothing of them is read, kept or sent. The patch-day trace reads them to count them, and
+    // sends nothing unless the account opted in. Events the server could not take wait up to an
+    // hour (PvpOutbox) for the next event, heartbeat or naming.
+    private readonly PvpOutbox pvpOutbox = new();
+    private bool pvpStats, pvpRefused, pvpSending, pvpFailing; private DateTimeOffset pvpBlockedUntil;
+    private bool PvpWanted => pvpStats && !pvpRefused || trace is not null;
+    private void NotePvpStats(bool? on)
+    {
+        var now = on == true;
+        if (now == pvpStats) return;
+        pvpStats = now;
+        if (!now) pvpOutbox.Clear();
+        if (capture is { } reading) reading.ReadPvp = PvpWanted;
+        Log.Info(now ? "This account has PvP stats on: kills, assists and deaths are read." : "This account has PvP stats off: no PvP frame is read.");
+    }
+    private void OnPvp(PacketCapture source, PvpEvent e)
+    {
+        if (capture != source || twoClients) return;
+        // Never who: the log says only what happened.
+        Log.Info($"Decoder: PvP {e.Kind.ToString().ToLowerInvariant()}{(pvpStats && !pvpRefused ? "" : " (not sent: PvP stats are off)")}.");
+        if (!pvpStats || pvpRefused) return;
+        pvpOutbox.Add(e);
+        _ = SendPvpAsync();
+    }
+    private async Task SendPvpAsync()
+    {
+        if (!pvpStats || pvpRefused || pvpSending || pvpOutbox.Count == 0 || api is not { } current || sessionId.Length == 0 || currentCharacterId.Length == 0 || gameCharacterId == 0 || detectedCharacterKey != gameCharacterKey || DateTimeOffset.UtcNow < pvpBlockedUntil) return;
+        pvpSending = true;
+        PvpReport[] batch = [];
+        try
+        {
+            while (pvpStats && currentCharacterId.Length > 0 && gameCharacterId != 0 && (batch = pvpOutbox.Next(gameCharacterId, DateTimeOffset.UtcNow)).Length > 0)
+            {
+                if (!(await current.PvpAsync(sessionId, currentCharacterId, batch)).Enabled) { NotePvpStats(false); break; }
+                pvpOutbox.Sent(batch); pvpFailing = false;
+            }
+        }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.PvpAdapterRefused)
+        {
+            pvpRefused = true; pvpOutbox.Clear();
+            if (capture is { } reading) reading.ReadPvp = PvpWanted;
+            Log.Warn($"The server does not accept the PvP adapter {PvpTracker.Adapter}; PvP is not read or sent until Odyle restarts.");
+        }
+        // Events the server will not take as they are would be refused again: they are dropped.
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest) { pvpOutbox.Sent(batch); Log.Warn($"The server refused {batch.Length} PvP events: {error.Message}"); }
+        catch (ServerBusyException error) { pvpBlockedUntil = error.Until; }
+        // A server from before PvP stats (404), paused readers, an expired session, no connection: they wait.
+        catch (Exception error) { if (!pvpFailing) Log.Info($"PvP events were not sent: {Describe(error)}"); pvpFailing = true; }
+        finally { pvpSending = false; }
     }
 
     // ----- Restart hand-over -----
@@ -2330,7 +2388,7 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation);
+        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
@@ -2356,7 +2414,9 @@ public partial class MainWindow : Window
             }
             var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
-            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation);
+            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation); NotePvpStats(answer.PvpStats);
+            // PvP events that could not be sent (no connection, a busy server) go with the next heartbeat.
+            _ = SendPvpAsync();
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(""); }
             if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
         }
@@ -2375,7 +2435,7 @@ public partial class MainWindow : Window
     {
         await StopReaderAsync();
         // The pause is the server's: without a connection there is none.
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; if (clearSaved) SessionStore.Clear();
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; NotePvpStats(false); if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
@@ -2400,10 +2460,11 @@ public partial class MainWindow : Window
     public void StartTrace()
     {
         trace = new DecoderTrace();
+        if (capture is { } reading) reading.ReadPvp = PvpWanted;
         traceTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
         traceTimer.Tick += (_, _) => WriteTrace();
         traceTimer.Start();
-        Log.Info($"Decoder trace on: every opcode, stat layout and stat resource is counted; the numbers go to {TracePath} every minute and when Odyle quits.");
+        Log.Info($"Decoder trace on: every opcode, stat layout and stat resource is counted, and PvP frames by what they are read as (never who); the numbers go to {TracePath} every minute and when Odyle quits.");
     }
     private void WriteTrace()
     {

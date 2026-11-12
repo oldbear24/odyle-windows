@@ -174,9 +174,19 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<GameLocation>? LocationObserved;
     /// <summary>The own character's party or force formed, changed or ended (GameGroups): only the ids the game gives them.</summary>
     public event Action<GameGroupEvent>? GroupObserved;
+    /// <summary>Whether PvP frames are read now: the account turned on PvP stats, or the patch-day trace runs. Unset or false, they are skipped unread.</summary>
+    public Func<bool>? ReadPvp { get; set; }
+    /// <summary>The time a PvP event happened at; the checks set their own.</summary>
+    public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+    /// <summary>A kill, an assist or a PvP death of the own character (GamePvp), only while ReadPvp says so.</summary>
+    public event Action<PvpEvent>? PvpObserved;
+    /// <summary>What a PvP frame was read as, for the trace.</summary>
+    public event Action<PvpRead>? PvpFrameObserved;
+    private readonly PvpTracker pvp = new();
+    private bool pvpRead;
     // A roster that came before the own character's id, read once the id is known.
     private byte[]? heldRoster;
-    public void Reset() { start = end = 0; ownCharacter = null; heldRoster = null; synchronized = startsAligned; probation = false; }
+    public void Reset() { start = end = 0; ownCharacter = null; heldRoster = null; synchronized = startsAligned; probation = false; pvp.Reset(); }
     /// <summary>Drops the undecoded bytes and waits for the next heartbeat; the own character stays known.</summary>
     public void Resync() { start = end = 0; synchronized = false; probation = false; }
     private void Push(ReadOnlySpan<byte> bytes)
@@ -256,7 +266,7 @@ public sealed class ExperimentalOdyleDecoder
         // Global frames can carry one transport flag (F0 to FE) before the opcode. It is taken for one
         // only before a frame this decoder reads (an LZ4 bundle, the identity, a stat frame); another
         // opcode that starts with such a byte stays whole instead of being read one byte off.
-        if (frame.Length >= 3 && frame[0] is >= 0xf0 and <= 0xfe && Readable(frame[1], frame[2])) frame = frame[1..];
+        if (frame.Length >= 3 && frame[0] is >= 0xf0 and <= 0xfe && (Readable(frame[1], frame[2]) || GamePvp.IsOpcode(frame[1], frame[2]) && ReadPvp?.Invoke() == true)) frame = frame[1..];
         if (frame.Length < 2) throw new InvalidDataException("Incomplete opcode.");
         if (frame[0] == 0xff && frame[1] == 0xff)
         {
@@ -281,6 +291,8 @@ public sealed class ExperimentalOdyleDecoder
             return;
         }
         FrameObserved?.Invoke(BinaryPrimitives.ReadUInt16BigEndian(frame), frame.Length - 2);
+        // PvP stats turned off: the players seen and hit are forgotten with the next frame of any kind.
+        if (pvpRead && ReadPvp?.Invoke() != true) { pvpRead = false; pvp.Forget(); }
         if (frame[0] == 0x33 && frame[1] == 0x36)
         {
             // The own-character identity may arrive after its stat snapshot and repeats every
@@ -291,7 +303,7 @@ public sealed class ExperimentalOdyleDecoder
             var identity = GameIdentity.Read(frame[2..]); var offset = 2;
             if (!TryVarint(frame, ref offset, out var id) || id == 0 || identity is null && frame.Length - offset < 5) return;
             var switched = ownCharacter is { } previous && previous != id;
-            ownCharacter = id;
+            ownCharacter = id; pvp.Own(id, identity?.CharacterName ?? "", identity?.ServerId ?? 0);
             if (switched) CharacterChanged?.Invoke(id);
             // A roster held for this id comes before the name, so the name finds it.
             if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) GroupObserved?.Invoke(group); }
@@ -310,7 +322,15 @@ public sealed class ExperimentalOdyleDecoder
         // position; another entity's effect, and every other effect or combat frame, is never read.
         if (frame[0] is 0x21 or 0x23 && frame[1] == 0x36 || frame[0] == 0x2a && frame[1] == 0x38)
         {
+            if (frame[0] == 0x21) pvp.Loaded();
             if (GameLocation.Read(frame, ownCharacter) is { } location) LocationObserved?.Invoke(location);
+            return;
+        }
+        // PvP stats (GamePvp), only for an account that turned them on: other players' names, kill
+        // credits and the own character's hits. Off, these frames are skipped unread.
+        if (GamePvp.IsOpcode(frame[0], frame[1]))
+        {
+            if (ReadPvp?.Invoke() == true) { pvpRead = true; ReadPvpFrame(frame); }
             return;
         }
         if (frame[1] != 0x61) return; // Sprint/dash fields never enter this adapter.
@@ -319,6 +339,27 @@ public sealed class ExperimentalOdyleDecoder
             LayoutObserved?.Invoke(new(BinaryPrimitives.ReadUInt16BigEndian(frame), payload[0], payload[1], payload[2], payload.Length));
         if (frame[0] == 0x0b) ReadSnapshot(payload);
         else if (frame[0] == 0x0c) ReadUpdate(payload);
+    }
+    private void ReadPvpFrame(ReadOnlySpan<byte> frame)
+    {
+        var payload = frame[2..];
+        switch (frame[0], frame[1])
+        {
+            case (0x45, 0x36):
+                var named = GamePvp.Player(payload, out var entity, out var name, out var server);
+                if (named) pvp.Player(entity, name, server);
+                PvpFrameObserved?.Invoke(named ? PvpRead.Player : PvpRead.PlayerUnread);
+                break;
+            case (0x04, 0x8d):
+                if (!GamePvp.Kill(payload, out var victim, out var killer, out var killerName, out var killerServer)) { PvpFrameObserved?.Invoke(PvpRead.CreditUnread); break; }
+                var e = pvp.Kill(victim, killer, killerName, killerServer, Clock());
+                PvpFrameObserved?.Invoke(e?.Kind switch { PvpKind.Kill => PvpRead.Kill, PvpKind.Assist => PvpRead.Assist, PvpKind.Death => PvpRead.Death, _ => PvpRead.Credit });
+                if (e is not null) PvpObserved?.Invoke(e);
+                break;
+            default:
+                if (GamePvp.Hit(frame, out var actor, out var target) && pvp.Hit(actor, target, Clock())) PvpFrameObserved?.Invoke(PvpRead.OwnHit);
+                break;
+        }
     }
     // The own character's stats: a varint record count, then the records. Odyle is the record
     // of resource 60000001; another resource is never read, whatever its shape.
