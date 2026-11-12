@@ -2,6 +2,17 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.33.0 · 2026-11-12
+
+### New
+- **PvP stats**: turn on **Count my PvP kills, assists and deaths** under **Account & data** on the dashboard, and Odyle counts your character's PvP kills, assists and deaths while you play, with who you killed, whose kill you assisted and who killed you. The dashboard shows them: click the line under your character. It is off until you turn it on, and needs dashboard 0.58.0 or newer.
+- An assist is a hit on a player at most 15 seconds before an ally kills them. A kill counts when the game named that player while they were near you.
+- While PvP stats are on, Odyle reads the game's kill messages, the names of the players near you and which players your own character hits. It reads no damage numbers, HP or skills, forgets the names at every loading screen, and sends only your own character's kills, assists and deaths. Turned off on the dashboard, it stops within about 20 seconds.
+- How the game sends these messages comes from public notes and is not yet confirmed on every client: if your counts look wrong, start `Odyle.exe --decoder-trace`, play some PvP and send the file it writes.
+
+### Changed
+- The notice in Settings and the installer says what the reader reads more exactly: no damage numbers, HP or skills, and PvP kills, assists and deaths with the players' names only after you turn on PvP stats.
+
 ## 0.32.0 · 2026-10-29
 
 ### New

@@ -25,19 +25,33 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
         if ((payload[offset++] & 1) == 0) return null;
         var count = payload[offset++];
         if (count is < 1 or > 36 || payload.Length - offset < count + 6) return null;
-        string name;
-        try { name = Utf8.GetString(payload.Slice(offset, count)); } catch (DecoderFallbackException) { return null; }
-        if (name.Length > 40 || !name.Any(char.IsLetter) || name.Any(c => !char.IsLetterOrDigit(c))) return null;
+        if (!TryName(payload.Slice(offset, count), out var name)) return null;
         offset += count;
         var server = BinaryPrimitives.ReadUInt16LittleEndian(payload[offset..]);
         var job = BinaryPrimitives.ReadUInt32LittleEndian(payload[(offset + 2)..]);
         if (job is < 5 or > 48 || server is < 1000 or >= 3000) return null;
+        var (label, region) = ServerOf(server);
+        return new(id, name, server, label, region, job);
+    }
+    // A character name as the game sends it: strict UTF-8, letters and digits only, at least one letter.
+    public static bool TryName(ReadOnlySpan<byte> bytes, out string name)
+    {
+        name = "";
+        if (bytes.Length is < 1 or > 36) return false;
+        string text;
+        try { text = Utf8.GetString(bytes); } catch (DecoderFallbackException) { return false; }
+        if (text.Length > 40 || !text.Any(char.IsLetter) || text.Any(c => !char.IsLetterOrDigit(c))) return false;
+        name = text; return true;
+    }
+    // The name and region of a Global server id (1000 to 2999), null where this build does not know them.
+    public static (string? Server, string? Region) ServerOf(ushort server)
+    {
+        if (server is < 1000 or >= 3000) return (null, null);
         // NA-East (1xx) and NA-West (2xx) have servers of the same names, so they are separate regions (#4);
         // a server from before NA-West takes GLOBAL_NA for both (GameIdentity.ForServer).
         var region = (server / 100 % 10) switch { 1 => "GLOBAL_NA", 2 => "GLOBAL_NAW", 3 => "GLOBAL_EU", 4 => "GLOBAL_SA", 5 => "GLOBAL_ASIA", _ => null };
         var index = server % 100 - 1;
         var names = server / 1000 == 1 ? Elyos : Asmodian;
-        var label = index >= 0 && index < names.Length ? names[index] : null;
-        return new(id, name, server, label, region, job);
+        return (index >= 0 && index < names.Length ? names[index] : null, region);
     }
 }
