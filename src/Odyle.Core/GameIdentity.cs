@@ -9,10 +9,22 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
     // The region a server takes: one that does not list NA-West yet saves those characters as NA, as before.
     public string? RegionFor(bool serverKnowsNaWest) => Region == "GLOBAL_NAW" && !serverKnowsNaWest ? "GLOBAL_NA" : Region;
     private static readonly UTF8Encoding Utf8 = new(false, true);
-    // Game server names and their numeric order are protocol data, not a
-    // borrowed decoder implementation. See docs/packet-reader.md for sources.
-    private static readonly string[] Elyos = "Siel,Nezekan,Vaizel,Kaisinel,Yustiel,Ariel,Fregion,Meslamtaeda,Hithanya,Nania,Tahabata,Luteros,Phernos,Daminu,Kasika,Bakarma,Tsenka,Kochi,Ishtar,Tiamat,Poeta,Verteron,Nathara,Talisra,Zumion,Nahid,Asahr,Caelid,Laveis,Perion,Dramata,Reda,Auldor,Vakron,Narun,Gartua,Chloris,Ione,Teina,Dymones,Bargott,Atheron,Ruthilis,Siliator,Idris,Satia,Estian,Rahu,Rhanman,Hebran".Split(',');
-    private static readonly string[] Asmodian = "Israphel,Zikel,Triniel,Lumiel,Marchutan,Azphel,Ereshkigal,Beritra,Nemon,Hadala,Ludra,Ulgorn,Munin,Odar,Zemurru,Kromede,Quai,Baba,Fafnir,Indnath,Ishalgen,Altgard,Agnita,Atiel,Valdemar,Lagta,Gerod,Urd,Ecco,Giselle,Kashapa,Stof,Berk,Nuakum,Grisilla,Santras,Reuben,Hugo,Kraki,Hystan,Rathman,Sigebert,Nazmun,Gelcos,Paton,Pelleir,Elvida,Ketu,Pydeon,Notun".Split(',');
+    // The Global servers by race in the order of their ids, as PLAYNC's official list names them
+    // (aion2.plaync.com/en-us/api/gameinfo/servers, checked on 16 Nov 2026): every region numbers
+    // its servers in this order. A server id past the list is not known and never guessed.
+    private static readonly string[] Elyos = "Siel,Nezekan,Vaizel,Kaisinel,Yustiel,Ariel,Fregion,Meslamtaeda,Hithanya,Nania,Tahavatha,Luteros,Phernos,Daminu,Kasaka,Bakarma,Tsenka,Kochi,Ishtar,Tiamat,Gauss,Lamuatan,Nathara".Split(',');
+    private static readonly string[] Asmodian = "Israphel,Zikel,Triniel,Lumiel,Marchutan,Azphel,Ereshkigal,Beritra,Nemon,Hadala,Ludra,Ulgorn,Munin,Odar,Zemurru,Kromede,Quai,Baba,Fafnir,Indnath,Agnita,Atiel,Tassin".Split(',');
+    // Before 0.33.1 seven Global servers had a third-party table's names: Gauss (1x21) was saved as
+    // Poeta, Tassin (2x23) as Agnita. A backend that does not list Tassin yet keeps its characters
+    // under those names, so they are saved there as before.
+    private static readonly Dictionary<string, string> Legacy = new() { ["Tahavatha"] = "Tahabata", ["Kasaka"] = "Kasika", ["Gauss"] = "Poeta", ["Lamuatan"] = "Verteron", ["Agnita"] = "Ishalgen", ["Atiel"] = "Altgard", ["Tassin"] = "Agnita" };
+
+    // The server a backend saves the character under: its Global name, or the older name where
+    // the backend does not know the Global servers yet.
+    public string? ServerFor(bool globalServers) => globalServers ? Server : LegacyName(Server);
+    // Whether a backend would keep the server under another name before it knows the Global servers.
+    public bool RenamedServer => Server != LegacyName(Server);
+    public static string? LegacyName(string? server) => server is not null && Legacy.TryGetValue(server, out var old) ? old : server;
 
     // Own-character 3336 payload: varint id, u32 mask, u8 mask,
     // u8 UTF-8 byte count, name, u16 server, u32 class. Class ids 5 to 48 are accepted: the

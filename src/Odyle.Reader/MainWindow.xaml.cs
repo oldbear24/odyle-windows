@@ -862,7 +862,7 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next; naWest = null; discordApp = null; discordMissing = false; discordAskedAt = DateTimeOffset.MinValue; dashboardPaths = null; pathsAskedAt = DateTimeOffset.MinValue; next.AppVersion = Updater.Current.ToString();
+        api = next; naWest = null; globalServers = null; discordApp = null; discordMissing = false; discordAskedAt = DateTimeOffset.MinValue; dashboardPaths = null; pathsAskedAt = DateTimeOffset.MinValue; next.AppVersion = Updater.Current.ToString();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
@@ -2051,12 +2051,14 @@ public partial class MainWindow : Window
             {
                 // A server that does not list NA-West yet saves those characters as NA, as before (#4).
                 if (identity.Region == "GLOBAL_NAW" && naWest is null) { try { naWest = await api.KnowsNaWestAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { naWest = false; Log.Warn("The server's regions could not be read: " + error.Message); } }
+                // A server that does not know the Global servers' names yet saves those characters under the older ones.
+                if (identity.RenamedServer && globalServers is null) { try { globalServers = await api.KnowsGlobalServersAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { globalServers = false; Log.Warn("The server's list of game servers could not be read: " + error.Message); } }
                 if (identity.Server is null || identity.Region is null)
                 {
                     Status(T("Detected {0}, but its server ({1}) is not supported yet. Its Odyle is not saved.", identity.CharacterName, identity.ServerId));
                     RenderHero(); return;
                 }
-                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.RegionFor(naWest == true)!);
+                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.ServerFor(globalServers != false)!, identity.RegionFor(naWest == true)!);
                 currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
                 Log.Info($"{identity.CharacterName} · {identity.Server} is saved to the account."); Status("");
             }
@@ -2086,6 +2088,8 @@ public partial class MainWindow : Window
     private DateTimeOffset namedAt; private string noOdyleSent = "";
     // Whether the connected server keeps NA-West apart; asked once per connection, when an NA-West character is named.
     private bool? naWest;
+    // Whether it knows the Global servers' names; asked once per connection, when a character of a renamed server is named.
+    private bool? globalServers;
     private async Task MarkNoOdyleAsync()
     {
         if (api is null || currentCharacterId.Length == 0 || detectedCharacterKey != odyleMissingKey || noOdyleSent == currentCharacterId) return;

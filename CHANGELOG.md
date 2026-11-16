@@ -2,6 +2,12 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.33.1 · 2026-11-16
+
+### Fixed
+- Characters on the European servers **Gauss**, **Lamuatan** and **Tassin** are saved under their own server. Odyle named them Poeta, Verteron and Agnita, and also named Agnita Ishalgen, Atiel Altgard, Tahavatha Tahabata and Kasaka Kasika. It now uses the server names PLAYNC lists, for your characters and for the players you meet in PvP.
+- With dashboard 0.58.1 or newer your characters on those servers keep their history and room sharing under the right name. With an older dashboard, Odyle keeps saving them under the names they had, so nothing is split.
+
 ## 0.33.0 · 2026-11-12
 
 ### New

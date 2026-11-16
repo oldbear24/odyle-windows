@@ -50,6 +50,16 @@ static class ConnectionChecks
         Check(await Fails(Answer(HttpStatusCode.OK, "")) is { StatusCode: HttpStatusCode.OK }, "an empty success body");
         Check(await Fails(Answer(HttpStatusCode.OK, "<html></html>", "text/html")) is { StatusCode: HttpStatusCode.OK }, "a success body that is not JSON");
 
+        // A backend that lists Tassin knows the Global servers' names; an older one lists the Korean names, or none.
+        async Task<bool> KnowsGlobal(string servers)
+        {
+            using var api = new PartyApi("https://party.example", "token", null, new Stub((_, _) => Answer(HttpStatusCode.OK, servers)));
+            return await api.KnowsGlobalServersAsync();
+        }
+        Check(await KnowsGlobal("""{"regions":[{"region":"GLOBAL_EU","elyos":["Siel","Gauss"],"asmodian":["Israphel","Tassin"]}]}""")
+            && !await KnowsGlobal("""{"regions":[{"region":"GLOBAL_EU","elyos":["Siel","Poeta"],"asmodian":["Israphel","Agnita"]}]}""")
+            && !await KnowsGlobal("""{"regions":[{"region":"GLOBAL_EU"}]}"""), "the Global servers' names are used where the backend lists them");
+
         // 429: requests pause until Retry-After without reaching the server, and nothing renews or rotates.
         var busy = new Stub((_, _) => { var r = Answer(HttpStatusCode.TooManyRequests, """{"message":"Too Many Requests."}"""); r.Headers.TryAddWithoutValidation("Retry-After", "120"); return r; });
         using (var api = new PartyApi("https://party.example", "token", "key", busy))

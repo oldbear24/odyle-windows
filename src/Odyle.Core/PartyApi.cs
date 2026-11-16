@@ -150,6 +150,8 @@ public sealed class PartyApi : IDisposable
     // The Windows versions the server's operators hold back (#19); older backends answer none.
     public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
     public async Task<bool> KnowsNaWestAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Region == "GLOBAL_NAW");
+    // Whether the server knows the Global servers' names (dashboard 0.58.1 and newer list Tassin among the armory's servers).
+    public async Task<bool> KnowsGlobalServersAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Asmodian?.Contains("Tassin") == true);
     // The Discord application the server signs in with, for the Discord status; null without Discord sign-in.
     public async Task<string?> GetDiscordApplicationAsync() => DiscordPresence.ApplicationOf((await GetAsync<JsonElement>("api/collections/users/auth-methods")).GetRawText());
     // Whether the backend serves the dashboard's pages at their own paths (DashboardPages): its public start page says so.
@@ -279,5 +281,5 @@ public sealed class PartyApi : IDisposable
     public void Dispose() => client.Dispose();
 }
 public sealed record WindowsReleaseInfo(string[]? Blocked = null);
-public sealed record ServerRegion(string Region);
+public sealed record ServerRegion(string Region, string[]? Asmodian = null);
 public sealed record ServerRegions(ServerRegion[] Regions);

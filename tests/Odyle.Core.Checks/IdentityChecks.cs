@@ -20,6 +20,14 @@ static class IdentityChecks
         Check(GameIdentity.Read(Payload(1201))!.RegionFor(false) == "GLOBAL_NA" && GameIdentity.Read(Payload(1201))!.RegionFor(true) == "GLOBAL_NAW" && GameIdentity.Read(Payload(2304))!.RegionFor(false) == "GLOBAL_EU", "a server without NA-West saves those characters as NA");
         Check(GameIdentity.Read(Payload(2404))?.Region == "GLOBAL_SA" && GameIdentity.Read(Payload(2504))?.Region == "GLOBAL_ASIA", "SA/Asia codes");
         Check(GameIdentity.Read(Payload(2360)) is { Server: null, Region: "GLOBAL_EU" }, "unmapped server never guessed");
+        // The Global servers as PLAYNC lists them, and the names a backend that does not know them yet keeps.
+        Check(GameIdentity.Read(Payload(1321)) is { Server: "Gauss" } && GameIdentity.Read(Payload(1322)) is { Server: "Lamuatan" } && GameIdentity.Read(Payload(1323)) is { Server: "Nathara" }
+            && GameIdentity.Read(Payload(2321)) is { Server: "Agnita" } && GameIdentity.Read(Payload(2322)) is { Server: "Atiel" } && GameIdentity.Read(Payload(2323)) is { Server: "Tassin" }
+            && GameIdentity.Read(Payload(1311)) is { Server: "Tahavatha" } && GameIdentity.Read(Payload(1315)) is { Server: "Kasaka" }, "Global server names");
+        Check(GameIdentity.Read(Payload(1324)) is { Server: null } && GameIdentity.Read(Payload(2324)) is { Server: null }, "a server past PLAYNC's list is not guessed");
+        Check(GameIdentity.Read(Payload(1321))!.ServerFor(false) == "Poeta" && GameIdentity.Read(Payload(2323))!.ServerFor(false) == "Agnita" && GameIdentity.Read(Payload(2321))!.ServerFor(false) == "Ishalgen"
+            && GameIdentity.Read(Payload(2323))!.ServerFor(true) == "Tassin" && GameIdentity.Read(Payload(2304))!.ServerFor(false) == "Lumiel", "older backends keep the older names");
+        Check(GameIdentity.Read(Payload(2323))!.RenamedServer && !GameIdentity.Read(Payload(2304))!.RenamedServer && !GameIdentity.Read(Payload(2360))!.RenamedServer, "renamed servers are told apart");
         Check(GameIdentity.Read(Payload(2004)) is { Region: null }, "unmapped region never guessed");
         Check(GameIdentity.Read(Payload(2304, "$tutorial")) is null, "placeholder character rejected");
         // Class ids are a structural check: 5 to 48, where the reference decoder maps 45 to 48 to the Brawler.
