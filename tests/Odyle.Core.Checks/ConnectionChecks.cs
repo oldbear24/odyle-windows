@@ -50,6 +50,20 @@ static class ConnectionChecks
         Check(await Fails(Answer(HttpStatusCode.OK, "")) is { StatusCode: HttpStatusCode.OK }, "an empty success body");
         Check(await Fails(Answer(HttpStatusCode.OK, "<html></html>", "text/html")) is { StatusCode: HttpStatusCode.OK }, "a success body that is not JSON");
 
+        // The regions and game servers a backend lists: from dashboard 0.59.0 each region's servers with their ids,
+        // which also says it knows the Global servers' names; older ones list names only, or not even NA-West.
+        async Task<ServerRegions> Servers(string answer)
+        {
+            using var api = new PartyApi("https://party.example", "token", null, new Stub((_, _) => Answer(HttpStatusCode.OK, answer)));
+            return await api.GetServersAsync();
+        }
+        var listing = await Servers("""{"regions":[{"region":"GLOBAL_NAW","elyos":["Siel"],"asmodian":[],"servers":[{"id":1201,"name":"Siel"}]},{"region":"GLOBAL_EU","elyos":["Siel","Ozryn"],"asmodian":[],"servers":[{"id":1301,"name":"Siel"},{"id":1324,"name":"Ozryn"}]}]}""");
+        Check(listing.NaWest && listing.GlobalServers && listing.Servers.SequenceEqual(new[] { (1201, "Siel"), (1301, "Siel"), (1324, "Ozryn") }), "a backend's regions and servers with their ids");
+        var older = await Servers("""{"regions":[{"region":"GLOBAL_NAW","elyos":["Siel","Poeta"],"asmodian":["Israphel","Agnita"]}]}""");
+        Check(older.NaWest && !older.GlobalServers && !older.Servers.Any(), "a backend from before the Global servers' names");
+        var oldest = await Servers("{}");
+        Check(!oldest.NaWest && !oldest.GlobalServers && !oldest.Servers.Any() && !ServerRegions.None.NaWest && !ServerRegions.None.GlobalServers, "an answer without regions knows neither");
+
         // 429: requests pause until Retry-After without reaching the server, and nothing renews or rotates.
         var busy = new Stub((_, _) => { var r = Answer(HttpStatusCode.TooManyRequests, """{"message":"Too Many Requests."}"""); r.Headers.TryAddWithoutValidation("Retry-After", "120"); return r; });
         using (var api = new PartyApi("https://party.example", "token", "key", busy))
