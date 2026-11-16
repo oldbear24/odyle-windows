@@ -149,9 +149,8 @@ public sealed class PartyApi : IDisposable
     // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
     // The Windows versions the server's operators hold back (#19); older backends answer none.
     public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
-    public async Task<bool> KnowsNaWestAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Region == "GLOBAL_NAW");
-    // Whether the server knows the Global servers' names (dashboard 0.58.1 and newer list Tassin among the armory's servers).
-    public async Task<bool> KnowsGlobalServersAsync() => (await GetAsync<ServerRegions>("api/odyle/armory/servers")).Regions.Any(r => r.Asmodian?.Contains("Tassin") == true);
+    // The regions and game servers the server knows (the armory's search form lists them).
+    public Task<ServerRegions> GetServersAsync() => GetAsync<ServerRegions>("api/odyle/armory/servers");
     // The Discord application the server signs in with, for the Discord status; null without Discord sign-in.
     public async Task<string?> GetDiscordApplicationAsync() => DiscordPresence.ApplicationOf((await GetAsync<JsonElement>("api/collections/users/auth-methods")).GetRawText());
     // Whether the backend serves the dashboard's pages at their own paths (DashboardPages): its public start page says so.
@@ -281,5 +280,15 @@ public sealed class PartyApi : IDisposable
     public void Dispose() => client.Dispose();
 }
 public sealed record WindowsReleaseInfo(string[]? Blocked = null);
-public sealed record ServerRegion(string Region, string[]? Asmodian = null);
-public sealed record ServerRegions(ServerRegion[] Regions);
+public sealed record GameServer(int Id, string Name);
+public sealed record ServerRegion(string Region, GameServer[]? Servers = null);
+public sealed record ServerRegions(ServerRegion[]? Regions)
+{
+    // What a server that cannot be asked is taken to know: neither NA-West nor the Global servers' names.
+    public static readonly ServerRegions None = new([]);
+    // Whether it keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW).
+    public bool NaWest => (Regions ?? []).Any(r => r?.Region == "GLOBAL_NAW");
+    // Whether it knows the Global servers' names (dashboard 0.59.0 and newer list each region's servers with their ids).
+    public bool GlobalServers => (Regions ?? []).Any(r => r?.Servers is { Length: > 0 });
+    public IEnumerable<(int Id, string Name)> Servers => (Regions ?? []).SelectMany(r => r?.Servers ?? []).Where(s => s?.Name is not null).Select(s => (s.Id, s.Name));
+}

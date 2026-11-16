@@ -2,11 +2,14 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
-## 0.33.1 · 2026-11-16
+## 0.34.0 · 2026-11-16
+
+### New
+- When AION 2 opens a new server, Odyle can save your characters there without waiting for an update: it takes the server's name from your dashboard (0.59.0 or newer), which reads PLAYNC's server list every night. Until the dashboard knows the server, the card still says the server is not supported yet, and Odyle asks again within the hour.
 
 ### Fixed
 - Characters on the European servers **Gauss**, **Lamuatan** and **Tassin** are saved under their own server. Odyle named them Poeta, Verteron and Agnita, and also named Agnita Ishalgen, Atiel Altgard, Tahavatha Tahabata and Kasaka Kasika. It now uses the server names PLAYNC lists, for your characters and for the players you meet in PvP.
-- With dashboard 0.58.1 or newer your characters on those servers keep their history and room sharing under the right name. With an older dashboard, Odyle keeps saving them under the names they had, so nothing is split.
+- With dashboard 0.59.0 or newer your characters on those servers keep their history and room sharing under the right name. With an older dashboard, Odyle keeps saving them under the names they had, so nothing is split.
 
 ## 0.33.0 · 2026-11-12
 

@@ -28,6 +28,13 @@ static class IdentityChecks
         Check(GameIdentity.Read(Payload(1321))!.ServerFor(false) == "Poeta" && GameIdentity.Read(Payload(2323))!.ServerFor(false) == "Agnita" && GameIdentity.Read(Payload(2321))!.ServerFor(false) == "Ishalgen"
             && GameIdentity.Read(Payload(2323))!.ServerFor(true) == "Tassin" && GameIdentity.Read(Payload(2304))!.ServerFor(false) == "Lumiel", "older backends keep the older names");
         Check(GameIdentity.Read(Payload(2323))!.RenamedServer && !GameIdentity.Read(Payload(2304))!.RenamedServer && !GameIdentity.Read(Payload(2360))!.RenamedServer, "renamed servers are told apart");
+        // A server past the lists is named by the backend: letters only, each name at one place of its race, and
+        // never over a name the lists give; the next answer replaces what the last one named.
+        GameIdentity.Learn([(1324, "Ozryn"), (1124, "Ozryn"), (1125, "Ozryn"), (1326, "Bad Name"), (1301, "Other"), (2324, "Siel"), (2325, "Vexhal"), (999, "Low")]);
+        Check(GameIdentity.Read(Payload(1324)) is { Server: "Ozryn", Region: "GLOBAL_EU" } && GameIdentity.ServerOf(1124).Server == "Ozryn" && GameIdentity.ServerOf(1125).Server is null
+            && GameIdentity.ServerOf(1326).Server is null && GameIdentity.ServerOf(1301).Server == "Siel" && GameIdentity.ServerOf(2324).Server is null && GameIdentity.ServerOf(2325) == ("Vexhal", "GLOBAL_EU"), "servers the backend names");
+        GameIdentity.Learn([]);
+        Check(GameIdentity.ServerOf(1324).Server is null && GameIdentity.ServerOf(2325).Server is null, "a newer answer replaces the names");
         Check(GameIdentity.Read(Payload(2004)) is { Region: null }, "unmapped region never guessed");
         Check(GameIdentity.Read(Payload(2304, "$tutorial")) is null, "placeholder character rejected");
         // Class ids are a structural check: 5 to 48, where the reference decoder maps 45 to 48 to the Brawler.
