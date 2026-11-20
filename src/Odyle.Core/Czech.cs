@@ -255,7 +255,7 @@ public static class Czech
         ["Asia"] = "Asie", ["Enter a character name (up to 40 characters)."] = "Zadej jméno postavy (nejvýš 40 znaků).", ["Enter a server (up to 40 characters)."] = "Zadej server (nejvýš 40 znaků).",
         ["A packet adapter name is required."] = "Je potřeba název adaptéru paketů.", ["Odyle must be between 0 and 1,000,000."] = "Odyle musí být mezi 0 a 1 000 000.",
         ["Character and server are required."] = "Postava i server jsou povinné.", ["Server returned {0}."] = "Server odpověděl kódem {0}.", ["The server returned an empty response."] = "Server poslal prázdnou odpověď.",
-        ["The server sent an answer the app cannot read."] = "Server poslal odpověď, které aplikace nerozumí.",
+        ["The server sent an answer the app cannot read."] = "Server poslal odpověď, které aplikace nerozumí.", ["The server could not be reached: something in front of it answered 401."] = "Server není dostupný: něco před ním odpovědělo kódem 401.",
         // Backend and PocketBase messages (the server answers in English), as in the dashboard
         ["Request could not be completed."] = "Požadavek se nepodařilo dokončit.", ["Something went wrong."] = "Něco se pokazilo.",
         ["Something went wrong while processing your request."] = "Při zpracování požadavku se něco pokazilo.", ["The request requires valid record authorization token."] = "Požadavek vyžaduje platné přihlášení.",

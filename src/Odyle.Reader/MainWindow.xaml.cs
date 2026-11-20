@@ -816,7 +816,8 @@ public partial class MainWindow : Window
         try { next = UseApi(new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
         catch (ArgumentException error) { Log.Error("The saved server address is not usable", error); SessionStore.Clear(); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); return; }
         try { var auth = await next.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
-        // Only 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the dashboard).
+        // Only the server's own 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the
+        // dashboard); a 401 from something in front of the server arrives as 502 (PartyApi.IsServersOwn401).
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         {
             DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);

@@ -28,8 +28,11 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         if (Headless) return;
+        // An Open in Odyle link (--pair) comes first and takes no other switch (StartupCommand.Accepted).
+        var accepted = StartupCommand.Accepted(e.Args);
+        if (accepted.Count != e.Args.Length) Log.Warn("A start with an Open in Odyle link carried other arguments; the start ignores them all.");
         // --build-info <file>: what this build is, for the publish script; nothing else starts.
-        if (StartupCommand.BuildInfoPath(e.Args) is { } infoPath)
+        if (StartupCommand.BuildInfoPath(accepted) is { } infoPath)
         {
             try { System.IO.File.WriteAllText(infoPath, StartupCommand.BuildInfo(Updater.Current, Updater.Released, Updater.SelfContained, Updater.Runtime)); }
             finally { Shutdown(); }
@@ -44,9 +47,9 @@ public partial class App : System.Windows.Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) => Log.Error(args.IsTerminating ? "Unhandled exception, Odyle stops" : "Unhandled exception", args.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, args) => { Log.Error("Unobserved task exception", args.Exception); args.SetObserved(); };
         // --tray (Start with Windows) opens only the tray icon.
-        var tray = StartupCommand.InTray(e.Args); var user = WindowsIdentity.GetCurrent().User!.Value;
+        var tray = StartupCommand.InTray(accepted); var user = WindowsIdentity.GetCurrent().User!.Value;
         // The uninstaller waits for --unpair to end, so it ends whatever goes wrong, without a message box.
-        if (StartupCommand.Unpairs(e.Args))
+        if (StartupCommand.Unpairs(accepted))
         {
             try { Unpair(user); }
             catch (Exception error) { Log.Error("Disconnecting this PC failed (--unpair)", error); }
@@ -56,9 +59,9 @@ public partial class App : System.Windows.Application
         instance = new Mutex(true, "Local\\Odyle-" + user, out primary);
         // Already running: a start by hand brings that window forward; a start with Windows just ends; an
         // Open in Odyle link (--pair) goes to the running Odyle, which asks before pairing.
-        var pairLink = StartupCommand.PairLinkOf(e.Args);
+        var pairLink = StartupCommand.PairLinkOf(accepted);
         // A jump list task (--do) goes to the running Odyle the same way.
-        var action = StartupCommand.ActionOf(e.Args);
+        var action = StartupCommand.ActionOf(accepted);
         var handed = pairLink ?? (action is null ? null : StartupCommand.PipeActionPrefix + action);
         if (!primary) { if (handed is not null) { AllowSetForegroundWindow(-1); if (!PairPipe.Send(user, handed)) ShowRunning(user); } else if (!tray) ShowRunning(user); Shutdown(); return; }
         Log.Info($"Odyle {Updater.Current} starts{(tray ? " in the tray" : "")}: {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")} package, {Environment.OSVersion}, language {Localizer.Language} ({Localizer.Culture.Name}).");
@@ -69,7 +72,7 @@ public partial class App : System.Windows.Application
         if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
         var window = new MainWindow(); MainWindow = window;
         // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
-        if (StartupCommand.Traces(e.Args)) window.StartTrace();
+        if (StartupCommand.Traces(accepted)) window.StartTrace();
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => window.Dispatcher.BeginInvoke(window.BringToFront), null, Timeout.Infinite, executeOnlyOnce: false);
         quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Quit-" + user);

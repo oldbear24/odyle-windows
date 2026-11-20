@@ -107,9 +107,29 @@ public sealed class PartyApi : IDisposable
     public PartyApi(string endpoint, string? token = null, string? deviceKey = null, HttpMessageHandler? handler = null)
     {
         Endpoint = ConnectionDetails.NormalizeEndpoint(endpoint);
-        client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+        client = handler is null ? new HttpClient(NewHandler()) : new HttpClient(handler, disposeHandler: false);
         client.BaseAddress = new Uri(Endpoint + "/"); client.Timeout = TimeSpan.FromSeconds(12);
         Token = string.IsNullOrWhiteSpace(token) ? null : token; DeviceKey = string.IsNullOrWhiteSpace(deviceKey) ? null : deviceKey;
+    }
+    // The server's API never redirects. Following one would send the request again, a POST's body
+    // with its device key included, to wherever a server or a proxy in front of it points, so a
+    // redirect stays an answer the app does not take (RealtimeClient uses the same handler).
+    public static HttpMessageHandler NewHandler() => new SocketsHttpHandler { AllowAutoRedirect = false };
+    // Whether a 401 answer is the server's own: PocketBase answers every error as a JSON object with
+    // its status and a message. Only that answer ends the pairing; a 401 from something in front of
+    // the server (a sign-in page, an auth proxy, a misconfigured reverse proxy) is a server that
+    // cannot be reached, and the app keeps its pairing and tries again.
+    public static bool IsServersOwn401(string? body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body ?? "");
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Number && status.TryGetInt32(out var code) && code == 401
+                && root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String;
+        }
+        catch (JsonException) { return false; }
     }
     public async Task<AuthResponse> PairAsync(string code)
     {
@@ -273,12 +293,17 @@ public sealed class PartyApi : IDisposable
         var status = response.StatusCode;
         if (response.IsSuccessStatusCode) return;
         var message = Localizer.T("Server returned {0}.", (int)status);
+        string? body = null;
         try
         {
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
             if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(text.GetString())) message = text.GetString()!;
         }
         catch (Exception error) when (error is JsonException or IOException or HttpRequestException) { }
+        // A 401 that is not the server's own reads as a server that cannot be reached (502), so the
+        // saved pairing is kept and the app tries again (IsServersOwn401).
+        if (status == HttpStatusCode.Unauthorized && !IsServersOwn401(body)) throw new HttpRequestException(Localizer.T("The server could not be reached: something in front of it answered 401."), null, HttpStatusCode.BadGateway);
         if (status != HttpStatusCode.TooManyRequests) throw new HttpRequestException(message, null, status);
         var now = DateTimeOffset.UtcNow;
         BusyUntil = now + Retry.After(response.Headers.TryGetValues("Retry-After", out var values) ? values.FirstOrDefault() : null, now);

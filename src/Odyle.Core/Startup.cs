@@ -27,6 +27,16 @@ public static class StartupCommand
         var space = text.IndexOf(' ');
         return text.Length == 0 ? null : space < 0 ? text : text[..space];
     }
+    // The arguments a start acts on. An Open in Odyle link starts "<Odyle.exe>" --pair "%1", and a link
+    // with a quote in it (odyle://pair?link=x" --unpair ") can add arguments of its own: a start with
+    // --pair acts only on exactly [--pair, <link>] and takes no other switch, and anything else that
+    // carries --pair is ignored, so a link can never disconnect this PC or write a file (--unpair,
+    // --build-info). The link itself still goes through the pairing confirmation.
+    public static IReadOnlyList<string> Accepted(IReadOnlyList<string> args)
+    {
+        if (!args.Any(a => string.Equals(a, PairArgument, StringComparison.OrdinalIgnoreCase))) return args;
+        return args.Count == 2 && string.Equals(args[0], PairArgument, StringComparison.OrdinalIgnoreCase) && args[1].Length > 0 && !args[1].StartsWith("--", StringComparison.Ordinal) ? args : [];
+    }
     public static bool InTray(IEnumerable<string> args) => args.Any(a => string.Equals(a, TrayArgument, StringComparison.OrdinalIgnoreCase));
     public static bool Unpairs(IEnumerable<string> args) => args.Any(a => string.Equals(a, UnpairArgument, StringComparison.OrdinalIgnoreCase));
     public static bool Traces(IEnumerable<string> args) => args.Any(a => string.Equals(a, TraceArgument, StringComparison.OrdinalIgnoreCase));

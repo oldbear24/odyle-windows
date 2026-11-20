@@ -145,7 +145,7 @@ public sealed class RealtimeClient : IDisposable
     public RealtimeClient(PartyApi api, HttpMessageHandler? handler = null)
     {
         this.api = api;
-        http = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+        http = handler is null ? new HttpClient(PartyApi.NewHandler()) : new HttpClient(handler, disposeHandler: false);
         http.BaseAddress = new Uri(api.Endpoint + "/"); http.Timeout = Timeout.InfiniteTimeSpan;
     }
     public void Start(IEnumerable<string> listen)
