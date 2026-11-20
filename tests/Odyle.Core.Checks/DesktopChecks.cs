@@ -11,6 +11,14 @@ static class DesktopChecks
         // --build-info <file>: the publish script asks a package what it is, and releases only one that updates itself.
         Check(StartupCommand.BuildInfoPath(["--build-info", "build.json"]) == "build.json" && StartupCommand.BuildInfoPath(["--build-info"]) is null && StartupCommand.BuildInfoPath(["--tray"]) is null, "the build-info argument names its file");
         Check(StartupCommand.BuildInfo(new Version(0, 8, 1, 0), true, false, "win-x64") == """{"version":"0.8.1","release":true,"selfContained":false,"runtime":"win-x64"}""", "a build says its version, whether it updates itself and its package kind");
+        // An Open in Odyle link starts "<exe>" --pair "%1": only exactly [--pair, <link>] counts, and a link
+        // with a quote that adds arguments of its own is ignored as a whole, so it can never unpair this PC or write a file.
+        Check(StartupCommand.Accepted(["--pair", "odyle://pair?link=x"]).SequenceEqual(["--pair", "odyle://pair?link=x"]) && StartupCommand.Accepted(["--tray"]).SequenceEqual(["--tray"]) && StartupCommand.Accepted(["--build-info", "b.json"]).SequenceEqual(["--build-info", "b.json"]), "a start without --pair keeps its arguments");
+        foreach (var smuggled in new string[][] { ["--pair", "odyle://pair?link=x", "--unpair", ""], ["--pair", "odyle://pair?link=x", "--build-info", @"C:\Users\p\file.txt"], ["--unpair", "--pair", "odyle://pair?link=x"], ["--build-info", "f", "--pair", "x"], ["--pair", "--unpair"], ["--pair"], ["--PAIR", "x", "--tray"] })
+        {
+            var accepted = StartupCommand.Accepted(smuggled);
+            Check(accepted.Count == 0 && !StartupCommand.Unpairs(accepted) && StartupCommand.BuildInfoPath(accepted) is null && StartupCommand.PairLinkOf(accepted) is null, "a link that smuggles arguments starts nothing of them: " + string.Join(" ", smuggled));
+        }
         Check(StartupCommand.InTray(["--TRAY"]) && !StartupCommand.InTray([]) && !StartupCommand.InTray(["--update-probe"]), "the tray argument");
         Check(StartupCommand.ShowsWindow(tray: false, paired: true) && StartupCommand.ShowsWindow(tray: true, paired: false) && !StartupCommand.ShowsWindow(tray: true, paired: true), "a paired start with Windows stays in the tray");
         // Two screens side by side; the right one is shorter.

@@ -2,6 +2,14 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.35.1 · 2026-11-20
+
+### Fixed
+- An **Open in Odyle** link can no longer do anything but offer to pair: a crafted link that tried to add other commands, such as disconnecting this PC or writing a file, is now ignored, and nothing happens without your confirmation.
+- Odyle never follows a redirect from your server's address, so your PC's pairing key can no longer be sent on to another site by a misconfigured server or proxy.
+- Odyle stays paired when something in front of your server, such as a sign-in page or a proxy, refuses it: the card says the server is unavailable and Odyle keeps retrying, instead of forgetting the pairing for good. Only your server itself can end a pairing.
+- The Windows libraries Odyle uses now load only from Windows itself, never from the folder Odyle was unpacked in.
+
 ## 0.35.0 · 2026-11-20
 
 ### New

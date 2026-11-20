@@ -80,7 +80,7 @@ static class ConnectionChecks
         var renewal = new Stub((route, _) =>
         {
             if (route == "/api/odyle/desktop-sign-in") { expired = false; return Answer(HttpStatusCode.OK, Auth); }
-            return expired ? Answer(HttpStatusCode.Unauthorized, """{"message":"The request requires valid record authorization token."}""") : Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40}""");
+            return expired ? Answer(HttpStatusCode.Unauthorized, """{"status":401,"message":"The request requires valid record authorization token."}""") : Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40}""");
         });
         using (var api = new PartyApi("https://party.example", "old", "key", renewal))
         {
@@ -94,7 +94,7 @@ static class ConnectionChecks
 
         // A PC removed on the dashboard: its session request answers 401, the sign-in with the
         // forgotten key answers 401 too, and the pairing ends instead of looping.
-        var removed = new Stub((route, _) => Answer(HttpStatusCode.Unauthorized, """{"message":"This PC is no longer paired with an account."}"""));
+        var removed = new Stub((route, _) => Answer(HttpStatusCode.Unauthorized, """{"status":401,"message":"This PC is no longer paired with an account."}"""));
         using (var api = new PartyApi("https://party.example", "token", "key", removed))
         {
             try { await api.StartSessionAsync("old-session"); throw new Exception("Connection check failed: a removed PC started a session."); }
@@ -109,6 +109,20 @@ static class ConnectionChecks
             }
             Check(removed.Requests.Count == 2, "an ended pairing never contacts the server again");
         }
+        // A 401 that is not the server's own (a sign-in page or an auth proxy in front of it) is a
+        // server that cannot be reached: the pairing is kept and the app tries again.
+        foreach (var (foreign, type) in new[] { ("<!doctype html><title>Sign in</title>", "text/html"), ("""{"error":"unauthorized"}""", "application/json"), ("", "text/plain") })
+        {
+            var proxy = new Stub((_, _) => Answer(HttpStatusCode.Unauthorized, foreign, type));
+            using var api = new PartyApi("https://party.example", "token", "key", proxy);
+            try { await api.GetRoomsAsync(); throw new Exception("Connection check failed: a foreign 401 was taken as an answer."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.BadGateway && !api.PairingEnded, "a 401 from something in front of the server keeps the pairing: " + type); }
+            try { await api.SignInAsync(); throw new Exception("Connection check failed: a foreign 401 signed in."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.BadGateway && !api.PairingEnded, "a foreign 401 at sign-in keeps the pairing too"); }
+        }
+        Check(PartyApi.IsServersOwn401("""{"data":{},"message":"The request requires valid record authorization token.","status":401}""") && !PartyApi.IsServersOwn401("""{"message":"x","status":"401"}""") && !PartyApi.IsServersOwn401("""{"status":403,"message":"x"}""") && !PartyApi.IsServersOwn401("[]") && !PartyApi.IsServersOwn401(null), "the server's own 401 is PocketBase's JSON error");
+        // The API never redirects, and a redirect is never followed: it would send a body with the device key elsewhere.
+        using (var handler = PartyApi.NewHandler()) Check(handler is SocketsHttpHandler { AllowAutoRedirect: false }, "the API clients do not follow redirects");
         // An expired publisher session (403) is reported as such; it is no reason to renew the token.
         var forbidden = new Stub((_, _) => Answer(HttpStatusCode.Forbidden, """{"message":"Publisher session expired. Reconnect."}"""));
         using (var api = new PartyApi("https://party.example", "token", "key", forbidden))
