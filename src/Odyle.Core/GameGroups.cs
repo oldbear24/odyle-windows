@@ -2,9 +2,10 @@ using System.Buffers.Binary;
 
 namespace Odyle.Core;
 // The party and the force (an alliance of parties) the own character is in, as the rosters the game
-// server sends that character say (Global, seen on the owner's client on 2026-10-28). Only the ids
-// the game gives the party and the force are read, never who else is in them. A roster counts only
-// when it lists the own character by its entity id (the 3336 varint).
+// server sends that character say (Global, seen on the owner's client on 2026-10-28). The ids the
+// game gives the party and the force are read, and the other members' names (Teammates), never
+// anything else of them. A roster counts only when it lists the own character by its entity id
+// (the 3336 varint).
 public enum GroupChange { Party, PartyEnded, Force, ForceLeft, ForceEnded }
 // Key is the party's or force's id as 16 lowercase hex digits (the wire's eight bytes in order);
 // Member the character id of the own roster entry (Party, Force) or of the player who left
@@ -13,6 +14,10 @@ public sealed record GameGroupEvent(GroupChange Change, string Key = "", ulong M
 public static class GameGroups
 {
     private const int GuidLength = 36;
+    // The backend's teammate adapter registry lists this name (backend/odyle/protocols.go).
+    public const string TeammatesAdapter = "global-teammates-v1";
+    // The most names one roster gives, as many as the backend takes in one request.
+    public const int TeammatesLimit = 48;
     // Whether a frame is one of the rosters, which need the own entity id to be read.
     public static bool IsRoster(ReadOnlySpan<byte> frame) => frame.Length >= 2 && (frame[0], frame[1]) is (0x00, 0x92) or (0x02, 0x96);
     // A whole frame, opcode first; null for anything without the layout seen on Global.
@@ -33,10 +38,30 @@ public static class GameGroups
             _ => null,
         };
     }
+    // The other members' names of the own party's or force's roster (00 92, 02 96), for the armory's
+    // scout on the server: each member entry (a GUID where Roster finds the own one) other than the
+    // own gives its name, a character name as GameIdentity.TryName reads one, each once, at most
+    // TeammatesLimit. Their entity ids, account GUIDs, character ids, legions and the rest are never
+    // read. Empty for anything else, and for a roster that does not list the own entity.
+    public static IReadOnlyList<string> Teammates(ReadOnlySpan<byte> frame, ulong? own)
+    {
+        if (own is not { } id || !IsRoster(frame) || Read(frame, id) is null) return [];
+        var p = frame[2..]; var names = new List<string>();
+        for (var i = 9; i + 9 + GuidLength + 8 < p.Length && names.Count < TeammatesLimit; i++)
+        {
+            if (p[i + 8] != GuidLength || !Guid(p.Slice(i + 9, GuidLength))) continue;
+            var at = i + 9 + GuidLength + 8; var length = p[at];
+            if (BinaryPrimitives.ReadUInt32LittleEndian(p[i..]) != id && at + 1 + length <= p.Length && GameIdentity.TryName(p.Slice(at + 1, length), out var name)
+                && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                names.Add(name);
+            i = at;
+        }
+        return names;
+    }
     // 00 92 (party) and 02 96 (force): u8 flags, the group's id (8 bytes), its leader and settings,
     // then the members, each u8 mask, u8 slot, u32 entity id, 4 bytes, the account GUID (u8 36 and
     // 36 characters), u64 character id, the name (u8 length, UTF-8) and more. The member entry with
-    // the own entity id is found by that id followed by a GUID; names are never read.
+    // the own entity id is found by that id followed by a GUID; the names are Teammates'.
     private static GameGroupEvent? Roster(ReadOnlySpan<byte> p, ulong own, GroupChange change)
     {
         if (p.Length < 9 + 10 + GuidLength + 8 || own is 0 or > uint.MaxValue || !p[1..9].ContainsAnyExcept((byte)0)) return null;

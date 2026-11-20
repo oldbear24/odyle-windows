@@ -37,6 +37,7 @@ public sealed class PacketCapture : IAsyncDisposable
     public event Action<OdyleSnapshotObservation>? SnapshotObserved;
     public event Action<GameLocation>? LocationObserved;
     public event Action<GameGroupEvent>? GroupObserved;
+    public event Action<IReadOnlyList<string>>? TeammatesObserved;
     // PvP stats (GamePvp): frames of other players, kill credits and hits are read only while
     // ReadPvp is on (the account's opt-in, or the patch-day trace); off, the decoders skip them.
     public event Action<PvpEvent>? PvpObserved;
@@ -326,6 +327,7 @@ public sealed class PacketCapture : IAsyncDisposable
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);
         decoder.SnapshotObserved += value => SnapshotObserved?.Invoke(value); decoder.SnapshotWithoutOdyle += () => SnapshotWithoutOdyle?.Invoke();
         decoder.LocationObserved += value => LocationObserved?.Invoke(value); decoder.GroupObserved += value => GroupObserved?.Invoke(value);
+        decoder.TeammatesObserved += value => TeammatesObserved?.Invoke(value);
         decoder.ReadPvp = () => readPvp; decoder.PvpObserved += value => PvpObserved?.Invoke(value); decoder.PvpFrameObserved += value => PvpFrameObserved?.Invoke(value);
     }
     // Each game connection is decoded on one interface only, the first to deliver it (FlowOwners).

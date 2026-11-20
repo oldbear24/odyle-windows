@@ -7,7 +7,8 @@ using Odyle.Core;
 
 // Parties and forces: the own party's roster (00 92) and end (1F 92), the own force's roster (02 96),
 // a player leaving it (22 96) and its end (2E 96), read only for the own entity, what the tracker
-// keeps of them, and the wire contract of POST /api/odyle/game-group. Synthetic frames in the
+// keeps of them, the other members' names (Teammates), and the wire contracts of POST
+// /api/odyle/game-group and /api/odyle/teammates. Synthetic frames in the
 // layouts seen on Global, never captures. Then the bands the lists show (GameBands), the same
 // cases as the dashboard's tests/party.test.cjs.
 static class GroupChecks
@@ -18,6 +19,7 @@ static class GroupChecks
     public static async Task Run()
     {
         Frames();
+        Teammates();
         Tracking();
         await Wire();
         Bands();
@@ -115,6 +117,45 @@ static class GroupChecks
         next.Feed(Frame(PartyRoster(0, (Own, OwnCharacter, "Hero")))); next.Feed(Frame(Identity(Mate, "Mate")));
         Check(later.Count == 0, "a held roster without the entity the game then names is dropped");
     }
+    // The other members' names of the own rosters, nothing else of them, for the armory's scout.
+    static void Teammates()
+    {
+        const ulong Third = 7070, ThirdCharacter = 0x090e_0000_0004_0001;
+        var decoder = new ExperimentalOdyleDecoder(); var names = new List<IReadOnlyList<string>>(); var groups = 0;
+        decoder.GroupObserved += _ => groups++; decoder.TeammatesObserved += names.Add;
+        // A held roster gives its names once the own identity is known, after the group.
+        decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
+        Check(names.Count == 0, "a roster before the own identity names nobody yet");
+        decoder.Feed(Frame(Identity(Own, "Hero")));
+        Check(groups == 1 && names.Single().SequenceEqual(["Mate"]), "the held roster names the other member, not the own character");
+        // A force roster names every other member once, whatever the case; a roster with the own
+        // character alone names nobody.
+        decoder.Feed(Frame(ForceRoster((Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"), (Third, ThirdCharacter, "Ållan"), (Third + 1, ThirdCharacter + 1, "MATE"))));
+        Check(names.Last().SequenceEqual(["Mate", "Ållan"]), "a force roster names the others once each");
+        decoder.Feed(Frame(PartyRoster(8, (Own, OwnCharacter, "Hero"))));
+        Check(names.Count == 2 && groups == 3, "a roster of the own character alone names nobody");
+        // Names that are not character names, and rosters without the own entity, give none.
+        decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Ma te"), (Own, OwnCharacter, "Hero"))));
+        decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "1234"), (Own, OwnCharacter, "Hero"))));
+        decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Third, ThirdCharacter, "Ållan"))));
+        Check(names.Count == 2, "odd names and others' rosters name nobody");
+        Check(GameGroups.Teammates(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero")), null).Count == 0
+            && GameGroups.Teammates([0x1f, 0x92, 3], Own).Count == 0, "without the own id, or for another message, no names");
+        // A name cut short by the frame's end is left out; random bodies never throw.
+        var cut = PartyRoster(0, (Own, OwnCharacter, "Hero"), (Mate, MateCharacter, "Mate"));
+        Check(GameGroups.Teammates(cut[..^(cut.Length - Array.LastIndexOf(cut, (byte)'M') - 2)], Own).Count == 0, "a name cut short is left out");
+        var random = new Random(12);
+        for (var i = 0; i < 3000; i++)
+        {
+            var body = new byte[random.Next(0, 300)]; random.NextBytes(body);
+            GameGroups.Teammates([.. (i % 2 == 0 ? new byte[] { 0x00, 0x92 } : [0x02, 0x96]), .. body], Own);
+        }
+        // At most as many names as the server takes in one request.
+        var crowd = Enumerable.Range(0, 60).Select(n => ((ulong)(9000 + n), (ulong)(0x0900_0000_0005_0000 + n), "P" + new string((char)('a' + n % 26), 1) + (char)('a' + n / 26))).ToArray();
+        byte[] big = [0x02, 0x96, 0, .. ForceKey, .. U64(OwnCharacter), 0, 20, 0, 0, 0, 2, 1, 0, 1, .. PartyKey, 1, 5, 0, 0, 0, 3, 61,
+            .. Member(1, Own, OwnCharacter, "Hero", null), .. crowd.SelectMany((m, i) => Member((byte)(i + 2), m.Item1, m.Item2, m.Item3, null))];
+        Check(GameGroups.Teammates(big, Own).Count == GameGroups.TeammatesLimit, "at most 48 names");
+    }
     static void Tracking()
     {
         var tracker = new GroupTracker();
@@ -155,9 +196,20 @@ static class GroupChecks
         }
         await api.GameGroupAsync("s", "c", "", "");
         using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("party").ValueKind == JsonValueKind.Null && sent.RootElement.GetProperty("force").ValueKind == JsonValueKind.Null, "outside a party and force both are null");
+        await api.TeammatesAsync("s", "c", ["Mate", "Ållan"]);
+        using (var sent = JsonDocument.Parse(requests.Last().Body))
+        {
+            var root = sent.RootElement;
+            Check(requests.Last().Route == "/api/odyle/teammates" && root.GetProperty("sessionId").GetString() == "s" && root.GetProperty("characterId").GetString() == "c"
+                && root.GetProperty("adapter").GetString() == "global-teammates-v1" && root.GetProperty("names").EnumerateArray().Select(n => n.GetString()).SequenceEqual(["Mate", "Ållan"])
+                && root.EnumerateObject().Count() == 4, "the teammates wire contract: the names and nothing else of them");
+        }
         status = HttpStatusCode.BadRequest; message = PartyApi.GroupAdapterRefused;
         try { await api.GameGroupAsync("s", "c", Party, ""); throw new Exception("Group check failed: a refused adapter was accepted."); }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.GroupAdapterRefused) { }
+        message = PartyApi.TeammateAdapterRefused;
+        try { await api.TeammatesAsync("s", "c", ["Mate"]); throw new Exception("Group check failed: a refused teammate adapter was accepted."); }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.TeammateAdapterRefused) { }
     }
     sealed class Stub(Func<HttpRequestMessage, Task<HttpResponseMessage>> answer) : HttpMessageHandler
     {

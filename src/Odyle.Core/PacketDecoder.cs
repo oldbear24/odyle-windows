@@ -174,6 +174,8 @@ public sealed class ExperimentalOdyleDecoder
     public event Action<GameLocation>? LocationObserved;
     /// <summary>The own character's party or force formed, changed or ended (GameGroups): only the ids the game gives them.</summary>
     public event Action<GameGroupEvent>? GroupObserved;
+    /// <summary>The other members' names of the own party's or force's roster (GameGroups.Teammates), never anything else of them; raised after GroupObserved, never empty.</summary>
+    public event Action<IReadOnlyList<string>>? TeammatesObserved;
     /// <summary>Whether PvP frames are read now: the account turned on PvP stats, or the patch-day trace runs. Unset or false, they are skipped unread.</summary>
     public Func<bool>? ReadPvp { get; set; }
     /// <summary>The time a PvP event happened at; the checks set their own.</summary>
@@ -306,16 +308,16 @@ public sealed class ExperimentalOdyleDecoder
             ownCharacter = id; pvp.Own(id, identity?.CharacterName ?? "", identity?.ServerId ?? 0);
             if (switched) CharacterChanged?.Invoke(id);
             // A roster held for this id comes before the name, so the name finds it.
-            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) GroupObserved?.Invoke(group); }
+            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) { GroupObserved?.Invoke(group); Teammates(held, id); } }
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
-        // The own party's and force's rosters and ends (GameGroups); other players' names, and every
-        // other party or force message, are never read.
+        // The own party's and force's rosters and ends (GameGroups), with the other members' names;
+        // every other party or force message is never read.
         if (frame[1] is 0x92 or 0x96)
         {
             if (ownCharacter is null && GameGroups.IsRoster(frame)) heldRoster = frame.ToArray();
-            else if (GameGroups.Read(frame, ownCharacter) is { } group) GroupObserved?.Invoke(group);
+            else if (GameGroups.Read(frame, ownCharacter) is { } group) { GroupObserved?.Invoke(group); Teammates(frame, ownCharacter); }
             return;
         }
         // World loads and arrivals (21 36, 23 36), and effects naming the own entity (2A 38) for its
@@ -408,6 +410,11 @@ public sealed class ExperimentalOdyleDecoder
         Candidate?.Invoke(new((int)record.Total, Version, CandidateSource.Update) { Base = (int)record.Base, Bonus = (int)record.Bonus });
     }
     /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
+    // A roster's other members' names, read only while someone listens for them.
+    private void Teammates(ReadOnlySpan<byte> roster, ulong? own)
+    {
+        if (TeammatesObserved is { } observed && GameGroups.Teammates(roster, own) is { Count: > 0 } names) observed(names);
+    }
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
     {
         value = 0; var start = offset;
