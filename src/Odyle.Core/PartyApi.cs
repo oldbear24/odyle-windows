@@ -79,6 +79,8 @@ public sealed class PartyApi : IDisposable
     public const string GroupAdapterRefused = "This group adapter is not accepted.";
     // The same for the PvP adapter (PvpTracker.Adapter): the app stops reading and sending PvP until it restarts.
     public const string PvpAdapterRefused = "This PvP adapter is not accepted.";
+    // The same for the party and force members' names (POST /api/odyle/teammates): none are sent until the app restarts.
+    public const string TeammateAdapterRefused = "This teammate adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Task<AuthResponse>? signingIn;
@@ -208,6 +210,11 @@ public sealed class PartyApi : IDisposable
     // players of one party together. Sent on its own, so a server from before it answers 404.
     public Task GameGroupAsync(string sessionId, string characterId, string party, string force) =>
         PostAsync<JsonElement>("api/odyle/game-group", new { sessionId, characterId, adapter = GroupTracker.Adapter, party = party.Length > 0 ? party : null, force = force.Length > 0 ? force : null });
+    // The names of the other members of the named character's party and force (GameGroups.Teammates),
+    // up to 48, without the party or force, for the armory's scout on the server; it keeps none of
+    // them. A server from before it answers 404.
+    public Task TeammatesAsync(string sessionId, string characterId, IReadOnlyCollection<string> names) =>
+        PostAsync<JsonElement>("api/odyle/teammates", new { sessionId, characterId, adapter = GameGroups.TeammatesAdapter, names });
     // The named character's PvP kills, assists and deaths (PvpOutbox), up to 20 at a time, for an
     // account that turned on PvP stats; Enabled is false when it has not (nothing was stored). An
     // event the server already has is not stored twice. A server from before PvP stats answers 404.

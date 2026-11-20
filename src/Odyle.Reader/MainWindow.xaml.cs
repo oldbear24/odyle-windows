@@ -1804,6 +1804,7 @@ public partial class MainWindow : Window
         next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
         next.LocationObserved += location => Dispatcher.BeginInvoke(() => OnLocation(next, location));
         next.GroupObserved += change => Dispatcher.BeginInvoke(() => OnGroup(next, change));
+        next.TeammatesObserved += names => Dispatcher.BeginInvoke(() => OnTeammates(next, names));
         next.ReadPvp = PvpWanted; next.PvpObserved += e => Dispatcher.BeginInvoke(() => OnPvp(next, e));
         // Decoder diagnostics for a value that is wrong or missing: every Odyle update, stat
         // snapshot and identity, and once per run each distinct stat frame layout and each other
@@ -2076,6 +2077,8 @@ public partial class MainWindow : Window
             if (detectedCharacterKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
             // Its party and force, each time the game names it (every few minutes): a reading that ended cleared them on the server.
             _ = SendGroupAsync();
+            // Party and force members' names read before the character was saved.
+            _ = SendTeammatesAsync();
             // PvP events read before the character was saved are its own.
             _ = SendPvpAsync();
             // A snapshot still waiting for its owner belongs to the character just named.
@@ -2191,6 +2194,49 @@ public partial class MainWindow : Window
         {
             groupSending = false;
             if (groupAgain) { groupAgain = false; await SendGroupAsync(); }
+        }
+    }
+
+    // ----- Party and force members -----
+    // The names of the other members of the named character's party and force (GameGroups.Teammates),
+    // for the armory's scout on the server, which looks them up on PLAYNC's public pages and keeps
+    // none of them. Each name is sent once while Odyle runs, without the party or force, one request
+    // at a time; names read meanwhile, or before the character is saved, wait for the next one
+    // (up to GameGroups.TeammatesLimit). A 400 for the adapter (switched off under Server controls)
+    // stops them until Odyle restarts; anything else (a server from before them answers 404) drops
+    // that request's names.
+    private readonly HashSet<string> teammatesSent = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> teammatesWaiting = [];
+    private bool teammatesRefused, teammatesSending, teammatesFailing;
+    private void OnTeammates(PacketCapture source, IReadOnlyList<string> names)
+    {
+        if (capture != source || twoClients || teammatesRefused) return;
+        foreach (var name in names)
+            if (!teammatesSent.Contains(name) && !teammatesWaiting.Contains(name, StringComparer.OrdinalIgnoreCase) && teammatesWaiting.Count < GameGroups.TeammatesLimit) teammatesWaiting.Add(name);
+        _ = SendTeammatesAsync();
+    }
+    private async Task SendTeammatesAsync()
+    {
+        if (teammatesRefused || teammatesSending || teammatesWaiting.Count == 0 || api is not { } current || sessionId.Length == 0 || currentCharacterId.Length == 0 || gameCharacterId == 0 || detectedCharacterKey != gameCharacterKey) return;
+        var names = teammatesWaiting.ToArray(); teammatesWaiting.Clear();
+        teammatesSending = true; var sent = false;
+        try
+        {
+            await current.TeammatesAsync(sessionId, currentCharacterId, names);
+            // Remembered for this run only; a long session forgets them rather than growing without end.
+            if (teammatesSent.Count > 5000) teammatesSent.Clear();
+            teammatesSent.UnionWith(names); teammatesFailing = false; sent = true;
+        }
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.TeammateAdapterRefused)
+        {
+            teammatesRefused = true; teammatesWaiting.Clear();
+            Log.Warn($"The server does not accept the teammate adapter {GameGroups.TeammatesAdapter}; party and force members' names are not sent until Odyle restarts.");
+        }
+        catch (Exception error) { if (!teammatesFailing) Log.Info($"Party and force members' names were not sent: {Describe(error)}"); teammatesFailing = true; }
+        finally
+        {
+            teammatesSending = false;
+            if (sent && teammatesWaiting.Count > 0) await SendTeammatesAsync();
         }
     }
 

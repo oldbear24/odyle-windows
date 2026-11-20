@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.35.0 · 2026-11-20
+
+### New
+- **The armory's top players grow with the players you meet**: Odyle now also sends your server the names of the other players in your party and force, so the armory's scout can look up their public PLAYNC profiles and count the strongest among the top players by class. Only the names leave your PC, without your party or force; the server keeps them in memory only until the scout looked them up, and never keeps who played with whom. Your server's operators can switch this off; it needs dashboard 0.63.0 or newer, and older servers simply ignore it.
+
 ## 0.34.0 · 2026-11-16
 
 ### New
