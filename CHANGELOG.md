@@ -5,7 +5,7 @@ What changed in each release of Odyle for Windows, newest first, written for pla
 ## 0.36.0 · 2026-11-21
 
 ### New
-- You can stop Odyle from sending the names of the other players in your party and force: turn it off on the dashboard (it is on unless you do). Odyle then drops the names it reads and sends none, and starts again within about 20 seconds once you turn it back on. Older servers without the switch keep working as before.
+- You can stop Odyle from sending the names of the other players in your party and force to the armory: turn off **Send the names of my party and force members to the armory** under **Account & data** on the dashboard (it is on unless you do). Odyle then drops the names it reads and sends none, and starts again within about 20 seconds once you turn it back on. Older servers without the switch keep working as before.
 - The notice in Settings and the installer now says that Odyle sends those names to the armory, which looks up their public PLAYNC profiles, until you turn that off.
 
 ### Fixed
