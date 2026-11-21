@@ -12,6 +12,8 @@ DesktopChecks.Run();
 await DiscordChecks.Run();
 SetupChecks.Run();
 RealtimeChecks.Run();
+await RealtimeClientChecks.Run();
+await AnswerChecks.Run();
 ClockChecks.Run();
 PartyChecks.Run();
 ChangelogChecks.Run();

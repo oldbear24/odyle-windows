@@ -180,11 +180,11 @@ static class GroupChecks
     }
     static async Task Wire()
     {
-        var requests = new List<(string Route, string Body)>(); var status = HttpStatusCode.OK; var message = "";
+        var requests = new List<(string Route, string Body)>(); var status = HttpStatusCode.OK; var message = ""; var answer = """{"serverNow":"x"}""";
         using var api = new PartyApi("https://party.example", "token", null, new Stub(async request =>
         {
             requests.Add((request.RequestUri!.AbsolutePath, await request.Content!.ReadAsStringAsync()));
-            var body = status == HttpStatusCode.OK ? """{"serverNow":"x"}""" : JsonSerializer.Serialize(new { message });
+            var body = status == HttpStatusCode.OK ? answer : JsonSerializer.Serialize(new { message });
             return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }));
         await api.GameGroupAsync("s", "c", Party, Force);
@@ -196,6 +196,19 @@ static class GroupChecks
         }
         await api.GameGroupAsync("s", "c", "", "");
         using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("party").ValueKind == JsonValueKind.Null && sent.RootElement.GetProperty("force").ValueKind == JsonValueKind.Null, "outside a party and force both are null");
+        // An older backend answers without `shared`: the names were taken (#81).
+        Check(await api.TeammatesAsync("s", "c", ["Mate", "Ållan"]), "an answer without shared means the names were taken");
+        answer = """{"shared":true,"queued":2,"serverNow":"x"}""";
+        Check(await api.TeammatesAsync("s", "c", ["Mate"]), "shared: true means the names were taken");
+        answer = """{"shared":false}""";
+        Check(!await api.TeammatesAsync("s", "c", ["Mate"]), "shared: false means the account turned the names off");
+        answer = """{"serverNow":"x"}""";
+        // The account switch in the session and heartbeat answers: absent (older backends) means on.
+        var web = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        Check(JsonSerializer.Deserialize<PublisherSession>("""{"sessionId":"s","sequence":0,"shareTeammates":false}""", web) is { ShareTeammates: false }
+            && JsonSerializer.Deserialize<PublisherSession>("""{"sessionId":"s","sequence":0}""", web) is { ShareTeammates: null }
+            && JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x","shareTeammates":true}""", web) is { ShareTeammates: true }
+            && JsonSerializer.Deserialize<HeartbeatResponse>("""{"serverNow":"x"}""", web) is { ShareTeammates: null }, "shareTeammates in the session and heartbeat answers");
         await api.TeammatesAsync("s", "c", ["Mate", "Ållan"]);
         using (var sent = JsonDocument.Parse(requests.Last().Body))
         {

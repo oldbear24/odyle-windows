@@ -6,6 +6,14 @@ namespace Odyle.Core;
 public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paused = false)
 {
     public static readonly ClockRules Default = new([1, 4, 7, 10, 13, 16, 19, 22], 15, [560, 840]);
+    // A server's rules as the clock can use them (#83): a missing list takes the default one, hours
+    // outside 0–23 and caps below 1 are dropped, and the caps go smallest first. A tick below 1 stays:
+    // the clock then shows no estimate (OdyleClock.Of).
+    public ClockRules Normalized() => this with
+    {
+        TickHours = TickHours is null ? Default.TickHours : TickHours.Where(h => h is >= 0 and < 24).Distinct().Order().ToArray(),
+        Caps = Caps is null ? Default.Caps : Caps.Where(c => c > 0).Distinct().Order().ToArray(),
+    };
 }
 
 // When a cap is reached; At is null when it is more than 120 days away.

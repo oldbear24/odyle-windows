@@ -37,6 +37,8 @@ public sealed record RealtimeNews(bool Refresh, bool Removed, Character[] Charac
         Character[] characters;
         try { characters = data.TryGetProperty("characters", out var list) && list.ValueKind == JsonValueKind.Array ? list.Deserialize<Character[]>(Json) ?? [] : []; }
         catch (JsonException) { return again; }
+        // A character without an id could not be applied anywhere (PartyNews matches by id): it is dropped (#83).
+        characters = characters.Where(c => c is { Id.Length: > 0 }).ToArray();
         var seen = new Dictionary<string, string>();
         if (data.TryGetProperty("seen", out var times) && times.ValueKind == JsonValueKind.Object)
             foreach (var entry in times.EnumerateObject()) if (entry.Value.ValueKind == JsonValueKind.String) seen[entry.Name] = entry.Value.GetString()!;
@@ -119,21 +121,31 @@ public static class PartyNews
     private static bool Later(string at, string than) => Readiness.Parse(at) is { } next && (Readiness.Parse(than) is not { } before || next > before);
 }
 // The realtime connection: PocketBase's server-sent events at /api/realtime. Once started
-// it keeps itself up: after a drop it connects again (1, 2, 5, 10 s, then every 30 s) and
-// subscribes its topics again with the account's current token, and a connection silent
-// for six minutes (the server closes idle ones after five) counts as dropped. Connected
-// tells whether it is a reconnect: news may have been missed meanwhile. Events come from a
-// background thread.
+// it keeps itself up: after a drop, or any failure at all, it connects again (1, 2, 5, 10 s,
+// then every 30 s) and subscribes its topics again with the account's current token. A
+// connection whose answer does not begin within 30 seconds, or that stays silent for six
+// minutes (the server closes idle ones after five), counts as dropped; Reconnect drops it at
+// once (the app calls it when the PC wakes from sleep). Connected tells whether it is a
+// reconnect: news may have been missed meanwhile. Events come from a background thread.
 public sealed class RealtimeClient : IDisposable
 {
     private static readonly TimeSpan[] Steps = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)];
-    public static readonly TimeSpan Silence = TimeSpan.FromMinutes(6);
+    public static readonly TimeSpan DefaultSilence = TimeSpan.FromMinutes(6), DefaultConnectTimeout = TimeSpan.FromSeconds(30);
+    // One event's data is at most this long; a longer one drops the connection.
+    public const int EventLimit = 4 * 1024 * 1024;
+    // The checks shorten the silence and connect limits and the waits between attempts.
+    public TimeSpan Silence { get; init; } = DefaultSilence;
+    public TimeSpan ConnectTimeout { get; init; } = DefaultConnectTimeout;
+    public Func<int, TimeSpan> Delay { get; init; } = Backoff;
     private readonly PartyApi api;
     private readonly HttpClient http;
     private readonly CancellationTokenSource stop = new();
     private readonly object gate = new();
-    private string[] topics = [];
+    // topics: what the app wants to hear; subscribed: what the server took on this connection,
+    // which is less after a refused room (403).
+    private string[] topics = [], subscribed = [];
     private string? clientId;
+    private CancellationTokenSource? connection;
     private bool started, connectedBefore;
     public event Action<bool>? Connected;
     public event Action? Disconnected;
@@ -141,10 +153,13 @@ public sealed class RealtimeClient : IDisposable
     public bool IsConnected { get; private set; }
     // Why the last connection failed or ended, for the log.
     public string? LastProblem { get; private set; }
+    public string[] Subscribed { get { lock (gate) return subscribed; } }
     public static TimeSpan Backoff(int attempt) => Steps[Math.Clamp(attempt, 0, Steps.Length - 1)];
+    // Without a handler of its own it uses the one the checks gave the PartyApi, else the network.
     public RealtimeClient(PartyApi api, HttpMessageHandler? handler = null)
     {
         this.api = api;
+        handler ??= api.Handler;
         http = handler is null ? new HttpClient(PartyApi.NewHandler()) : new HttpClient(handler, disposeHandler: false);
         http.BaseAddress = new Uri(api.Endpoint + "/"); http.Timeout = Timeout.InfiniteTimeSpan;
     }
@@ -153,49 +168,78 @@ public sealed class RealtimeClient : IDisposable
         lock (gate) { topics = listen.Distinct().ToArray(); if (started) return; started = true; }
         _ = Task.Run(() => RunAsync(stop.Token));
     }
-    // Changes the topics, for example after the account joined or left a room.
+    // Changes the topics, for example after the account joined or left a room. The same topics are
+    // subscribed again while the server took fewer of them (a room it refused just before).
     public async Task ListenAsync(IEnumerable<string> listen)
     {
         var next = listen.Distinct().ToArray();
-        lock (gate) { if (next.SequenceEqual(topics)) return; topics = next; }
-        if (IsConnected) { try { await SubscribeAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { LastProblem = error.Message; } }
+        lock (gate) { if (next.SequenceEqual(topics) && next.SequenceEqual(subscribed)) return; topics = next; }
+        if (IsConnected) { try { await SubscribeAsync(); } catch (Exception error) { LastProblem = error.Message; } }
+    }
+    // Drops the connection now; it connects again after a second.
+    public void Reconnect(string why)
+    {
+        lock (gate)
+        {
+            if (connection is null) return;
+            LastProblem = why;
+            try { connection.Cancel(); } catch (ObjectDisposedException) { }
+        }
     }
     private async Task SubscribeAsync()
     {
         string? id; string[] wanted;
         lock (gate) { id = clientId; wanted = topics; }
         if (id is null) return;
+        var taken = wanted;
         try { await api.SubscribeAsync(id, wanted); }
         // A room the account no longer belongs to is refused: listen to the rest until the
         // app has the new list of rooms.
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Forbidden && wanted.Length > 1)
         {
-            await api.SubscribeAsync(id, wanted.Where(t => t.StartsWith(RealtimeTopics.Own, StringComparison.Ordinal)).ToArray());
+            taken = wanted.Where(t => t.StartsWith(RealtimeTopics.Own, StringComparison.Ordinal)).ToArray();
+            await api.SubscribeAsync(id, taken);
         }
+        lock (gate) if (clientId == id) subscribed = taken;
     }
     private async Task RunAsync(CancellationToken token)
     {
         var attempt = 0;
         while (!token.IsCancellationRequested)
         {
+            using var current = CancellationTokenSource.CreateLinkedTokenSource(token);
+            lock (gate) connection = current;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, "api/realtime");
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+                HttpResponseMessage answer;
+                using (var connecting = CancellationTokenSource.CreateLinkedTokenSource(current.Token))
+                {
+                    connecting.CancelAfter(ConnectTimeout);
+                    try { answer = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, connecting.Token); }
+                    catch (OperationCanceledException) when (!current.IsCancellationRequested) { throw new TimeoutException($"The realtime connection did not answer within {ConnectTimeout.TotalSeconds:0} s."); }
+                }
+                using var response = answer;
                 response.EnsureSuccessStatusCode();
-                using var stream = await response.Content.ReadAsStreamAsync(token);
+                using var stream = await response.Content.ReadAsStreamAsync(current.Token);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 string? name = null; var data = new StringBuilder();
                 while (true)
                 {
-                    using var quiet = CancellationTokenSource.CreateLinkedTokenSource(token); quiet.CancelAfter(Silence);
-                    var line = await reader.ReadLineAsync(quiet.Token);
+                    string? line;
+                    using (var quiet = CancellationTokenSource.CreateLinkedTokenSource(current.Token))
+                    {
+                        quiet.CancelAfter(Silence);
+                        try { line = await reader.ReadLineAsync(quiet.Token); }
+                        catch (OperationCanceledException) when (!current.IsCancellationRequested) { throw new TimeoutException($"The realtime connection was silent for {Silence.TotalSeconds:0} s."); }
+                    }
                     if (line is null) break;
                     if (line.Length > 0)
                     {
                         if (line.StartsWith("event:", StringComparison.Ordinal)) name = line[6..].Trim();
                         else if (line.StartsWith("data:", StringComparison.Ordinal)) data.Append(data.Length > 0 ? "\n" : "").Append(line[5..].TrimStart());
+                        if (data.Length > EventLimit) throw new InvalidDataException("A realtime event was larger than 4 MB.");
                         continue;
                     }
                     if (name is not null && data.Length > 0 && await DispatchAsync(name, data.ToString())) attempt = 0;
@@ -204,10 +248,17 @@ public sealed class RealtimeClient : IDisposable
                 LastProblem = "The server closed the realtime connection.";
             }
             catch (Exception) when (token.IsCancellationRequested) { break; }
-            catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException) { LastProblem = error.Message; }
-            lock (gate) clientId = null;
-            if (IsConnected) { IsConnected = false; Disconnected?.Invoke(); }
-            try { await Task.Delay(Backoff(attempt++), token); } catch (OperationCanceledException) { break; }
+            // Reconnect: LastProblem already says why.
+            catch (Exception) when (current.IsCancellationRequested) { }
+            // Whatever went wrong, the connection is made again; nothing ends this loop but Dispose.
+            catch (Exception error) { LastProblem = error.Message; }
+            lock (gate) { clientId = null; subscribed = []; connection = null; }
+            if (IsConnected)
+            {
+                IsConnected = false;
+                try { Disconnected?.Invoke(); } catch (Exception error) { LastProblem = error.Message; }
+            }
+            try { await Task.Delay(Delay(attempt++), token); } catch (OperationCanceledException) { break; }
         }
     }
     // Answers whether the event was the connection's start, subscribed.

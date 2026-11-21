@@ -20,7 +20,7 @@ public partial class App : System.Windows.Application
     private EventWaitHandle? showSignal, quitSignal;
     private RegisteredWaitHandle? showWait, quitWait;
     private PairPipe? pairPipe;
-    private bool primary;
+    private bool primary, windowBuilt;
     private DateTimeOffset failuresSince, lastNotice = DateTimeOffset.MinValue;
     private int failures;
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int processId);
@@ -65,9 +65,24 @@ public partial class App : System.Windows.Application
         var handed = pairLink ?? (action is null ? null : StartupCommand.PipeActionPrefix + action);
         if (!primary) { if (handed is not null) { AllowSetForegroundWindow(-1); if (!PairPipe.Send(user, handed)) ShowRunning(user); } else if (!tray) ShowRunning(user); Shutdown(); return; }
         Log.Info($"Odyle {Updater.Current} starts{(tray ? " in the tray" : "")}: {Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")} package, {Environment.OSVersion}, language {Localizer.Language} ({Localizer.Culture.Name}).");
+        // A build an update just installed counts its starts until one proves healthy; after two failed
+        // ones the build before it is put back and started instead (Updater, start health).
+        if (Updater.IsReleaseBuild && Updater.BeginStart(Updater.Executable!, Updater.Current) == Updater.StartHealth.RolledBack) { Restart(tray); return; }
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
         if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
+        try { StartWindow(accepted, tray, user, pairLink, action); }
+        // A build an update just installed that cannot build its window ends, so its next start can count
+        // it, or, the second time, starts the build before it again. Any other start keeps running as before.
+        catch (Exception error) when (Updater.StartPending)
+        {
+            Log.Error($"Odyle {Updater.Current} could not start", error);
+            if (Updater.FailedStart(Updater.Executable!, Updater.Current)) Restart(tray);
+            else { Release(); Shutdown(); }
+        }
+    }
+    private void StartWindow(System.Collections.Generic.IReadOnlyList<string> accepted, bool tray, string user, string? pairLink, string? action)
+    {
         Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
         if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
         var window = new MainWindow(); MainWindow = window;
@@ -83,6 +98,14 @@ public partial class App : System.Windows.Application
         _ = window.StartAsync(tray);
         if (pairLink is not null) window.Dispatcher.BeginInvoke(() => window.OfferPairing(pairLink), DispatcherPriority.ApplicationIdle);
         else if (action is not null) window.Dispatcher.BeginInvoke(() => window.Do(action), DispatcherPriority.ApplicationIdle);
+        // Healthy once it ran 30 seconds with its window, or quit in order before that (OnExit).
+        windowBuilt = true;
+        if (Updater.StartPending)
+        {
+            var healthy = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+            healthy.Tick += (_, _) => { healthy.Stop(); Updater.ConfirmStart(); };
+            healthy.Start();
+        }
     }
     // The taskbar button's right-click menu, also on a pinned button while Odyle is not running: each
     // task starts this executable with --do, which a running Odyle takes over (MainWindow.Do).
@@ -183,5 +206,5 @@ public partial class App : System.Windows.Application
         showWait?.Unregister(null); showWait = null; showSignal?.Dispose(); showSignal = null;
         quitWait?.Unregister(null); quitWait = null; quitSignal?.Dispose(); quitSignal = null; pairPipe?.Stop(); pairPipe = null; instance?.Dispose(); instance = null;
     }
-    protected override void OnExit(ExitEventArgs e) { if (primary) Log.Info("Odyle stops."); Release(); base.OnExit(e); }
+    protected override void OnExit(ExitEventArgs e) { if (primary) Log.Info("Odyle stops."); if (windowBuilt) Updater.ConfirmStart(); Release(); base.OnExit(e); }
 }

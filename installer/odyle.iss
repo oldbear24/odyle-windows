@@ -54,8 +54,8 @@ Name: "cs"; MessagesFile: "compiler:Languages\Czech.isl"
 
 [Messages]
 ; What Odyle is and is not: the same notice as Settings -> Packet reader and the dashboard.
-en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nOdyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic or automates play, and it reads no damage numbers, HP or skills. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard, and it reads your character's PvP kills, assists and deaths, with the names of the players in them, only after you turn on PvP stats there. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk.
-cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení vaší vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nečte čísla poškození, HP ani dovednosti. Mapu a polohu vaší vlastní postavy posílá vašim místnostem, jen když na dashboardu zapnete sdílení polohy, a PvP zabití, asistence a smrti vaší postavy se jmény hráčů, kterých se týkají, čte, jen když tam zapnete PvP statistiky. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáte na vlastní riziko.
+en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nOdyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic or automates play, and it reads no damage numbers, HP or skills. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard, and it reads your character's PvP kills, assists and deaths, with the names of the players in them, only after you turn on PvP stats there. It also sends the names of the other players in your party and force to Odyle's armory, which looks up their public PLAYNC profiles, until you turn that off on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk.
+cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení vaší vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nečte čísla poškození, HP ani dovednosti. Mapu a polohu vaší vlastní postavy posílá vašim místnostem, jen když na dashboardu zapnete sdílení polohy, a PvP zabití, asistence a smrti vaší postavy se jmény hráčů, kterých se týkají, čte, jen když tam zapnete PvP statistiky. Jména ostatních hráčů ve vaší partě a force posílá také do zbrojnice Odyle, která vyhledá jejich veřejné profily PLAYNC, dokud to na dashboardu nevypnete. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáte na vlastní riziko.
 
 [CustomMessages]
 en.AutostartTask=Start Odyle with Windows (it waits in the tray)
@@ -100,6 +100,13 @@ Root: HKCU; Subkey: "Software\Classes\odyle\shell\open\command"; ValueType: stri
 [Run]
 Filename: "{app}\Odyle.exe"; Description: "{cm:LaunchProgram,Odyle}"; Flags: nowait postinstall skipifsilent
 Filename: "https://npcap.com/#download"; Description: "{cm:NpcapRun}"; Flags: shellexec nowait postinstall skipifsilent; Check: not NpcapInstalled
+
+[InstallDelete]
+; An install replaces whatever the updater left beside Odyle.exe: the build an update moved aside and its
+; start count (Updater, start health), so a fresh install never rolls back to an older build.
+Type: files; Name: "{app}\Odyle.exe.old"
+Type: files; Name: "{app}\Odyle.exe.starts"
+Type: files; Name: "{app}\Odyle.exe.failed"
 
 [UninstallDelete]
 ; Files the updater added or moved aside (Odyle.exe.old) and its downloaded packages.

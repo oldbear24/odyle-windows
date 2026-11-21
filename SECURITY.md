@@ -6,4 +6,4 @@ The maintainer answers there. A fix goes out as a release, and installed apps up
 
 Only the newest release is supported. The dashboard and server have their own policy in [oldbear24/odyle-dashboard](https://github.com/oldbear24/odyle-dashboard/security).
 
-The app reads only its own game client's packets, locally, and sends only normalized Odyle readings; anything that makes it read or send more is in scope.
+The app reads only its own game client's packets, locally. It sends normalized Odyle readings, the ids of its own character's party and force, and the names of the other players in that party and force for the armory's scout (until the account turns that off on the dashboard); its own character's position only with location sharing on, and its PvP kills, assists and deaths only with PvP stats on. Anything that makes it read or send more is in scope.
