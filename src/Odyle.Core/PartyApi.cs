@@ -102,17 +102,28 @@ public sealed class PartyApi : IDisposable
     public const string TeammateAdapterRefused = "This teammate adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // The window's requests run on its UI thread and the realtime connection's on a pool thread (#92): the
+    // shared sign-in is taken under a lock, and the state both read is written whole (volatile, and the
+    // 429 pause as ticks through Interlocked, since a DateTimeOffset is two words).
+    private readonly object signInLock = new();
     private Task<AuthResponse>? signingIn;
+    private volatile string? token, deviceKey;
+    private volatile bool pairingEnded;
+    private long busyUntilTicks;
     public string Endpoint { get; }
-    public string? Token { get; private set; }
+    public string? Token { get => token; private set => token = value; }
     // The pairing's lasting credential. Account tokens run out after seven days; the key
     // signs in again for a fresh one, so the app stays paired until it disconnects.
-    public string? DeviceKey { get; private set; }
+    public string? DeviceKey { get => deviceKey; private set => deviceKey = value; }
     // Set once the server refused the pairing itself (a sign-in answered 401): every later
     // request fails at once with 401 instead of signing in again and again.
-    public bool PairingEnded { get; private set; }
+    public bool PairingEnded { get => pairingEnded; private set => pairingEnded = value; }
     // After a 429 every request waits until then without reaching the server.
-    public DateTimeOffset BusyUntil { get; private set; }
+    public DateTimeOffset BusyUntil
+    {
+        get => new(Interlocked.Read(ref busyUntilTicks), TimeSpan.Zero);
+        private set => Interlocked.Exchange(ref busyUntilTicks, value.UtcTicks);
+    }
     // Every sign-in answer (pairing, start-up, the daily renewal, a renewal after a 401)
     // names the account as it is now, for example a display name changed on the dashboard.
     public event Action<AuthResponse>? SignedIn;
@@ -172,10 +183,11 @@ public sealed class PartyApi : IDisposable
     public async Task<AuthResponse> SignInAsync()
     {
         if (DeviceKey is null) return await RefreshAsync();
-        var pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
+        Task<AuthResponse> pending;
+        lock (signInLock) pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
         try { var result = await pending; Token = result.Token; SignedIn?.Invoke(result); return result; }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
-        finally { if (signingIn == pending) signingIn = null; }
+        finally { lock (signInLock) if (signingIn == pending) signingIn = null; }
     }
     // Gives an app paired before device keys existed its key, using the still-valid token.
     // A backend without device keys answers 404; the app then keeps refreshing its token.
