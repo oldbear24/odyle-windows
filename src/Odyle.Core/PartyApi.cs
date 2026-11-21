@@ -57,8 +57,8 @@ public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 // Sharing (the member-wide switch) and each character's Shared say what the room sees (null: older backends).
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters, bool? Sharing = null);
-// A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
-public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
+// A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date. Waiting are the attendees beyond its dungeon's party size, who wait for a place: they stay in Attendees (null from backends before dashboard 0.41).
+public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null, string[]? Waiting = null);
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 // ShareLocation: the account shares its characters' location with its rooms (an opt-in on the
 // dashboard); backends from before location sharing leave it out, which means no.
@@ -193,7 +193,6 @@ public sealed class PartyApi : IDisposable
         DeviceKey = null; await PostAsync<JsonElement>("api/odyle/unpair", new { deviceKey = key }, renew: false);
     }
     public async Task<RoomsResponse> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Normalized();
-    // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
     // The Windows versions the server's operators hold back (#19); older backends answer none.
     public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
     // The regions and game servers the server knows (the armory's search form lists them).
