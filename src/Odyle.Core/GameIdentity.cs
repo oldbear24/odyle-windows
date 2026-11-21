@@ -77,7 +77,7 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
     {
         if (server is < 1000 or >= 3000) return (null, null);
         // NA-East (1xx) and NA-West (2xx) have servers of the same names, so they are separate regions (#4);
-        // a server from before NA-West takes GLOBAL_NA for both (GameIdentity.ForServer).
+        // a server from before NA-West takes GLOBAL_NA for both (GameIdentity.RegionFor).
         var region = (server / 100 % 10) switch { 1 => "GLOBAL_NA", 2 => "GLOBAL_NAW", 3 => "GLOBAL_EU", 4 => "GLOBAL_SA", 5 => "GLOBAL_ASIA", _ => null };
         return (StaticName(server) ?? learned.GetValueOrDefault(server), region);
     }

@@ -2,6 +2,18 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.36.1 · 2026-11-21
+
+### Fixed
+- Pairing with another server without restarting Odyle no longer keeps the first server's refusals or what Odyle already sent it, and a character you are playing is saved on the new server before its Odyle is sent, never under another of your characters there.
+- Quitting while an update installs now restarts into the new version.
+- Odyle starts reading the game as soon as it opens, without waiting for your server, so it catches the login snapshot even when the server is slow; your party loads alongside. An unreachable server is no longer asked twice for a new session.
+- Downloading and installing an update no longer freezes the card.
+- The next-run chip no longer counts players on the waiting list as going.
+
+### Changed
+- The card does much less work every second, and none while it waits in the tray; tooltips on the party and characters lists now stay open.
+
 ## 0.36.0 · 2026-11-21
 
 ### New

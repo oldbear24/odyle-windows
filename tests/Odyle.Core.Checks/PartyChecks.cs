@@ -47,6 +47,8 @@ static class PartyChecks
         var other = new PlannedRun("r2", "Ice Cave", "2026-10-15 12:30:00.000Z", "", "l", ["l"]);
         var next = RunChip.Pick([WithRuns(other, mine)], "u", now)!;
         Check(next is { Going: true, Attendees: 2, Run.Id: "r1" } && RunChip.Line(next, now) == "Fire Temple · in 1h 30m · 2 going · Evening", "a run you go to comes first, with a countdown");
+        var crowded = mine with { Attendees = ["u", "l", "k"], Waiting = ["k"] };
+        Check(RunChip.Pick([WithRuns(crowded)], "u", now) is { Going: true, Attendees: 2 } && RunChip.Pick([WithRuns(crowded with { Waiting = null })], "u", now) is { Attendees: 3 }, "players waiting for a place are not counted as going");
         Check(RunChip.Pick([WithRuns(other)], "u", now) is { Going: false, Run.Id: "r2" } && RunChip.Pick([WithRuns(other)], "", now) is null, "else the soonest run of your rooms");
         Check(RunChip.Line(next, now.AddMinutes(89.5)) == "Fire Temple · starting now · 2 going · Evening" && RunChip.Pick([WithRuns(mine)], "u", now.AddMinutes(106)) is null, "starting now, gone 15 minutes after the start");
         Check(RunChip.Pick([WithRuns(mine with { StartsAt = "2026-10-16 13:00:00.000Z" })], "u", now) is null, "only the next 24 hours");

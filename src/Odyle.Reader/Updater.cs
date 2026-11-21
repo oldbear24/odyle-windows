@@ -60,7 +60,13 @@ public static class Updater
     public static async Task<AppRelease?> CheckAsync(IReadOnlyCollection<Version> heldBack, CancellationToken token) =>
         ReleaseFeed.Choose(await FetchLatestAsync(token), Current, Executable is { } exe && FailedVersion(exe, Current) is { } failed ? [.. heldBack, failed] : heldBack, Runtime, SelfContained);
     // Drops downloaded packages of held-back versions, so none is installed at the next start.
+    // Takes the swap's lock, so a package being copied in (Apply) is never removed halfway; the window
+    // calls it off its UI thread.
     public static void Forget(IEnumerable<Version> heldBack)
+    {
+        lock (Swap) ForgetLocked(heldBack);
+    }
+    private static void ForgetLocked(IEnumerable<Version> heldBack)
     {
         if (!Directory.Exists(Staging)) return;
         foreach (var version in heldBack)
@@ -111,7 +117,14 @@ public static class Updater
     public static void Apply(StagedUpdate update) => Apply(update.Directory, Path.GetDirectoryName(Executable) ?? throw new InvalidOperationException(T("The application folder is unknown.")));
     // Copies the staged files over the installed ones. The running executable cannot be
     // overwritten, so it moves aside first; a failure puts it back and this build keeps working.
+    // The window installs off its UI thread (#87); the lock keeps ConfirmStart, which removes the
+    // .old of this start, from running while the swap moves this build to .old.
     public static void Apply(string source, string target)
+    {
+        lock (Swap) ApplyLocked(source, target);
+    }
+    private static readonly object Swap = new();
+    private static void ApplyLocked(string source, string target)
     {
         var aside = new List<(string Path, string Old)>();
         try
@@ -146,7 +159,12 @@ public static class Updater
     // Removes packages that are no longer newer than this build, and the executable a rollback moved
     // aside once this build is that version or newer (a reinstall). The executable an update moved aside
     // stays until this build started healthy (ConfirmStart).
+    // Takes the swap's lock like Forget.
     public static void CleanUp()
+    {
+        lock (Swap) CleanUpLocked();
+    }
+    private static void CleanUpLocked()
     {
         if (IsReleaseBuild && File.Exists(Executable + Failed) && FailedVersion(Executable!, Current) is null) Try(() => File.Delete(Executable + Failed));
         if (!Directory.Exists(Staging)) return;
@@ -194,13 +212,20 @@ public static class Updater
         return version == current && count >= FailedStartsLimit && RollBack(exe, current);
     }
     // This start proved healthy: the build before it is no longer needed.
+    // An update being copied in meanwhile (Apply) ends this start's count itself, so the UI thread does
+    // not wait for the copy: the confirmation is skipped.
     public static void ConfirmStart()
     {
-        if (pending is not { } exe) return;
-        pending = null;
-        Try(() => File.Delete(exe + Old));
-        if (File.Exists(exe + Old)) WriteStarts(exe + Starts, pendingVersion, -1); else Try(() => File.Delete(exe + Starts));
-        Log.Info(File.Exists(exe + Old) ? "This start is healthy; the previous build could not be removed yet." : "This start is healthy; the previous build was removed.");
+        if (!Monitor.TryEnter(Swap)) return;
+        try
+        {
+            if (pending is not { } exe) return;
+            pending = null;
+            Try(() => File.Delete(exe + Old));
+            if (File.Exists(exe + Old)) WriteStarts(exe + Starts, pendingVersion, -1); else Try(() => File.Delete(exe + Starts));
+            Log.Info(File.Exists(exe + Old) ? "This start is healthy; the previous build could not be removed yet." : "This start is healthy; the previous build was removed.");
+        }
+        finally { Monitor.Exit(Swap); }
     }
     // Puts the build before back in place of the running one, which stays as Odyle.exe.failed.
     public static bool RollBack(string exe, Version current)
@@ -269,6 +294,7 @@ public static class Updater
         await using var source = await response.Content.ReadAsStreamAsync(timeout.Token);
         await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
         var buffer = new byte[1 << 16]; long done = 0; int read;
+        if (progress is not null) progress = new WholePercent(progress);
         while ((read = await source.ReadAsync(buffer, timeout.Token)) > 0)
         {
             await file.WriteAsync(buffer.AsMemory(0, read), timeout.Token); done += read;
@@ -277,4 +303,16 @@ public static class Updater
         }
     }
     private static void Try(Action action) { try { action(); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+}
+// A download's progress passed on only when its whole percent changes, as that percent: about a hundred
+// reports per package instead of one per 64 KB read, each of which renders the update line (#87).
+public sealed class WholePercent(IProgress<double> inner) : IProgress<double>
+{
+    private int last = -1;
+    public void Report(double value)
+    {
+        var percent = (int)Math.Floor(Math.Clamp(value, 0, 1) * 100);
+        if (percent == last) return;
+        last = percent; inner.Report(percent / 100.0);
+    }
 }

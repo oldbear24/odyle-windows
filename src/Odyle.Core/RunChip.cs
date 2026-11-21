@@ -12,8 +12,11 @@ public static class RunChip
     public static NextRun? Pick(IEnumerable<RoomSnapshot> snapshots, string accountId, DateTimeOffset now) => accountId.Length == 0 ? null :
         snapshots.SelectMany(s => (s.Runs ?? []).Select(r => (Snapshot: s, Run: r, Start: Readiness.Parse(r.StartsAt))))
             .Where(x => x.Start is { } start && start > now - Started && start - now <= Ahead)
-            .Select(x => new NextRun(x.Snapshot.Room, x.Run, x.Start!.Value, x.Run.Attendees?.Contains(accountId) == true, x.Run.Attendees?.Length ?? 0))
+            .Select(x => new NextRun(x.Snapshot.Room, x.Run, x.Start!.Value, x.Run.Attendees?.Contains(accountId) == true, Going(x.Run)))
             .OrderBy(r => r.Going ? 0 : 1).ThenBy(r => r.StartsAt).FirstOrDefault();
+
+    // How many go: the attendees with a place, not the ones waiting for one (they stay in Attendees).
+    static int Going(PlannedRun run) => run.Attendees?.Count(id => run.Waiting?.Contains(id) != true) ?? 0;
 
     // "Fire Temple · in 1h 20m · 3 going · Evening", or "starting now" from a minute before the start.
     public static string Line(NextRun run, DateTimeOffset now)

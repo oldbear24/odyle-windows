@@ -57,8 +57,8 @@ public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 // Sharing (the member-wide switch) and each character's Shared say what the room sees (null: older backends).
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters, bool? Sharing = null);
-// A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date.
-public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null);
+// A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date. Waiting are the attendees beyond its dungeon's party size, who wait for a place: they stay in Attendees (null from backends before dashboard 0.41).
+public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null, string[]? Waiting = null);
 public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string ServerNow, PlannedRun[]? Runs = null);
 // ShareLocation: the account shares its characters' location with its rooms (an opt-in on the
 // dashboard); backends from before location sharing leave it out, which means no.
@@ -102,17 +102,28 @@ public sealed class PartyApi : IDisposable
     public const string TeammateAdapterRefused = "This teammate adapter is not accepted.";
     private readonly HttpClient client;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    // The window's requests run on its UI thread and the realtime connection's on a pool thread (#92): the
+    // shared sign-in is taken under a lock, and the state both read is written whole (volatile, and the
+    // 429 pause as ticks through Interlocked, since a DateTimeOffset is two words).
+    private readonly object signInLock = new();
     private Task<AuthResponse>? signingIn;
+    private volatile string? token, deviceKey;
+    private volatile bool pairingEnded;
+    private long busyUntilTicks;
     public string Endpoint { get; }
-    public string? Token { get; private set; }
+    public string? Token { get => token; private set => token = value; }
     // The pairing's lasting credential. Account tokens run out after seven days; the key
     // signs in again for a fresh one, so the app stays paired until it disconnects.
-    public string? DeviceKey { get; private set; }
+    public string? DeviceKey { get => deviceKey; private set => deviceKey = value; }
     // Set once the server refused the pairing itself (a sign-in answered 401): every later
     // request fails at once with 401 instead of signing in again and again.
-    public bool PairingEnded { get; private set; }
+    public bool PairingEnded { get => pairingEnded; private set => pairingEnded = value; }
     // After a 429 every request waits until then without reaching the server.
-    public DateTimeOffset BusyUntil { get; private set; }
+    public DateTimeOffset BusyUntil
+    {
+        get => new(Interlocked.Read(ref busyUntilTicks), TimeSpan.Zero);
+        private set => Interlocked.Exchange(ref busyUntilTicks, value.UtcTicks);
+    }
     // Every sign-in answer (pairing, start-up, the daily renewal, a renewal after a 401)
     // names the account as it is now, for example a display name changed on the dashboard.
     public event Action<AuthResponse>? SignedIn;
@@ -172,10 +183,11 @@ public sealed class PartyApi : IDisposable
     public async Task<AuthResponse> SignInAsync()
     {
         if (DeviceKey is null) return await RefreshAsync();
-        var pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
+        Task<AuthResponse> pending;
+        lock (signInLock) pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
         try { var result = await pending; Token = result.Token; SignedIn?.Invoke(result); return result; }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
-        finally { if (signingIn == pending) signingIn = null; }
+        finally { lock (signInLock) if (signingIn == pending) signingIn = null; }
     }
     // Gives an app paired before device keys existed its key, using the still-valid token.
     // A backend without device keys answers 404; the app then keeps refreshing its token.
@@ -193,7 +205,6 @@ public sealed class PartyApi : IDisposable
         DeviceKey = null; await PostAsync<JsonElement>("api/odyle/unpair", new { deviceKey = key }, renew: false);
     }
     public async Task<RoomsResponse> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Normalized();
-    // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
     // The Windows versions the server's operators hold back (#19); older backends answer none.
     public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
     // The regions and game servers the server knows (the armory's search form lists them).
