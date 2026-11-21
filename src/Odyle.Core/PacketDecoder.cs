@@ -409,12 +409,12 @@ public sealed class ExperimentalOdyleDecoder
         if (record.Resource != OdyleResource || trailer != (payload[0] == 1 ? 5 : 1) || record.Total > ValueLimit) return;
         Candidate?.Invoke(new((int)record.Total, Version, CandidateSource.Update) { Base = (int)record.Base, Bonus = (int)record.Bonus });
     }
-    /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
     // A roster's other members' names, read only while someone listens for them.
     private void Teammates(ReadOnlySpan<byte> roster, ulong? own)
     {
         if (TeammatesObserved is { } observed && GameGroups.Teammates(roster, own) is { Count: > 0 } names) observed(names);
     }
+    /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
     {
         value = 0; var start = offset;
