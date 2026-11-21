@@ -840,7 +840,8 @@ static class ReaderChecks
     {
         var server = new PairingServer { SignInGate = new(), SignInArrived = new() };
         var makeApi = Field("newApi").GetValue(window); var startCapture = Field("startCapture").GetValue(window); var probeNpcap = Npcap.Probe;
-        Field("newApi").SetValue(window, (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, server)));
+        var toServer = (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, server));
+        Field("newApi").SetValue(window, toServer);
         Field("startCapture").SetValue(window, (Action<PacketCapture>)(_ => { })); Npcap.Probe = () => true;
         try
         {
@@ -857,11 +858,28 @@ static class ReaderChecks
             ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
             Check(server.Saved == 1 && server.Reports == 1 && server.LastReport.Contains("\"characterId\":\"c7\"") && server.LastReport.Contains("\"value\":512") && (string)Field("readingOwnerKey").GetValue(window)! == "EarlyHero|2304" && (string)Field("activeCharacterId").GetValue(window)! == "c7",
                 "the login snapshot read before the connection is saved to the character the game named and sent once: " + server.LastReport);
+            // Pairing with another server while the reader reads: the game's character is saved there again and its reading
+            // goes to that character, never to the new account's character read last (#92).
+            var other = new PairingServer { CharacterId = "b7", HasAlt = true };
+            Field("newApi").SetValue(window, (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, other)));
+            ((PasswordBox)Settings(window).FindName("CodeInput")).Password = "https://other.example/#odyle-pair=ABCDEFGH23456789";
+            await (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => (Task)Call(window, "PairAsync")!), false)!;
+            await Until(() => other.Reports == 1, 200);
+            ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
+            Check(other.Saved == 1 && other.Reports == 1 && other.LastReport.Contains("\"characterId\":\"b7\"") && server.Reports == 1 && (string)Field("currentCharacterId").GetValue(window)! == "b7" && (string)Field("activeCharacterId").GetValue(window)! == "b7",
+                "after pairing with another server the reading goes to the game's character saved there: " + other.LastReport);
+            Field("newApi").SetValue(window, toServer);
             // A pairing the server ended (its own 401 at sign-in) stops the reader that started for the login snapshot.
             await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             server.EndPairing = true; SessionStore.Save(new SavedSession("https://party.example", "token", "pairing-check-key"));
             await (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => (Task)Call(window, "RestoreAsync")!), false)!;
             Check(Field("capture").GetValue(window) is null && !(bool)Field("readerWanted").GetValue(window)! && Field("api").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "a pairing the server ended stops the reader that started for the login snapshot");
+            // A server that cannot be reached at start turns the card offline, also when the reader started before it was
+            // asked (the failure itself renders the card, not only the operation around it).
+            server.EndPairing = false; server.FailSignIn = true; SessionStore.Save(new SavedSession("https://party.example", "token", "pairing-check-key"));
+            await (Task)Call(window, "RestoreAsync")!;
+            Check(Field("capture").GetValue(window) is PacketCapture && Field("api").GetValue(window) is null && Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Offline · "),
+                "an unreachable server at start leaves the card offline, not connecting: " + Control<TextBlock>(window, "AccountLabel").Text);
         }
         finally
         {
@@ -877,15 +895,18 @@ static class ReaderChecks
     // names is saved as c7 and its readings are counted.
     sealed class PairingServer : HttpMessageHandler
     {
-        public bool FailSession, RefuseGroup, PreviousUnreachable, EndPairing;
+        public bool FailSession, RefuseGroup, PreviousUnreachable, EndPairing, FailSignIn, HasAlt;
+        public string CharacterId = "c7";
         public HttpStatusCode? PreviousSession;
         public int Paired, TeammateRequests, GroupRequests, Sessions, Saved, Reports;
         public string LastReport = "";
         public TaskCompletionSource? SignInGate, SignInArrived;
         public string Teammates = """{"serverNow":"x"}""", Heartbeat = """{"serverNow":"2026-11-21 12:00:00.000Z"}""";
         const string Auth = """{"token":"pairing-check-token","record":{"id":"u","displayName":"Player"},"deviceKey":"pairing-check-key"}""";
-        const string Early = """{"id":"c7","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
-        const string EarlyRead = """{"id":"c7","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":512,"confirmed":true,"valid":true,"lastReadingAt":"2026-11-21 12:00:00.000Z"}""";
+        string Early => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
+        string EarlyRead => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":512,"confirmed":true,"valid":true,"lastReadingAt":"2026-11-21 12:00:00.000Z"}""";
+        // HasAlt: the account already has a character, read more recently than any other, which the card shows until the game names one.
+        const string Alt = """{"id":"z1","user":"u","characterName":"OldAlt","server":"Lumiel","region":"GLOBAL_EU","value":90,"confirmed":true,"valid":false,"lastReadingAt":"2026-11-20 12:00:00.000Z"}""";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var route = request.RequestUri!.AbsolutePath;
@@ -902,11 +923,12 @@ static class ReaderChecks
             var (status, body) = route switch
             {
                 "/api/odyle/desktop-sign-in" when EndPairing => (HttpStatusCode.Unauthorized, """{"status":401,"message":"The device is not paired."}"""),
+                "/api/odyle/desktop-sign-in" when FailSignIn => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
                 "/api/odyle/pair" or "/api/odyle/desktop-sign-in" => (HttpStatusCode.OK, Auth),
                 "/api/odyle/session" when FailSession => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
                 "/api/odyle/session" when previous && PreviousSession is { } answer => (answer, $$"""{"status":{{(int)answer}},"message":"Unknown session."}"""),
                 "/api/odyle/session" => (HttpStatusCode.OK, """{"sessionId":"s1","sequence":0}"""),
-                "/api/collections/characters/records" => (HttpStatusCode.OK, Saved > 0 ? $$"""{"items":[{{Early}}]}""" : """{"items":[]}"""),
+                "/api/collections/characters/records" => (HttpStatusCode.OK, "{\"items\":[" + string.Join(",", new[] { HasAlt ? Alt : "", Saved > 0 ? Early : "" }.Where(c => c.Length > 0)) + "]}"),
                 "/api/odyle/character" => (HttpStatusCode.OK, $$"""{"character":{{Early}}}"""),
                 "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{EarlyRead}}}"""),
                 "/api/odyle/rooms" => (HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":null}"""),

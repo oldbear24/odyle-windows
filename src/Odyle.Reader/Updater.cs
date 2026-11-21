@@ -60,7 +60,13 @@ public static class Updater
     public static async Task<AppRelease?> CheckAsync(IReadOnlyCollection<Version> heldBack, CancellationToken token) =>
         ReleaseFeed.Choose(await FetchLatestAsync(token), Current, Executable is { } exe && FailedVersion(exe, Current) is { } failed ? [.. heldBack, failed] : heldBack, Runtime, SelfContained);
     // Drops downloaded packages of held-back versions, so none is installed at the next start.
+    // Takes the swap's lock, so a package being copied in (Apply) is never removed halfway; the window
+    // calls it off its UI thread.
     public static void Forget(IEnumerable<Version> heldBack)
+    {
+        lock (Swap) ForgetLocked(heldBack);
+    }
+    private static void ForgetLocked(IEnumerable<Version> heldBack)
     {
         if (!Directory.Exists(Staging)) return;
         foreach (var version in heldBack)
@@ -153,7 +159,12 @@ public static class Updater
     // Removes packages that are no longer newer than this build, and the executable a rollback moved
     // aside once this build is that version or newer (a reinstall). The executable an update moved aside
     // stays until this build started healthy (ConfirmStart).
+    // Takes the swap's lock like Forget.
     public static void CleanUp()
+    {
+        lock (Swap) CleanUpLocked();
+    }
+    private static void CleanUpLocked()
     {
         if (IsReleaseBuild && File.Exists(Executable + Failed) && FailedVersion(Executable!, Current) is null) Try(() => File.Delete(Executable + Failed));
         if (!Directory.Exists(Staging)) return;
@@ -201,9 +212,12 @@ public static class Updater
         return version == current && count >= FailedStartsLimit && RollBack(exe, current);
     }
     // This start proved healthy: the build before it is no longer needed.
+    // An update being copied in meanwhile (Apply) ends this start's count itself, so the UI thread does
+    // not wait for the copy: the confirmation is skipped.
     public static void ConfirmStart()
     {
-        lock (Swap)
+        if (!Monitor.TryEnter(Swap)) return;
+        try
         {
             if (pending is not { } exe) return;
             pending = null;
@@ -211,6 +225,7 @@ public static class Updater
             if (File.Exists(exe + Old)) WriteStarts(exe + Starts, pendingVersion, -1); else Try(() => File.Delete(exe + Starts));
             Log.Info(File.Exists(exe + Old) ? "This start is healthy; the previous build could not be removed yet." : "This start is healthy; the previous build was removed.");
         }
+        finally { Monitor.Exit(Swap); }
     }
     // Puts the build before back in place of the running one, which stays as Odyle.exe.failed.
     public static bool RollBack(string exe, Version current)

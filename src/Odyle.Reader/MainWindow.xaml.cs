@@ -889,7 +889,7 @@ public partial class MainWindow : Window
             DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
             // Unpaired, the reader that started for the login snapshot stops again.
             readerWanted = false; if (capture is not null) await StopReaderAsync();
-            Log.Warn("The server no longer knows this PC's pairing; the saved connection was removed."); Status(Unpaired);
+            Log.Warn("The server no longer knows this PC's pairing; the saved connection was removed."); Status(Unpaired); RenderHero();
         }
         // Anything else (offline, 403, 5xx, 429, a timeout) keeps the pairing and tries again by itself.
         catch (Exception error)
@@ -911,7 +911,9 @@ public partial class MainWindow : Window
         if (error is ServerBusyException paused && paused.Until - now > wait) wait = paused.Until - now;
         retryAt = now + wait; retryProblem = error is ServerBusyException ? "busy" : ""; restoreTimer.Interval = wait; restoreTimer.Start();
         Log.Warn($"The saved pairing could not be confirmed ({(error is HttpRequestException { StatusCode: { } code } ? (int)code : error.GetType().Name)}: {error.Message}); attempt {restoreAttempt}, next in {wait.TotalSeconds:0} s.");
-        RenderRetry();
+        // The card turns offline at once: the reader may have rendered it while the server was asked, and the tick
+        // no longer renders the whole card (#84).
+        RenderRetry(); RenderHero();
     }
     // Counts down to the next automatic try in the footer; Reconnect saved account tries at once.
     private void RenderRetry()
@@ -958,7 +960,12 @@ public partial class MainWindow : Window
     private async Task ConnectAsync(AuthResponse auth)
     {
         if (api is null) return;
-        var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
+        var session = await api.StartSessionAsync();
+        // Another server or account than the one the reader saved its character to (pairing again while it reads): the
+        // character the game named is saved again there before anything is sent, never as the new account's last one.
+        if (accountId.Length > 0 && (auth.Record.Id != accountId || connectedEndpoint != api.Endpoint)) ForgetSavedCharacter();
+        connectedEndpoint = api.Endpoint;
+        sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
         NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
@@ -973,6 +980,17 @@ public partial class MainWindow : Window
         if (listed is not null) _ = Guarded("Loading the party", () => RefreshPartyAsync(listed));
         _ = Guarded("Loading the checklist", RefreshTasksAsync);
         await FollowReaderPauseAsync();
+    }
+    // The server the account was last connected on, and the identity the game last named on this capture.
+    private string connectedEndpoint = "";
+    private (PacketCapture Capture, GameIdentity Identity)? namedIdentity;
+    // The reading's character was saved to another server or account: nothing is sent until the game's character
+    // is saved to this one (SaveDetectedCharacterAsync, after the operations lock this connection holds).
+    private void ForgetSavedCharacter()
+    {
+        detectedCharacterKey = ""; currentCharacterId = ""; activeCharacterId = ""; publishedTotal = -1;
+        Log.Info("Connected to another server or account; the character the game named is saved there again.");
+        if (namedIdentity is { } named && named.Capture == capture) _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the named character on the new server", () => SaveDetectedCharacterAsync(named.Capture, named.Identity)));
     }
     // After sleep the realtime connection may be dead without the server having closed it: it connects
     // again at once instead of after the six-minute silence (#82). Called on a system thread.
@@ -1122,7 +1140,7 @@ public partial class MainWindow : Window
         // The server's own 401 right after pairing: the new pairing ended at once (removed on the dashboard).
         catch (HttpRequestException) when (api == next)
         {
-            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
+            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); RenderHero();
             throw;
         }
         catch { if (api != next) next.Dispose(); throw; }
@@ -1813,7 +1831,7 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); groups.Reset(); }
+    private void ResetAttribution() { namedIdentity = null; gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); groups.Reset(); }
     // `latest` belongs to the character the game named: its updates follow it from now on.
     private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
@@ -2116,7 +2134,7 @@ public partial class MainWindow : Window
             if (capture != source || character == gameCharacterId) return;
             // The game switched characters on this connection. Until it names the
             // new one, no reading may be attributed to either character.
-            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = ""; locations.Switched();
+            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = ""; namedIdentity = null; locations.Switched();
             if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
             await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
         }
@@ -2137,7 +2155,7 @@ public partial class MainWindow : Window
                 if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
                 await InvalidateActiveAsync();
             }
-            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow; groups.Named(identity.Id);
+            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow; groups.Named(identity.Id); namedIdentity = (next, identity);
             // A snapshot without Odyle that waited for a name belongs to this character, unless its
             // Odyle was read already (the reading is kept).
             if (odyleMissingDue)
@@ -2439,7 +2457,8 @@ public partial class MainWindow : Window
     private Version[] heldBack = [];
     private async Task HeldBackAsync(Version[] held)
     {
-        heldBack = held; Updater.Forget(held);
+        // Off the UI thread: Forget waits for a package being copied in (#87).
+        heldBack = held; await Task.Run(() => Updater.Forget(held));
         if (staged is { } waiting && held.Contains(waiting.Version)) { Log.Info($"Odyle {waiting.Version} is held back; its download is dropped."); staged = null; RenderUpdate(); RenderHero(); }
         if (held.Contains(Updater.Current)) { Log.Info($"Odyle {Updater.Current} is held back; looking for the latest release."); await CheckForUpdatesAsync(manual: false); }
     }
@@ -2520,12 +2539,14 @@ public partial class MainWindow : Window
     private bool installing;
     // The copy on its way, which quitting waits for: a swap cut short would leave no Odyle.exe.
     private Task installRun = Task.CompletedTask;
+    // The copy succeeded: a quit asked for meanwhile restarts into the new build (QuitAsync).
+    private volatile bool installed;
     private async Task InstallUpdateAsync(bool automatic)
     {
         if (staged is not { } update || quitting || installing || (busy && !automatic)) return;
         Log.Info($"Installing Odyle {update.Version}{(updateNow ? " as the server's operators asked" : automatic ? " found at start" : "")} and restarting.");
         installing = true;
-        try { await (installRun = Task.Run(() => Updater.Apply(update))); }
+        try { await (installRun = Task.Run(() => { Updater.Apply(update); installed = true; })); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Log.Error($"Odyle {update.Version} could not be installed", error);
@@ -2669,6 +2690,8 @@ public partial class MainWindow : Window
         SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace();
         // An update being installed finishes first (its failure is the installer's to report).
         try { await installRun; } catch (Exception) { }
+        // A quit that came while an update was copied in restarts into it, handing the live character over.
+        if (installed && !restart) { restart = true; Log.Info("An update was installed while quitting; Odyle restarts into it."); }
         await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
