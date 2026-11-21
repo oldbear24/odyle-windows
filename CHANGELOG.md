@@ -2,6 +2,20 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.36.0 · 2026-11-21
+
+### New
+- You can stop Odyle from sending the names of the other players in your party and force: turn it off on the dashboard (it is on unless you do). Odyle then drops the names it reads and sends none, and starts again within about 20 seconds once you turn it back on. Older servers without the switch keep working as before.
+- The notice in Settings and the installer now says that Odyle sends those names to the armory, which looks up their public PLAYNC profiles, until you turn that off.
+
+### Fixed
+- Pairing no longer leaves Odyle half-connected when the server fails right after accepting the code: Odyle keeps the pairing and connects by itself a moment later, as it does at start.
+- An **Open in Odyle** link, or **Start or stop the reader** from the tray or the taskbar menu, now waits for a connection still in progress instead of being ignored.
+- An update that cannot start is no longer the end of the road: if a new version fails to start twice, Odyle goes back to the version you had and skips the broken one until a newer release is out.
+- Live updates of your party come back by themselves after any failure, after a server that accepts the connection but never answers, and right after your PC wakes from sleep; a room you just joined gets its live updates without waiting for a reconnect.
+- A server that sends odd values (no cube cost, missing clock rules, a character without an id, a huge answer) can no longer make Odyle close itself a few seconds later; an unexpected error in a click or a timer is logged once and Odyle keeps running.
+- An update download that turns out to be an unreadable archive now shows as a failed update check instead of an error message.
+
 ## 0.35.1 · 2026-11-20
 
 ### Fixed

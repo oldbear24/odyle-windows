@@ -216,13 +216,13 @@ public partial class MainWindow : Window
         pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
         compactItem.Click += (_, _) => Dispatcher.Invoke(() => { SetCompact(compactItem.Checked, persist: true); ShowWindow(); }); menu.Items.Add(compactItem);
         menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
-        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => QuitAskedAsync()).Task.Unwrap()); tray.ContextMenuStrip = menu;
+        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => Guarded("Quit from the tray", QuitAskedAsync)).Task.Unwrap()); tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
-        settings.CheckUpdateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true); settings.InstallUpdateButton.Click += Install_Click;
+        settings.CheckUpdateButton.Click += async (_, _) => await Guarded("Check for updates", () => CheckForUpdatesAsync(manual: true)); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.WhatsNewButton.Click += (_, _) => OpenWhatsNew();
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
@@ -236,18 +236,18 @@ public partial class MainWindow : Window
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
-        restoreTimer.Tick += async (_, _) =>
+        restoreTimer.Tick += async (_, _) => await Guarded("Reconnecting the saved account", async () =>
         {
             restoreTimer.Stop();
             if (busy) { restoreTimer.Interval = TimeSpan.FromSeconds(2); restoreTimer.Start(); return; }
             await ExecuteAsync(RestoreAsync);
-        };
-        updateTimer.Tick += async (_, _) => await UpdateTickAsync();
+        });
+        updateTimer.Tick += async (_, _) => await Guarded("The update timer", UpdateTickAsync);
         // With realtime the party and the checklist follow the news, and every 20th tick (five
         // minutes) fetches them in case some was missed; run reminders are checked every tick.
         // Without it, open, they refresh every 15 seconds (showing the window refreshes at once)
         // and in the tray the rooms every minute, for the run reminders.
-        partyTimer.Tick += async (_, _) =>
+        partyTimer.Tick += async (_, _) => await Guarded("The party timer", async () =>
         {
             await TaskRemindersAsync();
             if (realtime?.IsConnected == true)
@@ -257,12 +257,14 @@ public partial class MainWindow : Window
             }
             else if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
             else if (notifications.RunsInTray && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
-        };
-        heartbeat.Tick += async (_, _) => await PulseAsync();
-        npcapTimer.Tick += async (_, _) => await NpcapTickAsync();
-        publishDelay.Tick += async (_, _) => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); };
-        clock.Tick += (_, _) => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); RenderDiscord(); };
+        });
+        heartbeat.Tick += async (_, _) => await Guarded("The heartbeat", PulseAsync);
+        npcapTimer.Tick += async (_, _) => await Guarded("The Npcap check", NpcapTickAsync);
+        publishDelay.Tick += async (_, _) => await Guarded("Sending the reading", async () => { publishDelay.Stop(); AttributePending(); await PublishLatestAsync(); });
+        // Every second: a failure is logged once per distinct message and the next tick runs as usual (#83).
+        clock.Tick += (_, _) => GuardedTick("The one-second tick", () => { if (capture is not null) RenderHero(); else RenderClock(); TickTasks(); RenderRetry(); RenderBusy(); RenderRunChip(); RenderDiscord(); });
         clock.Start();
+        if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged += Resumed;
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
         settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetDiscordStatus(preferences.DiscordStatus, persist: false); SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
@@ -279,7 +281,7 @@ public partial class MainWindow : Window
         settings.LanguageInput.ItemsSource = new[] { new LanguageChoice(Automatic, T("Automatic · Windows language")), new("en", "English"), new("cs", "Čeština") };
         settings.LanguageInput.SelectedValue = preferences.Language is "en" or "cs" ? preferences.Language : Automatic;
         settings.LanguageInput.SelectionChanged += (_, _) => ChooseLanguage(settings.LanguageInput.SelectedValue as string ?? Automatic);
-        settings.LanguageRestartButton.Click += async (_, _) => await QuitAsync(restart: true);
+        settings.LanguageRestartButton.Click += async (_, _) => await Guarded("Restart for the language", () => QuitAsync(restart: true));
     }
     private void ChooseLanguage(string choice)
     {
@@ -345,7 +347,8 @@ public partial class MainWindow : Window
     // A second start of Odyle signals this one (App) to show its window in front.
     // Open in Odyle on the dashboard (odyle://pair?link=…). The link names the server, and any page could
     // open such a link, so Odyle asks before pairing with it and says when that replaces this PC's pairing.
-    public async void OfferPairing(string link)
+    public async void OfferPairing(string link) => await Guarded("An Open in Odyle link", () => OfferPairingAsync(link));
+    private async Task OfferPairingAsync(string link)
     {
         BringToFront();
         ConnectionDetails connection;
@@ -355,8 +358,8 @@ public partial class MainWindow : Window
         var replaces = api is not null && accountName.Length > 0 ? "\n\n" + T("This replaces this PC's pairing with {0}.", accountName) : "";
         if (MessageBox.Show(this, T("Pair Odyle on this PC with the server {0}?", host) + replaces, "Odyle", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) { Log.Info("An Open in Odyle link for " + host + " was declined."); return; }
         Log.Info("Pairing from an Open in Odyle link for " + host + ".");
-        settings.EndpointInput.Text = connection.Endpoint; settings.CodeInput.Password = connection.Code;
-        await ExecuteAsync(PairAsync);
+        // A link that comes while the start-up connection runs waits for it instead of being dropped (#79).
+        await ExecuteAsync(() => { settings.EndpointInput.Text = connection.Endpoint; settings.CodeInput.Password = connection.Code; return PairAsync(); }, queue: true);
     }
     public void BringToFront()
     {
@@ -634,14 +637,15 @@ public partial class MainWindow : Window
         RunGoingButton.ToolTip = next is { Going: true } ? T("You are going · click to leave this run") : T("Go to this run");
         RenderCompact();
     }
-    private async void RunGoing_Click(object sender, RoutedEventArgs e)
+    private async void RunGoing_Click(object sender, RoutedEventArgs e) => await Guarded("Going to a planned run", async () =>
     {
         if (api is not { } current || chipRun is not { } run) return;
         RunGoingButton.IsEnabled = false;
         try { await current.GoingAsync(run.Room.Id, run.Run.Id, !run.Going); Log.Info($"{(run.Going ? "Left" : "Joined")} the planned run {run.Run.Id}."); await RefreshPartyAsync(); }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException) { Status(T(error.Message)); }
+        // ObjectDisposedException: the account was disconnected meanwhile.
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException or ObjectDisposedException) { Status(T(error.Message)); }
         finally { RunGoingButton.IsEnabled = true; }
-    }
+    });
     private PartyMate Mate(RoomMember member, Character c, Presence state, int cost, DateTimeOffset now, Band band)
     {
         cost = cost > 0 ? cost : odylePerCube;
@@ -771,25 +775,48 @@ public partial class MainWindow : Window
     {
         busy = value; settings.Body.IsEnabled = !value; RenderReaderButton();
     }
-    private async Task ExecuteAsync(Func<Task> action)
+    // The outer edge of a click, a timer tick or a dispatched callback (#83): a failure nobody expected is
+    // logged, once per distinct message, instead of reaching App.OnUnhandled, which shows a message box and
+    // stops Odyle after ten in a minute. Catches inside keep their own wording for the person at the PC.
+    private readonly HashSet<string> failuresLogged = [];
+    private void LogFailure(string what, Exception error)
     {
-        if (busy) return; SetBusy(true); await operations.WaitAsync();
-        try { await action(); }
-        catch (Exception error)
+        if (failuresLogged.Count > 200) failuresLogged.Clear();
+        if (failuresLogged.Add($"{what}|{error.GetType().FullName}|{error.Message}")) Log.Error($"{what} failed; Odyle keeps running", error);
+    }
+    private async Task Guarded(string what, Func<Task> action) { try { await action(); } catch (Exception error) { LogFailure(what, error); } }
+    private void GuardedTick(string what, Action action) { try { action(); } catch (Exception error) { LogFailure(what, error); } }
+    // One operation at a time. A click while one runs is dropped (its button is disabled meanwhile), but
+    // an action that comes from outside the window (an Open in Odyle link, the tray's or the jump list's
+    // Start or stop the reader) waits for it and then runs (queue, #79).
+    private readonly SemaphoreSlim executions = new(1, 1);
+    private async Task ExecuteAsync(Func<Task> action, bool queue = false)
+    {
+        if (busy && !queue) return;
+        if (busy) Log.Info("An action waits for the running operation to finish.");
+        await executions.WaitAsync();
+        try
         {
-            // A 429 only pauses requests; it never rotates the publisher session.
-            if (api is not null && error is not ServerBusyException && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
-            if (error is not (HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException)) Log.Error("Operation failed", error);
-            Status(Describe(error));
+            if (quitting) return;
+            SetBusy(true); await operations.WaitAsync();
+            try { await action(); }
+            catch (Exception error)
+            {
+                // A 429 only pauses requests; it never rotates the publisher session.
+                if (api is not null && error is not ServerBusyException && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
+                if (error is not (HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException)) Log.Error("Operation failed", error);
+                Status(Describe(error));
+            }
+            finally { SetBusy(false); operations.Release(); RenderHero(); }
         }
-        finally { SetBusy(false); operations.Release(); RenderHero(); }
+        finally { executions.Release(); }
     }
     // Called by App once the window exists, shown or not. A start in the tray (with
     // Windows) stays there while the app is paired; unpaired, the window and settings open.
     public async Task StartAsync(bool tray)
     {
-        // The update check does not wait for the server. Its first tick also removes the
-        // Odyle.exe.old of the build that installed this one, which by then has exited.
+        // The update check does not wait for the server. (The Odyle.exe.old of the build that installed
+        // this one is removed once this start proved healthy: App, Updater start health.)
         if (Updater.IsReleaseBuild && !App.Headless) updateTimer.Start();
         // Npcap missing shows in the reader row from the start, also before the app is paired.
         if (!Npcap.Probe()) ShowNpcapProblem(null);
@@ -800,7 +827,7 @@ public partial class MainWindow : Window
             if (api is null && !Offline) OpenSettings();
         }
     }
-    private async void Retry_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(RestoreAsync);
+    private async void Retry_Click(object sender, RoutedEventArgs e) => await Guarded("Reconnect saved account", () => ExecuteAsync(RestoreAsync));
     private async Task RestoreAsync()
     {
         restoreTimer.Stop(); retryAt = null;
@@ -813,7 +840,7 @@ public partial class MainWindow : Window
         }
         settings.EndpointInput.Text = saved.Endpoint; Status(T("Connecting to your account…"));
         PartyApi next;
-        try { next = UseApi(new PartyApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
+        try { next = UseApi(newApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
         catch (ArgumentException error) { Log.Error("The saved server address is not usable", error); SessionStore.Clear(); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); return; }
         try { var auth = await next.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
         // Only the server's own 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the
@@ -835,7 +862,7 @@ public partial class MainWindow : Window
         if (capture is null && (api is not null || Offline && restoreAttempt <= 1)) await StartReaderAsync();
         if (capture is not null) await TakeOverAsync();
         // The character the game named while offline is saved and its reading sent now (not under this lock).
-        if (api is not null && pendingIdentity is { } named) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(named.Capture, named.Identity)); }
+        if (api is not null && pendingIdentity is { } named) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the character named offline", () => SaveDetectedCharacterAsync(named.Capture, named.Identity))); }
     }
     private void ScheduleRestore(Exception error)
     {
@@ -890,7 +917,7 @@ public partial class MainWindow : Window
         if (api is null) return;
         var session = await api.StartSessionAsync(); sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
-        NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats);
+        NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true); UsesPaths();
@@ -900,6 +927,9 @@ public partial class MainWindow : Window
         await RefreshPartyAsync(); await RefreshTasksAsync(); partyTimer.Start(); StartRealtime();
         await FollowReaderPauseAsync();
     }
+    // After sleep the realtime connection may be dead without the server having closed it: it connects
+    // again at once instead of after the six-minute silence (#82). Called on a system thread.
+    private void Resumed(object sender, Microsoft.Win32.PowerModeChangedEventArgs e) { if (e.Mode == Microsoft.Win32.PowerModes.Resume) realtime?.Reconnect("The PC woke from sleep."); }
     // Listens to the account's topic and its rooms'; rooms joined or left later change the
     // topics (RefreshPartyAsync).
     private void StartRealtime()
@@ -907,14 +937,14 @@ public partial class MainWindow : Window
         realtime?.Dispose(); realtime = null;
         if (api is not { } current || accountId.Length == 0) return;
         var next = new RealtimeClient(current); realtime = next;
-        next.Connected += again => Dispatcher.BeginInvoke(async () =>
+        next.Connected += again => Dispatcher.BeginInvoke(async () => await Guarded("Realtime connected", async () =>
         {
             if (realtime != next) return;
             RenderParty();
             if (!again) Log.Info("Realtime connected; the party follows changes as they happen.");
             else await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
-        });
-        next.Message += (topic, data) => Dispatcher.BeginInvoke(async () => { if (realtime == next) await OnNewsAsync(topic, RealtimeNews.Parse(data)); });
+        }));
+        next.Message += (topic, data) => Dispatcher.BeginInvoke(async () => await Guarded("Realtime news", async () => { if (realtime == next) await OnNewsAsync(topic, RealtimeNews.Parse(data)); }));
         next.Disconnected += () => Dispatcher.BeginInvoke(() =>
         {
             if (realtime != next) return;
@@ -1012,21 +1042,21 @@ public partial class MainWindow : Window
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Log.Warn("Whether the server serves the dashboard's paths could not be read: " + error.Message); }
     }
-    private async void Pair_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(PairAsync);
-    private async void PasteConnect_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    private async void Pair_Click(object sender, RoutedEventArgs e) => await Guarded("Pairing", () => ExecuteAsync(PairAsync));
+    private async void PasteConnect_Click(object sender, RoutedEventArgs e) => await Guarded("Pairing from the clipboard", () => ExecuteAsync(async () =>
     {
         if (!System.Windows.Clipboard.ContainsText()) throw new InvalidOperationException(T("Copy the connection link from the dashboard first."));
         settings.CodeInput.Password = System.Windows.Clipboard.GetText().Trim();
         await PairAsync();
-    });
+    }));
     private async void Settings_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && settings.JoinPanel.Visibility == Visibility.Visible && settings.CodeInput.IsKeyboardFocusWithin) { e.Handled = true; await ExecuteAsync(PairAsync); }
+        if (e.Key == Key.Enter && settings.JoinPanel.Visibility == Visibility.Visible && settings.CodeInput.IsKeyboardFocusWithin) { e.Handled = true; await Guarded("Pairing", () => ExecuteAsync(PairAsync)); }
     }
     private async Task PairAsync()
     {
         var connection = ConnectionDetails.Parse(settings.CodeInput.Password, settings.EndpointInput.Text);
-        var next = new PartyApi(connection.Endpoint); Status(T("Pairing with your account…"));
+        var next = newApi(connection.Endpoint, null, null); Status(T("Pairing with your account…"));
         try
         {
             var auth = await next.PairAsync(connection.Code); var previous = api; UseApi(next);
@@ -1034,9 +1064,25 @@ public partial class MainWindow : Window
             if (previous is not null) { await UnpairQuietlyAsync(previous); previous.Dispose(); }
             settings.EndpointInput.Text = connection.Endpoint; await SavePairingAsync(auth); settings.CodeInput.Clear(); await ConnectAsync(auth);
         }
+        // Paired and saved, but the session or the first reload failed (#79): the code is used up, so the
+        // saved pairing is tried again by itself, like one the server could not confirm at start.
+        catch (Exception error) when (api == next && error is not HttpRequestException { StatusCode: HttpStatusCode.Unauthorized })
+        {
+            DropApi(); settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
+            Log.Warn($"Paired, but connecting failed: {error.Message}");
+            restoreAttempt = 0; ScheduleRestore(error);
+        }
+        // The server's own 401 right after pairing: the new pairing ended at once (removed on the dashboard).
+        catch (HttpRequestException) when (api == next)
+        {
+            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
+            throw;
+        }
         catch { if (api != next) next.Dispose(); throw; }
         if (capture is null) await StartReaderAsync();
     }
+    // How the window makes its request clients; the checks answer like the server.
+    private Func<string, string?, string?, PartyApi> newApi = (endpoint, token, deviceKey) => new PartyApi(endpoint, token, deviceKey);
     private void UpdateCharacterInList(Character saved)
     {
         var index = Array.FindIndex(characters, x => x.Id == saved.Id);
@@ -1660,12 +1706,12 @@ public partial class MainWindow : Window
         try { var listed = await current.SetTaskDoneAsync(item.Id, done); if (api == current) ApplyTasks(listed); }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { Status(T("Could not update the task: {0}", T(error.Message))); RenderTasks(); }
     }
-    private async void Task_Click(object sender, RoutedEventArgs e)
+    private async void Task_Click(object sender, RoutedEventArgs e) => await Guarded("Ticking a task", async () =>
     {
         if (sender is not CheckBox { Tag: TaskItem item } box) return;
         box.IsEnabled = false;
         try { await ToggleTaskAsync(item, box.IsChecked == true); } finally { box.IsEnabled = true; }
-    }
+    });
     private void RenderTasks()
     {
         var now = DateTimeOffset.UtcNow + serverOffset; var connected = api is not null;
@@ -1727,15 +1773,16 @@ public partial class MainWindow : Window
         SetReaderState(ReaderState.Stopped, old is null ? T("Stopped · start the reader before logging in.") : T("Stopped · the last value stays saved on your account."));
         RenderHero();
     }
-    private async void Reader_Click(object sender, RoutedEventArgs e)
+    // The card's button is disabled while an operation runs; the tray and the jump list wait for it (#79).
+    private async void Reader_Click(object sender, RoutedEventArgs e) => await Guarded("Start or stop the reader", async () =>
     {
         if (api is null && capture is null && !Offline) { OpenSettings(); return; }
         await ExecuteAsync(async () =>
         {
             if (capture is not null) { readerWanted = false; await StopReaderAsync(); }
             else if (api is not null || Offline) await StartReaderAsync();
-        });
-    }
+        }, queue: true);
+    });
     // Notes what an answer of the server says about the reader pause (null: the backend does not
     // know the switch). A change is followed once the operations lock is free; callers that hold
     // it follow at once.
@@ -1801,8 +1848,8 @@ public partial class MainWindow : Window
         });
         next.Candidate += observation => Dispatcher.BeginInvoke(() => OnCandidate(next, observation));
         next.SnapshotWithoutOdyle += () => Dispatcher.BeginInvoke(() => OnSnapshotWithoutOdyle(next));
-        next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await CharacterChangedAsync(next, character));
-        next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(next, identity));
+        next.CharacterChanged += character => Dispatcher.BeginInvoke(async () => await Guarded("A character switch", () => CharacterChangedAsync(next, character)));
+        next.IdentityObserved += identity => Dispatcher.BeginInvoke(async () => await Guarded("Saving the named character", () => SaveDetectedCharacterAsync(next, identity)));
         next.LocationObserved += location => Dispatcher.BeginInvoke(() => OnLocation(next, location));
         next.GroupObserved += change => Dispatcher.BeginInvoke(() => OnGroup(next, change));
         next.TeammatesObserved += names => Dispatcher.BeginInvoke(() => OnTeammates(next, names));
@@ -2205,25 +2252,36 @@ public partial class MainWindow : Window
     // at a time; names read meanwhile, or before the character is saved, wait for the next one
     // (up to GameGroups.TeammatesLimit). A 400 for the adapter (switched off under Server controls)
     // stops them until Odyle restarts; anything else (a server from before them answers 404) drops
-    // that request's names.
+    // that request's names. The account can turn them off on the dashboard (on by default, #81): the
+    // session and heartbeat answers carry shareTeammates (left out by older backends: on), and an answer
+    // { shared: false } turns them off until a session or heartbeat answer says true. While off the
+    // names read are dropped and nothing is sent.
     private readonly HashSet<string> teammatesSent = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> teammatesWaiting = [];
-    private bool teammatesRefused, teammatesSending, teammatesFailing;
+    private bool teammatesRefused, teammatesSending, teammatesFailing, teammatesOff;
+    private void NoteShareTeammates(bool? share)
+    {
+        var off = share == false;
+        if (off == teammatesOff) return;
+        teammatesOff = off;
+        if (off) teammatesWaiting.Clear();
+        Log.Info(off ? "This account does not share its party and force members' names; none are sent." : "This account shares its party and force members' names with the armory again.");
+    }
     private void OnTeammates(PacketCapture source, IReadOnlyList<string> names)
     {
-        if (capture != source || twoClients || teammatesRefused) return;
+        if (capture != source || twoClients || teammatesRefused || teammatesOff) return;
         foreach (var name in names)
             if (!teammatesSent.Contains(name) && !teammatesWaiting.Contains(name, StringComparer.OrdinalIgnoreCase) && teammatesWaiting.Count < GameGroups.TeammatesLimit) teammatesWaiting.Add(name);
         _ = SendTeammatesAsync();
     }
     private async Task SendTeammatesAsync()
     {
-        if (teammatesRefused || teammatesSending || teammatesWaiting.Count == 0 || api is not { } current || sessionId.Length == 0 || currentCharacterId.Length == 0 || gameCharacterId == 0 || detectedCharacterKey != gameCharacterKey) return;
+        if (teammatesRefused || teammatesOff || teammatesSending || teammatesWaiting.Count == 0 || api is not { } current || sessionId.Length == 0 || currentCharacterId.Length == 0 || gameCharacterId == 0 || detectedCharacterKey != gameCharacterKey) return;
         var names = teammatesWaiting.ToArray(); teammatesWaiting.Clear();
         teammatesSending = true; var sent = false;
         try
         {
-            await current.TeammatesAsync(sessionId, currentCharacterId, names);
+            if (!await current.TeammatesAsync(sessionId, currentCharacterId, names)) { NoteShareTeammates(false); return; }
             // Remembered for this run only; a long session forgets them rather than growing without end.
             if (teammatesSent.Count > 5000) teammatesSent.Clear();
             teammatesSent.UnionWith(names); teammatesFailing = false; sent = true;
@@ -2410,7 +2468,7 @@ public partial class MainWindow : Window
             }
         }
         // An answer that is not GitHub's release data (a proxy's page, say) is a failed check too (ReleaseFeed.Parse).
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
             updateSchedule.Failed(); Log.Warn($"Update check failed: {error.Message}");
             updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
@@ -2420,7 +2478,7 @@ public partial class MainWindow : Window
         if ((install || updateNow) && staged is not null) await InstallUpdateAsync(automatic: true);
         else updateNow = false;
     }
-    private async void Install_Click(object sender, RoutedEventArgs e) => await InstallUpdateAsync(automatic: false);
+    private async void Install_Click(object sender, RoutedEventArgs e) => await Guarded("Installing the update", () => InstallUpdateAsync(automatic: false));
     // The files are swapped while this build still runs; only then does it stop and
     // start the new one. A swap that fails leaves everything as it was. An installation
     // at start does not wait for a running operation to finish: quitting waits for it.
@@ -2448,7 +2506,7 @@ public partial class MainWindow : Window
         try { session = await api.StartSessionAsync(sessionId); }
         catch (HttpRequestException error) when (error.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests)) { session = await api.StartSessionAsync(); }
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats);
+        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && latest is not null) await PublishCoreAsync();
         RenderHero();
@@ -2474,11 +2532,11 @@ public partial class MainWindow : Window
             }
             var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
-            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation); NotePvpStats(answer.PvpStats);
+            NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation); NotePvpStats(answer.PvpStats); NoteShareTeammates(answer.ShareTeammates);
             // PvP events that could not be sent (no connection, a busy server) go with the next heartbeat.
             _ = SendPvpAsync();
             if (busyShown || StatusLabel.Text == T("Server busy · retrying now.")) { busyShown = false; Status(""); }
-            if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await SaveDetectedCharacterAsync(retry.Capture, retry.Identity)); }
+            if (pendingIdentity is { } retry) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the named character", () => SaveDetectedCharacterAsync(retry.Capture, retry.Identity))); }
         }
         // With a device key the request already signed in again; still 401 means the pairing
         // ended (Disconnect elsewhere, Sign out everywhere, the PC removed on the dashboard).
@@ -2495,17 +2553,17 @@ public partial class MainWindow : Window
     {
         await StopReaderAsync();
         // The pause is the server's: without a connection there is none.
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; NotePvpStats(false); if (clearSaved) SessionStore.Clear();
+        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; shareLocation = false; NotePvpStats(false); teammatesOff = false; teammatesWaiting.Clear(); if (clearSaved) SessionStore.Clear();
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
         Status(message); RenderHero();
     }
-    private async void Logout_Click(object sender, RoutedEventArgs e) => await ExecuteAsync(async () =>
+    private async void Logout_Click(object sender, RoutedEventArgs e) => await Guarded("Disconnecting", () => ExecuteAsync(async () =>
     {
         if (api is { } current) await UnpairQuietlyAsync(current);
         await DisconnectAsync(T("Disconnected · your characters stay saved on your account."), clearSaved: true);
-    });
+    }));
     // Best effort: offline, the key is still deleted from this PC with the saved session.
     private static async Task UnpairQuietlyAsync(PartyApi paired)
     {
@@ -2545,7 +2603,7 @@ public partial class MainWindow : Window
         Log.Info($"Game client {version}.");
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exit) { SavePosition(); e.Cancel = true; Hide(); settings.Hide(); } }
-    private async void Quit_Click(object sender, RoutedEventArgs e) => await QuitAskedAsync();
+    private async void Quit_Click(object sender, RoutedEventArgs e) => await Guarded("Quit", QuitAskedAsync);
     // Quit from the card or the tray: while a character is read and sent, quitting takes it offline
     // for the party, so Odyle asks first (Settings turns the question off).
     private async Task QuitAskedAsync()
@@ -2554,12 +2612,13 @@ public partial class MainWindow : Window
         await QuitAsync();
     }
     // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
-    public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await QuitAsync(); }
+    public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await Guarded("Quitting for --unpair", () => QuitAsync()); }
     private async Task QuitAsync(bool restart = false)
     {
         // Quitting already (an update found at start while the user quits) is not repeated.
         if (quitting) return;
         quitting = true;
+        if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged -= Resumed;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
         SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace(); await operations.WaitAsync();

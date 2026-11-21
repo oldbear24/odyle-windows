@@ -21,7 +21,18 @@ public sealed record Announcement(string Text, string Level = "info")
 // session and heartbeat answers carry it. Backends from before the switch leave it out (null),
 // as they leave out Clock, the Odyle clock's rules (OdyleClock.cs).
 // Maps are the game's maps as the server's superusers named them (location sharing); null from backends before it.
-public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null, GameMap[]? Maps = null);
+public sealed record RoomsResponse(Room[] Rooms, int OdylePerCube = 40, Announcement? Announcement = null, bool? ReaderPaused = null, ClockRules? Clock = null, NotificationSettings? Notifications = null, GameMap[]? Maps = null)
+{
+    // What the app relies on, whatever a server sends (#83): a list where it expects one, rooms with
+    // an id, at least one Odyle per cube (it divides by it every second) and clock rules without holes.
+    public RoomsResponse Normalized() => this with
+    {
+        Rooms = (Rooms ?? []).Where(r => r is { Id.Length: > 0 }).Select(r => r with { Name = r.Name ?? "", Role = r.Role ?? "" }).ToArray(),
+        OdylePerCube = Math.Max(1, OdylePerCube),
+        Clock = Clock?.Normalized(),
+        Maps = Maps?.Where(m => m is not null).ToArray(),
+    };
+}
 public sealed record NotificationsResponse(NotificationSettings Notifications);
 public sealed record Character(string Id, string User, string CharacterName, string Server, string Region, int Value, bool Confirmed, bool Valid, string LastReadingAt, string LastSeenAt = "", string Source = "", OdyleParts? Parts = null, int? RegenTick = null, int? NaturalMax = null, bool? Shared = null, int? AnsweredCap = null, int Level = 0, string? ClassName = null,
     string? Portrait = null, string? OfficialId = null, string? OfficialRegion = null, int? OfficialServerId = null, Place? Location = null, GameGroup? GameGroup = null)
@@ -53,8 +64,16 @@ public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string Server
 // dashboard); backends from before location sharing leave it out, which means no.
 // PvpStats: the account turned on PvP stats (an opt-in on the dashboard too), so the app reads and
 // sends its characters' kills, assists and deaths; left out by backends from before them: no.
-public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null);
-public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null);
+// ShareTeammates: the account lets the app send its party and force members' names (an account switch on
+// the dashboard, on by default, #81); backends from before the switch leave it out, which means yes.
+public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null);
+public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null);
+// Shared is false when the account turned the names off: the server queued none. Older backends leave it
+// out, which means the names were taken.
+public sealed record TeammatesResponse(bool? Shared = null, int Queued = 0)
+{
+    public bool Taken => Shared != false;
+}
 // Enabled is false when the account has PvP stats off: the server stored nothing.
 public sealed record PvpResponse(bool Enabled, int Stored = 0);
 // Shared is false when the account does not share its location: the server stored nothing.
@@ -103,12 +122,18 @@ public sealed class PartyApi : IDisposable
     // The app version (for example 0.6.0.12) sent with each reader session, so the server's
     // superuser dashboard can list which versions are connected.
     public string? AppVersion { get; set; }
+    public const int ResponseLimit = 4 * 1024 * 1024;
+    // The handler the checks passed (null in the app), which the realtime connection then uses too.
+    public HttpMessageHandler? Handler { get; }
     // The checks pass a handler that answers like the server; the app always uses the network.
     public PartyApi(string endpoint, string? token = null, string? deviceKey = null, HttpMessageHandler? handler = null)
     {
         Endpoint = ConnectionDetails.NormalizeEndpoint(endpoint);
         client = handler is null ? new HttpClient(NewHandler()) : new HttpClient(handler, disposeHandler: false);
         client.BaseAddress = new Uri(Endpoint + "/"); client.Timeout = TimeSpan.FromSeconds(12);
+        // No answer of the API comes near this; a larger one fails like any unreadable answer (#83).
+        client.MaxResponseContentBufferSize = ResponseLimit;
+        Handler = handler;
         Token = string.IsNullOrWhiteSpace(token) ? null : token; DeviceKey = string.IsNullOrWhiteSpace(deviceKey) ? null : deviceKey;
     }
     // The server's API never redirects. Following one would send the request again, a POST's body
@@ -167,7 +192,7 @@ public sealed class PartyApi : IDisposable
         if (DeviceKey is not { } key) return;
         DeviceKey = null; await PostAsync<JsonElement>("api/odyle/unpair", new { deviceKey = key }, renew: false);
     }
-    public Task<RoomsResponse> GetRoomsAsync() => GetAsync<RoomsResponse>("api/odyle/rooms");
+    public async Task<RoomsResponse> GetRoomsAsync() => (await GetAsync<RoomsResponse>("api/odyle/rooms")).Normalized();
     // Whether the server keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW among the armory's regions).
     // The Windows versions the server's operators hold back (#19); older backends answer none.
     public async Task<Version[]> GetHeldBackAsync() => ReleaseFeed.HeldBack((await GetAsync<WindowsReleaseInfo>("api/odyle/windows-release")).Blocked);
@@ -232,9 +257,10 @@ public sealed class PartyApi : IDisposable
         PostAsync<JsonElement>("api/odyle/game-group", new { sessionId, characterId, adapter = GroupTracker.Adapter, party = party.Length > 0 ? party : null, force = force.Length > 0 ? force : null });
     // The names of the other members of the named character's party and force (GameGroups.Teammates),
     // up to 48, without the party or force, for the armory's scout on the server; it keeps none of
-    // them. A server from before it answers 404.
-    public Task TeammatesAsync(string sessionId, string characterId, IReadOnlyCollection<string> names) =>
-        PostAsync<JsonElement>("api/odyle/teammates", new { sessionId, characterId, adapter = GameGroups.TeammatesAdapter, names });
+    // them. Answers false when the account turned the names off on the dashboard (nothing was queued).
+    // A server from before it answers 404.
+    public async Task<bool> TeammatesAsync(string sessionId, string characterId, IReadOnlyCollection<string> names) =>
+        (await PostAsync<TeammatesResponse>("api/odyle/teammates", new { sessionId, characterId, adapter = GameGroups.TeammatesAdapter, names })).Taken;
     // The named character's PvP kills, assists and deaths (PvpOutbox), up to 20 at a time, for an
     // account that turned on PvP stats; Enabled is false when it has not (nothing was stored). An
     // event the server already has is not stored twice. A server from before PvP stats answers 404.

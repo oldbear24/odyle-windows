@@ -26,7 +26,7 @@ public sealed record StagedUpdate(Version Version, string Directory, string Rele
 // architecture comes from the running process, so the same kind is downloaded.
 // Windows lets a running executable be renamed but not overwritten or deleted, so
 // installing moves Odyle.exe aside to Odyle.exe.old, copies the new files in and
-// relaunches; the next start removes the old file.
+// relaunches. The new build keeps the old file until it started healthy (#80, below).
 public static class Updater
 {
     public static readonly Version Current = ReleaseFeed.Normalize(typeof(Updater).Assembly.GetName().Version);
@@ -56,8 +56,9 @@ public static class Updater
     }
     // The release to install: newer than this build, with a package for this machine and not held
     // back, or, while this build is held back, the latest one even if older (ReleaseFeed.Choose).
+    // A version this PC rolled back from is skipped like a held-back one.
     public static async Task<AppRelease?> CheckAsync(IReadOnlyCollection<Version> heldBack, CancellationToken token) =>
-        ReleaseFeed.Choose(await FetchLatestAsync(token), Current, heldBack, Runtime, SelfContained);
+        ReleaseFeed.Choose(await FetchLatestAsync(token), Current, Executable is { } exe && FailedVersion(exe, Current) is { } failed ? [.. heldBack, failed] : heldBack, Runtime, SelfContained);
     // Drops downloaded packages of held-back versions, so none is installed at the next start.
     public static void Forget(IEnumerable<Version> heldBack)
     {
@@ -99,9 +100,10 @@ public static class Updater
     {
         if (!Directory.Exists(Staging)) return null;
         StagedUpdate? best = null;
+        var failed = Executable is { } exe ? FailedVersion(exe, Current) : null;
         foreach (var directory in Directory.EnumerateDirectories(Staging))
         {
-            if (!ReleaseFeed.TryParseTag(Path.GetFileName(directory), out var version) || version <= Current || StampedVersion(Path.Combine(directory, "Odyle.exe")) != version) continue;
+            if (!ReleaseFeed.TryParseTag(Path.GetFileName(directory), out var version) || version <= Current || version == failed || StampedVersion(Path.Combine(directory, "Odyle.exe")) != version) continue;
             if (best is null || version > best.Version) best = new StagedUpdate(version, directory, $"https://github.com/{ReleaseFeed.Repository}/releases/tag/v{version}");
         }
         return best;
@@ -131,21 +133,108 @@ public static class Updater
             foreach (var (path, old) in aside) { Try(() => File.Delete(path)); Try(() => File.Move(old, path)); }
             throw;
         }
+        // The new build counts its own starts from none, and a version rolled back from earlier is no
+        // longer skipped. This start's own count is over: .old now holds this build, the new one's fallback.
+        foreach (var (path, _) in aside) { Try(() => File.Delete(path + Starts)); Try(() => File.Delete(path + Failed)); }
+        pending = null;
     }
     public static void Relaunch(bool tray)
     {
         var exe = Executable ?? throw new InvalidOperationException(T("The application path is unknown."));
         Process.Start(new ProcessStartInfo(exe, tray ? StartupCommand.TrayArgument : "") { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) });
     }
-    // Removes the executable an update moved aside and packages that are no longer newer than this build.
+    // Removes packages that are no longer newer than this build, and the executable a rollback moved
+    // aside once this build is that version or newer (a reinstall). The executable an update moved aside
+    // stays until this build started healthy (ConfirmStart).
     public static void CleanUp()
     {
-        if (Executable is not null) Try(() => File.Delete(Executable + ".old"));
+        if (IsReleaseBuild && File.Exists(Executable + Failed) && FailedVersion(Executable!, Current) is null) Try(() => File.Delete(Executable + Failed));
         if (!Directory.Exists(Staging)) return;
         foreach (var directory in Directory.EnumerateDirectories(Staging))
             if (!ReleaseFeed.TryParseTag(Path.GetFileName(directory), out var version) || version <= Current) Try(() => Directory.Delete(directory, true));
         foreach (var file in Directory.EnumerateFiles(Staging)) Try(() => File.Delete(file));
     }
+    // ----- Start health (#80) -----
+    // An update leaves the build it replaced as Odyle.exe.old. The new build counts its starts in
+    // Odyle.exe.starts ("<version> <count>") until one proves healthy: 30 seconds after its window was
+    // built, or an orderly quit after that (App). Only then is .old deleted. A build that fails to start
+    // twice in a row (it ended before proving healthy, or could not build its window) puts .old back and
+    // keeps itself as Odyle.exe.failed, whose version the update checks skip until a newer release is out.
+    // App calls these for released builds only: development builds and the checks never touch the files.
+    public enum StartHealth { Settled, Pending, RolledBack }
+    public const int FailedStartsLimit = 2;
+    private const string Old = ".old", Starts = ".starts", Failed = ".failed";
+    // The executable whose start still counts, until ConfirmStart.
+    private static string? pending;
+    private static Version pendingVersion = Current;
+    public static bool StartPending => pending is not null;
+    // Called once a start owns the single-instance guard, before anything that could fail: answers
+    // RolledBack when the two starts before this one failed and .old is back (the caller relaunches it).
+    public static StartHealth BeginStart(string exe, Version current)
+    {
+        pending = null; current = ReleaseFeed.Normalize(current);
+        var marker = exe + Starts;
+        if (!File.Exists(exe + Old)) { Try(() => File.Delete(marker)); return StartHealth.Settled; }
+        var (version, count) = ReadStarts(marker);
+        if (version != current) count = 0;
+        // Healthy already, but .old could not be deleted then (the build before still exiting).
+        if (count < 0) { Try(() => File.Delete(exe + Old)); if (!File.Exists(exe + Old)) Try(() => File.Delete(marker)); return StartHealth.Settled; }
+        if (count >= FailedStartsLimit && RollBack(exe, current)) return StartHealth.RolledBack;
+        WriteStarts(marker, current, count + 1);
+        pending = exe; pendingVersion = current;
+        return StartHealth.Pending;
+    }
+    // This start failed before its window was built: answers true when that was the second failed start
+    // in a row and .old is back (the caller relaunches it); false when it should simply end.
+    public static bool FailedStart(string exe, Version current)
+    {
+        if (pending != exe) return false;
+        current = ReleaseFeed.Normalize(current);
+        var (version, count) = ReadStarts(exe + Starts);
+        return version == current && count >= FailedStartsLimit && RollBack(exe, current);
+    }
+    // This start proved healthy: the build before it is no longer needed.
+    public static void ConfirmStart()
+    {
+        if (pending is not { } exe) return;
+        pending = null;
+        Try(() => File.Delete(exe + Old));
+        if (File.Exists(exe + Old)) WriteStarts(exe + Starts, pendingVersion, -1); else Try(() => File.Delete(exe + Starts));
+        Log.Info(File.Exists(exe + Old) ? "This start is healthy; the previous build could not be removed yet." : "This start is healthy; the previous build was removed.");
+    }
+    // Puts the build before back in place of the running one, which stays as Odyle.exe.failed.
+    public static bool RollBack(string exe, Version current)
+    {
+        string old = exe + Old, failed = exe + Failed;
+        try
+        {
+            if (File.Exists(failed)) File.Delete(failed);
+            File.Move(exe, failed);
+            try { File.Move(old, exe); }
+            catch { File.Move(failed, exe); throw; }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Log.Error($"Odyle {current} failed to start twice, but the previous build could not be put back", error);
+            return false;
+        }
+        Try(() => File.Delete(exe + Starts)); pending = null;
+        Log.Warn($"Odyle {current} failed to start twice; the previous build is back, and update checks skip {current} until a newer release is out.");
+        return true;
+    }
+    // The version a rollback moved away from, while it is newer than this build; null otherwise.
+    public static Version? FailedVersion(string exe, Version current) => StampedVersion(exe + Failed) is { } failed && failed > ReleaseFeed.Normalize(current) ? failed : null;
+    private static (Version? Version, int Count) ReadStarts(string marker)
+    {
+        try
+        {
+            var parts = File.ReadAllText(marker).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return parts.Length == 2 && ReleaseFeed.TryParseTag(parts[0], out var version) && int.TryParse(parts[1], System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var count) ? (version, count) : (null, 0);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return (null, 0); }
+    }
+    private static void WriteStarts(string marker, Version version, int count) =>
+        Try(() => File.WriteAllText(marker, $"{ReleaseFeed.Normalize(version)} {count.ToString(System.Globalization.CultureInfo.InvariantCulture)}"));
     // The version Windows reads from an executable's resources, or null when there is none.
     private static Version? StampedVersion(string exe)
     {

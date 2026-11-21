@@ -82,6 +82,7 @@ static class ReaderChecks
                 await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
                 Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
                 Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
+                await PairingChecks(window);
                 CaptureLooks();
                 // A decoded reading is displayed immediately, before its owner is known or saved.
                 var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
@@ -722,6 +723,101 @@ static class ReaderChecks
         });
         Dispatcher.Run();
     }
+    // Pairing (#79): a pairing whose session start fails keeps the saved pairing and tries again by itself
+    // instead of staying half-connected, and an action from outside the window waits for a running
+    // operation instead of being dropped. Party and force members' names (#81) follow the account switch.
+    static async Task PairingChecks(MainWindow window)
+    {
+        var server = new PairingServer { FailSession = true }; var settings = Settings(window);
+        var probeNpcap = Npcap.Probe; Npcap.Probe = () => false;
+        var makeApi = Field("newApi").GetValue(window);
+        Field("newApi").SetValue(window, (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, server)));
+        var restore = (DispatcherTimer)Field("restoreTimer").GetValue(window)!;
+        try
+        {
+            // One operation at a time: a click while one runs is dropped, an action from outside waits and then runs.
+            var gate = new TaskCompletionSource(); var ran = new List<string>();
+            var first = (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => gate.Task), false)!;
+            var dropped = (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => { ran.Add("click"); return Task.CompletedTask; }), false)!;
+            var queued = (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => { ran.Add("queued"); return Task.CompletedTask; }), true)!;
+            await dropped;
+            Check(ran.Count == 0 && (bool)Field("busy").GetValue(window)! && !queued.IsCompleted, "while an operation runs a click is dropped and a queued action waits");
+            gate.SetResult(); await first; await queued;
+            Check(ran.SequenceEqual(["queued"]) && !(bool)Field("busy").GetValue(window)!, "the queued action runs once the operation before it ended");
+            // Paired, but the session cannot start: the pairing is saved, the app is not half-connected, and it tries again.
+            ((PasswordBox)settings.FindName("CodeInput")).Password = "https://party.example/#odyle-pair=ABCDEFGH23456789";
+            await (Task)Call(window, "PairAsync")!;
+            Check(server.Paired == 1 && Field("api").GetValue(window) is null && restore.IsEnabled && Field("retryAt").GetValue(window) is not null && SessionStore.Load(out _) is { Endpoint: "https://party.example", DeviceKey: "pairing-check-key" }
+                && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible && !((DispatcherTimer)Field("heartbeat").GetValue(window)!).IsEnabled, "a pairing whose session fails keeps the saved pairing and tries again by itself");
+            Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s"), "the footer counts down to the next try: " + Control<TextBlock>(window, "StatusLabel").Text);
+            server.FailSession = false;
+            await (Task)Call(window, "RestoreAsync")!;
+            Check(Field("api").GetValue(window) is PartyApi && (string)Field("sessionId").GetValue(window)! == "s1" && ((DispatcherTimer)Field("heartbeat").GetValue(window)!).IsEnabled && !restore.IsEnabled && Field("retryAt").GetValue(window) is null, "the next try connects the saved pairing");
+            // Party and force members' names: an answer { shared: false } turns them off until the server says otherwise.
+            var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
+            Field("currentCharacterId").SetValue(window, "c1"); Field("gameCharacterId").SetValue(window, 7UL); Field("detectedCharacterKey").SetValue(window, "Hero|2304"); Field("gameCharacterKey").SetValue(window, "Hero|2304");
+            List<string> Waiting() => (List<string>)Field("teammatesWaiting").GetValue(window)!;
+            bool Off() => (bool)Field("teammatesOff").GetValue(window)!;
+            server.Teammates = """{"shared":false}""";
+            Call(window, "OnTeammates", inert, new[] { "Mate" });
+            await Until(() => server.TeammateRequests == 1 && Off(), 200);
+            Call(window, "OnTeammates", inert, new[] { "Other" });
+            Check(server.TeammateRequests == 1 && Waiting().Count == 0, "while the account has the names off none are kept or sent");
+            server.Heartbeat = """{"serverNow":"2026-11-21 12:00:00.000Z","shareTeammates":true}""";
+            await (Task)Call(window, "PulseAsync")!;
+            Check(!Off(), "a heartbeat that says shareTeammates: true turns the names on again");
+            server.Teammates = """{"shared":true,"queued":1,"serverNow":"x"}""";
+            Call(window, "OnTeammates", inert, new[] { "Other" });
+            await Until(() => server.TeammateRequests == 2, 200);
+            server.Heartbeat = """{"serverNow":"2026-11-21 12:00:20.000Z","shareTeammates":false}""";
+            await (Task)Call(window, "PulseAsync")!;
+            Call(window, "OnTeammates", inert, new[] { "Third" });
+            Check(Off() && server.TeammateRequests == 2 && Waiting().Count == 0, "a heartbeat that says shareTeammates: false stops them");
+            // A backend from before the switch says nothing, which means on (it has no switch to turn off).
+            server.Heartbeat = """{"serverNow":"2026-11-21 12:00:40.000Z"}""";
+            await (Task)Call(window, "PulseAsync")!;
+            Check(!Off(), "a heartbeat without shareTeammates means on");
+            server.Heartbeat = """{"serverNow":"2026-11-21 12:01:00.000Z","shareTeammates":false}"""; await (Task)Call(window, "PulseAsync")!;
+            Field("capture").SetValue(window, null); Call(window, "ResetAttribution");
+            await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
+            Check(!Off() && !File.Exists(SessionStore.FilePath), "signing out resets the switch to the default");
+        }
+        finally
+        {
+            Field("capture").SetValue(window, null); Call(window, "ResetAttribution");
+            if (Field("api").GetValue(window) is not null || restore.IsEnabled) await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
+            ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
+            Field("newApi").SetValue(window, makeApi); Field("sessionId").SetValue(window, ""); Field("currentCharacterId").SetValue(window, "");
+        }
+    }
+    // Answers pairing, sign-in, the session (503 while FailSession), the account's characters and rooms, the
+    // heartbeat and the teammates route with what the check sets; the realtime connection is refused.
+    sealed class PairingServer : HttpMessageHandler
+    {
+        public bool FailSession;
+        public int Paired, TeammateRequests;
+        public string Teammates = """{"serverNow":"x"}""", Heartbeat = """{"serverNow":"2026-11-21 12:00:00.000Z"}""";
+        const string Auth = """{"token":"pairing-check-token","record":{"id":"u","displayName":"Player"},"deviceKey":"pairing-check-key"}""";
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var route = request.RequestUri!.AbsolutePath;
+            if (route == "/api/odyle/pair") Paired++;
+            if (route == "/api/odyle/teammates") TeammateRequests++;
+            var (status, body) = route switch
+            {
+                "/api/odyle/pair" or "/api/odyle/desktop-sign-in" => (HttpStatusCode.OK, Auth),
+                "/api/odyle/session" when FailSession => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
+                "/api/odyle/session" => (HttpStatusCode.OK, """{"sessionId":"s1","sequence":0}"""),
+                "/api/collections/characters/records" => (HttpStatusCode.OK, """{"items":[]}"""),
+                "/api/odyle/rooms" => (HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":null}"""),
+                "/api/odyle/heartbeat" => (HttpStatusCode.OK, Heartbeat),
+                "/api/odyle/teammates" => (HttpStatusCode.OK, Teammates),
+                "/api/realtime" => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
+                _ => (HttpStatusCode.OK, "{}"),
+            };
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }
+    }
     // Refreshing the party: one room that times out or fails keeps what it showed instead of failing
     // the whole refresh, a room's realtime news fetches only that room, and a refresh of one room never
     // runs beside a refresh of the whole party, so an older answer can never replace a newer one.
@@ -827,8 +923,57 @@ static class ReaderChecks
             Check(staged is { Version: { Major: 1, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
             Updater.CleanUp();
             Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "1.0.0.0", "9.9.9.8", "9.9.9.9" }), "cleanup removes partial downloads and versions that are not newer");
+            RollbackChecks(root);
         }
         finally { Updater.Staging = staging; Directory.Delete(root, true); }
+    }
+    // Start health (#80): a build an update installed keeps the one before it as Odyle.exe.old until a start
+    // proved healthy, and after two failed starts puts it back. The checks are no released build, so the app
+    // never ran any of this here.
+    static void RollbackChecks(string root)
+    {
+        Check(!Updater.IsReleaseBuild && !Updater.StartPending, "a development build never counts its starts");
+        var folder = Path.Combine(root, "rollback"); Directory.CreateDirectory(folder);
+        string exe = Path.Combine(folder, "Odyle.exe"), old = exe + ".old", starts = exe + ".starts", failed = exe + ".failed";
+        var version = new Version(0, 36, 0);
+        void Installed() { foreach (var file in new[] { exe, old, starts, failed }) if (File.Exists(file)) File.Delete(file); File.WriteAllText(exe, "new"); File.WriteAllText(old, "previous"); }
+        // Without .old (a fresh install, or a start long after the update) nothing is counted.
+        File.WriteAllText(exe, "new"); File.WriteAllText(starts, "0.36.0.0 1");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Settled && !Updater.StartPending && !File.Exists(starts), "a start without a previous build counts nothing");
+        // A healthy start removes the previous build and its count; the next start is settled.
+        Installed();
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Pending && Updater.StartPending && File.ReadAllText(starts) == "0.36.0.0 1" && File.Exists(old), "the first start after an update counts itself and keeps the previous build");
+        Updater.ConfirmStart();
+        Check(!Updater.StartPending && !File.Exists(old) && !File.Exists(starts) && File.ReadAllText(exe) == "new", "a healthy start removes the previous build");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Settled, "after a healthy start nothing is counted");
+        // Two starts that never proved healthy (a crash): the third start puts the previous build back.
+        Installed();
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Pending && Updater.BeginStart(exe, version) == Updater.StartHealth.Pending && File.ReadAllText(starts) == "0.36.0.0 2", "each unconfirmed start is counted");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.RolledBack && !Updater.StartPending && File.ReadAllText(exe) == "previous" && File.ReadAllText(failed) == "new" && !File.Exists(old) && !File.Exists(starts), "after two failed starts the previous build is back and the failed one kept aside");
+        // A start that could not build its window: the first ends, the second puts the previous build back.
+        Installed();
+        Updater.BeginStart(exe, version);
+        Check(!Updater.FailedStart(exe, version) && File.ReadAllText(exe) == "new", "the first failed start only ends");
+        Updater.BeginStart(exe, version);
+        Check(Updater.FailedStart(exe, version) && File.ReadAllText(exe) == "previous" && File.ReadAllText(failed) == "new", "the second failed start puts the previous build back");
+        Check(!Updater.FailedStart(exe, version), "nothing is pending after a rollback");
+        // A count left by another version starts over.
+        Installed(); File.WriteAllText(starts, "0.35.1.0 2");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Pending && File.ReadAllText(starts) == "0.36.0.0 1", "a count of another version starts over");
+        // A healthy start whose previous build could not be removed yet is not counted again.
+        File.WriteAllText(starts, "0.36.0.0 -1");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Settled && !File.Exists(old) && !File.Exists(starts), "a start already proved healthy is settled and removes the previous build");
+        // The version rolled back from is skipped until a newer one is out (this checks executable is stamped 1.0.0.0).
+        File.Copy(Environment.ProcessPath!, failed, overwrite: true);
+        Check(Updater.FailedVersion(exe, version) == new Version(1, 0, 0, 0) && Updater.FailedVersion(exe, new Version(1, 0, 0)) is null && Updater.FailedVersion(exe, new Version(2, 0, 0)) is null, "the failed version is skipped only while it is newer");
+        // Installing an update starts the new build's count from none and forgets the rollback.
+        var source = Path.Combine(root, "rollback-source"); Directory.CreateDirectory(source); File.WriteAllText(Path.Combine(source, "Odyle.exe"), "newest");
+        File.WriteAllText(old, "previous"); File.WriteAllText(starts, "0.36.0.0 1");
+        Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Pending, "an unconfirmed start before an update");
+        Updater.Apply(source, folder);
+        Check(File.ReadAllText(exe) == "newest" && File.ReadAllText(old) == "new" && !File.Exists(starts) && !File.Exists(failed) && !Updater.StartPending, "installing an update keeps the running build as the fallback and starts a fresh count");
+        Updater.ConfirmStart();
+        Check(File.Exists(old), "a quit after installing never removes the new build's fallback");
     }
     // Opt-in and online: fetches the newest GitHub release and stages this machine's package
     // in a temporary folder, exercising download, checksum verification and extraction.
