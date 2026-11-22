@@ -19,9 +19,7 @@ public static class PartyReadiness
     {
         if (!e.Sharing) return Presence.Offline;
         if (!e.Confirmed || e.LastReadingAt.Length == 0) return Presence.Unknown;
-        if (Readiness.Parse(e.LastSeenAt) is not { } seen || now - seen >= TimeSpan.FromSeconds(90)) return Presence.Offline;
-        if (!e.Valid || e.Source == "manual" || now - seen >= TimeSpan.FromSeconds(45)) return Presence.Stale;
-        return Presence.Live;
+        return Readiness.Seen(e.LastSeenAt, e.Valid, e.Source, now);
     }
 
     public static CharacterReadiness Character(PartyEntry e, DateTimeOffset now, int cost)

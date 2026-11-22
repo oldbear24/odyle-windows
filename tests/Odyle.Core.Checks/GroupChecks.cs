@@ -155,6 +155,10 @@ static class GroupChecks
         byte[] big = [0x02, 0x96, 0, .. ForceKey, .. U64(OwnCharacter), 0, 20, 0, 0, 0, 2, 1, 0, 1, .. PartyKey, 1, 5, 0, 0, 0, 3, 61,
             .. Member(1, Own, OwnCharacter, "Hero", null), .. crowd.SelectMany((m, i) => Member((byte)(i + 2), m.Item1, m.Item2, m.Item3, null))];
         Check(GameGroups.Teammates(big, Own).Count == GameGroups.TeammatesLimit, "at most 48 names");
+        // The decoder hands over the event it read instead of reading the roster again: the same names.
+        var force = ForceRoster((Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"), (Third, ThirdCharacter, "Ållan"));
+        Check(GameGroups.TeammatesOf(force, GameGroups.Read(force, Own)!).SequenceEqual(GameGroups.Teammates(force, Own)), GameGroups.TeammatesOf(big, GameGroups.Read(big, Own)!).Count == GameGroups.TeammatesLimit,
+            GameGroups.TeammatesOf([0x1f, 0x92, 3], GameGroups.Read([0x1f, 0x92, 3], Own)!).Count == 0, "names from the event the decoder read match a fresh read");
     }
     static void Tracking()
     {

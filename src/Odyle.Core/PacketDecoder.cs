@@ -344,7 +344,7 @@ public sealed class OdyleDecoder
             ownCharacter = id; pvp.Own(id, identity?.CharacterName ?? "", identity?.ServerId ?? 0);
             if (switched) CharacterChanged?.Invoke(id);
             // A roster held for this id comes before the name, so the name finds it.
-            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) { GroupObserved?.Invoke(group); Teammates(held, id); } }
+            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) { GroupObserved?.Invoke(group); Teammates(held, group); } }
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
@@ -353,7 +353,7 @@ public sealed class OdyleDecoder
         if (frame[1] is 0x92 or 0x96)
         {
             if (ownCharacter is null && GameGroups.IsRoster(frame)) heldRoster = frame.ToArray();
-            else if (GameGroups.Read(frame, ownCharacter) is { } group) { GroupObserved?.Invoke(group); Teammates(frame, ownCharacter); }
+            else if (GameGroups.Read(frame, ownCharacter) is { } group) { GroupObserved?.Invoke(group); Teammates(frame, group); }
             return;
         }
         // World loads and arrivals (21 36, 23 36), and effects naming the own entity (2A 38) for its
@@ -445,10 +445,11 @@ public sealed class OdyleDecoder
         if (record.Resource != OdyleResource || trailer != (payload[0] == 1 ? 5 : 1) || record.Total > ValueLimit) return;
         Candidate?.Invoke(new((int)record.Total, Version, CandidateSource.Update) { Base = (int)record.Base, Bonus = (int)record.Bonus });
     }
-    // A roster's other members' names, read only while someone listens for them.
-    private void Teammates(ReadOnlySpan<byte> roster, ulong? own)
+    // A roster's other members' names, read only while someone listens for them; group is what
+    // GameGroups.Read just answered for the same frame.
+    private void Teammates(ReadOnlySpan<byte> frame, GameGroupEvent group)
     {
-        if (TeammatesObserved is { } observed && GameGroups.Teammates(roster, own) is { Count: > 0 } names) observed(names);
+        if (TeammatesObserved is { } observed && GameGroups.TeammatesOf(frame, group) is { Count: > 0 } names) observed(names);
     }
     /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
