@@ -352,13 +352,8 @@ public sealed class PartyApi : IDisposable
 public sealed record WindowsReleaseInfo(string[]? Blocked = null);
 public sealed record GameServer(int Id, string Name);
 public sealed record ServerRegion(string Region, GameServer[]? Servers = null);
+// Each region's servers with their ids, as the backend reads them from PLAYNC (GameIdentity.Learn).
 public sealed record ServerRegions(ServerRegion[]? Regions)
 {
-    // What a server that cannot be asked is taken to know: neither NA-West nor the Global servers' names.
-    public static readonly ServerRegions None = new([]);
-    // Whether it keeps NA-West apart (dashboard 0.21.0 and newer list GLOBAL_NAW).
-    public bool NaWest => (Regions ?? []).Any(r => r?.Region == "GLOBAL_NAW");
-    // Whether it knows the Global servers' names (dashboard 0.59.0 and newer list each region's servers with their ids).
-    public bool GlobalServers => (Regions ?? []).Any(r => r?.Servers is { Length: > 0 });
     public IEnumerable<(int Id, string Name)> Servers => (Regions ?? []).SelectMany(r => r?.Servers ?? []).Where(s => s?.Name is not null).Select(s => (s.Id, s.Name));
 }

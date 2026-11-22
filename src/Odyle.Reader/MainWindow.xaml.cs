@@ -1823,25 +1823,24 @@ public partial class MainWindow : Window
             }
             if (attribution.DetectedKey != key)
             {
-                // Asked when a character is first named on a connection, and again at most once an hour for a server
-                // neither this build nor the server named yet (the server reads PLAYNC's list every night).
-                if (connection.NaWest is null || identity.Server is null && identity.Region is not null && DateTimeOffset.UtcNow - connection.ServersAskedAt > TimeSpan.FromHours(1))
+                // The server's names of the game servers win over this build's (GameIdentity.Learn). Asked when a character
+                // is first named on a connection, and again at most once an hour after an answer that could not be read or
+                // for a server neither this build nor the server named yet (the server reads PLAYNC's list every night).
+                var now = DateTimeOffset.UtcNow;
+                if (connection.ServersAskedAt == DateTimeOffset.MinValue || (!connection.ServersKnown || identity.Server is null && identity.Region is not null) && now - connection.ServersAskedAt > TimeSpan.FromHours(1))
                 {
-                    ServerRegions known;
-                    try { known = await api.GetServersAsync(); }
-                    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { known = ServerRegions.None; Log.Warn("The server's regions and game servers could not be read: " + error.Message); }
-                    connection.ServersAskedAt = DateTimeOffset.UtcNow; GameIdentity.Learn(known.Servers);
-                    // A server that does not list NA-West yet saves those characters as NA, as before (#4), and one that
-                    // does not know the Global servers' names saves them under the older ones; both stay for the connection.
-                    connection.NaWest ??= known.NaWest; connection.GlobalServers ??= known.GlobalServers;
-                    if (identity.Server is null && identity.Region is not null) identity = identity with { Server = GameIdentity.ServerOf(identity.ServerId).Server };
+                    connection.ServersAskedAt = now;
+                    // An answer that cannot be read keeps the names learned before.
+                    try { GameIdentity.Learn((await api.GetServersAsync()).Servers); connection.ServersKnown = true; }
+                    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { Log.Warn("The server's regions and game servers could not be read: " + error.Message); }
                 }
+                identity = identity with { Server = GameIdentity.ServerOf(identity.ServerId).Server };
                 if (identity.Server is null || identity.Region is null)
                 {
                     Status(T("Detected {0}, but its server ({1}) is not supported yet. Its Odyle is not saved.", identity.CharacterName, identity.ServerId));
                     RenderHero(); return;
                 }
-                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.ServerFor(connection.GlobalServers == true)!, identity.RegionFor(connection.NaWest == true)!);
+                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.Region);
                 currentCharacterId = saved.Id; attribution.DetectedKey = key; await ReloadAsync();
                 Log.Info($"{identity.CharacterName} · {identity.Server} is saved to the account."); Status("");
             }

@@ -20,8 +20,10 @@ static class CaptureChecks
     const ulong Own = 606, Other = 707, Mate = 5069, Foe = 9001, OwnCharacter = 0x0900_0000_0003_6c9a, MateCharacter = 0x090e_0000_0003_b300;
     static readonly byte[] Tags = [0x00, 0x04, 0x08, 0x0c];
     static readonly byte[] PartyKey = [0xba, 0x0b, 0x06, 0x00, 0xb2, 0xdf, 0xf7, 0x23], ForceKey = [0x59, 0x1a, 0x00, 0x00, 0xb2, 0xdf, 0xf7, 0x23];
-    // Taken from the decoder of 0.36.1 (91ed207), before any of #85's changes.
-    const string PinnedTrace = "85C2852DD23DC562A4521F44D77556CCF877C3094A90AD3873A87C9B0BCAFCFF";
+    // Taken from the decoder of 0.36.1 (91ed207), before any of #85's changes (85C2852D…), then again in 1.0.0
+    // once GameIdentity lost its RenamedServer property (#93): the identity lines no longer print it, and the
+    // trace with that property put back in hashes to 85C2852D… as before, so the decoder's output is the same.
+    const string PinnedTrace = "FEF769FC7F70FA8B0A8018206D15D96E7E2B1063BB3A2C89ECE7F94B2376320C";
     const int PinnedLines = 125231;
     public static void Run()
     {

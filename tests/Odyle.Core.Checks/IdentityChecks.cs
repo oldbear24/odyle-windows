@@ -17,24 +17,24 @@ static class IdentityChecks
         Check(lumiel.CharacterName == "TestHero", lumiel.Server == "Lumiel", lumiel.Region == "GLOBAL_EU", "EU Lumiel identity");
         Check(GameIdentity.Read(Payload(1101))?.Region == "GLOBAL_NA" && GameIdentity.Read(Payload(2104))?.Region == "GLOBAL_NA", "NA-East region codes");
         Check(GameIdentity.Read(Payload(1201)) is { Server: "Siel", Region: "GLOBAL_NAW" }, GameIdentity.Read(Payload(2204)) is { Server: "Lumiel", Region: "GLOBAL_NAW" }, "NA-West is its own region, with the same server names");
-        Check(GameIdentity.Read(Payload(1201))!.RegionFor(false) == "GLOBAL_NA", GameIdentity.Read(Payload(1201))!.RegionFor(true) == "GLOBAL_NAW", GameIdentity.Read(Payload(2304))!.RegionFor(false) == "GLOBAL_EU", "a server without NA-West saves those characters as NA");
         Check(GameIdentity.Read(Payload(2404))?.Region == "GLOBAL_SA" && GameIdentity.Read(Payload(2504))?.Region == "GLOBAL_ASIA", "SA/Asia codes");
         Check(GameIdentity.Read(Payload(2360)) is { Server: null, Region: "GLOBAL_EU" }, "unmapped server never guessed");
-        // The Global servers as PLAYNC lists them, and the names a backend that does not know them yet keeps.
+        // The Global servers as PLAYNC lists them.
         Check(GameIdentity.Read(Payload(1321)) is { Server: "Gauss" } && GameIdentity.Read(Payload(1322)) is { Server: "Lamuatan" } && GameIdentity.Read(Payload(1323)) is { Server: "Nathara" }
             && GameIdentity.Read(Payload(2321)) is { Server: "Agnita" } && GameIdentity.Read(Payload(2322)) is { Server: "Atiel" } && GameIdentity.Read(Payload(2323)) is { Server: "Tassin" }
             && GameIdentity.Read(Payload(1311)) is { Server: "Tahavatha" } && GameIdentity.Read(Payload(1315)) is { Server: "Kasaka" }, "Global server names");
         Check(GameIdentity.Read(Payload(1324)) is { Server: null }, GameIdentity.Read(Payload(2324)) is { Server: null }, "a server past PLAYNC's list is not guessed");
-        Check(GameIdentity.Read(Payload(1321))!.ServerFor(false) == "Poeta" && GameIdentity.Read(Payload(2323))!.ServerFor(false) == "Agnita" && GameIdentity.Read(Payload(2321))!.ServerFor(false) == "Ishalgen"
-            && GameIdentity.Read(Payload(2323))!.ServerFor(true) == "Tassin" && GameIdentity.Read(Payload(2304))!.ServerFor(false) == "Lumiel", "older backends keep the older names");
-        Check(GameIdentity.Read(Payload(2323))!.RenamedServer, !GameIdentity.Read(Payload(2304))!.RenamedServer, !GameIdentity.Read(Payload(2360))!.RenamedServer, "renamed servers are told apart");
-        // A server past the lists is named by the backend: letters only, each name at one place of its race, and
-        // never over a name the lists give; the next answer replaces what the last one named.
-        GameIdentity.Learn([(1324, "Ozryn"), (1124, "Ozryn"), (1125, "Ozryn"), (1326, "Bad Name"), (1301, "Other"), (2324, "Siel"), (2325, "Vexhal"), (999, "Low")]);
+        // The backend names every server it lists, also one this build names otherwise (#93): letters only, each name
+        // at one place of its race. A name this build gives another place stays there unless the backend names that
+        // place otherwise; the next answer replaces what the last one named, and this build's names are the fallback.
+        GameIdentity.Learn([(1324, "Ozryn"), (1124, "Ozryn"), (1125, "Ozryn"), (1326, "Bad Name"), (1321, "Poetra"), (2224, "Lumiel"), (2325, "Vexhal"), (999, "Low"), (1306, "Ariel"), (1104, "Fregion"), (1107, "Kaisinel")]);
         Check(GameIdentity.Read(Payload(1324)) is { Server: "Ozryn", Region: "GLOBAL_EU" } && GameIdentity.ServerOf(1124).Server == "Ozryn" && GameIdentity.ServerOf(1125).Server is null
-            && GameIdentity.ServerOf(1326).Server is null && GameIdentity.ServerOf(1301).Server == "Siel" && GameIdentity.ServerOf(2324).Server is null && GameIdentity.ServerOf(2325) == ("Vexhal", "GLOBAL_EU"), "servers the backend names");
+            && GameIdentity.ServerOf(1326).Server is null && GameIdentity.ServerOf(2325) == ("Vexhal", "GLOBAL_EU"), "servers past this build's lists, as the backend names them");
+        Check(GameIdentity.Read(Payload(1321)) is { Server: "Poetra" }, GameIdentity.ServerOf(1221).Server == "Gauss", GameIdentity.ServerOf(1306).Server == "Ariel", "the backend's name wins for the servers it lists; the others keep this build's");
+        Check(GameIdentity.ServerOf(2224).Server is null, GameIdentity.ServerOf(2204).Server == "Lumiel", "a name this build gives another place is not taken over by the backend");
+        Check(GameIdentity.ServerOf(1104).Server == "Fregion" && GameIdentity.ServerOf(1107).Server == "Kaisinel", "a place the backend renamed frees its old name for the place the backend gives it");
         GameIdentity.Learn([]);
-        Check(GameIdentity.ServerOf(1324).Server is null, GameIdentity.ServerOf(2325).Server is null, "a newer answer replaces the names");
+        Check(GameIdentity.ServerOf(1324).Server is null, GameIdentity.ServerOf(2325).Server is null, GameIdentity.ServerOf(1321).Server == "Gauss", "a newer answer replaces the names");
         Check(GameIdentity.Read(Payload(2004)) is { Region: null }, "unmapped region never guessed");
         Check(GameIdentity.Read(Payload(2304, "$tutorial")) is null, "placeholder character rejected");
         // Class ids are a structural check: 5 to 48, where the reference decoder maps 45 to 48 to the Brawler.
