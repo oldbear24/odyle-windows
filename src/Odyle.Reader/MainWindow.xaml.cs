@@ -60,10 +60,8 @@ public partial class MainWindow : Window
     // Room snapshots for the party list; serverOffset corrects this PC's clock for presence.
     private RoomSnapshot[] snapshots = [];
     private TimeSpan serverOffset;
-    private Task? partyRefresh;
-    private bool partyAgain;
-    // Rooms whose realtime news asked for their own snapshot only (RefreshRoomAsync).
-    private readonly HashSet<string> roomsAgain = new();
+    // Fetching the rooms and their snapshots, one fetch at a time (PartyRefreshQueue).
+    private readonly PartyRefreshQueue partyQueue;
     // Realtime news of the account and its rooms: the party, the rooms and the checklist
     // follow changes and heartbeats as they happen, and are fetched again when the
     // connection comes back and every five minutes in case news was missed. Without it they
@@ -137,6 +135,7 @@ public partial class MainWindow : Window
     {
         // Starting over also forgets where the named character was and the party it was in.
         attribution = new(publishDelay, () => { locations.Reset(); groups.Reset(); });
+        partyQueue = new(() => api, id => rooms.Any(r => r.Id == id), ApplyRoomsAsync, ApplySnapshots);
         updates = new(() => api, () => quitting, () => busy, card => { RenderUpdate(); if (card) RenderHero(); }, NotifyReady, Status, () => QuitAsync(restart: true));
         InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
         tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
@@ -852,7 +851,7 @@ public partial class MainWindow : Window
     }
     private void DropApi() { partyTimer.Stop(); realtime?.Dispose(); realtime = null; link.Drop(); NewConnection(); }
     // Forgets what the previous server answered and refused; the capture reads PvP only for an account that wants it.
-    private void NewConnection() { connection = new(); roomsKnown = null; if (capture is { } reading) reading.ReadPvp = PvpWanted; }
+    private void NewConnection() { connection = new(); partyQueue.NewConnection(); if (capture is { } reading) reading.ReadPvp = PvpWanted; }
     private void ShowAccount(string displayName)
     {
         accountName = displayName;
@@ -950,7 +949,7 @@ public partial class MainWindow : Window
             }
             // Changes to the account's rooms themselves (joining, sharing, renaming) also come as
             // news on its own topic, which fetches everything (ReloadOwnAsync).
-            await (news.Removed ? RefreshPartyAsync() : RefreshRoomAsync(roomId));
+            await (news.Removed ? RefreshPartyAsync() : partyQueue.RoomAsync(roomId));
             return;
         }
         // News for everyone: a changed announcement shows at once (a new warning also as a
@@ -1069,74 +1068,23 @@ public partial class MainWindow : Window
     }
 
     // ----- Rooms -----
-    // Read-only, so it runs beside reader operations without their lock. Rooms are
-    // reloaded too: sharing changed on the dashboard shows up here.
-    // A refresh asked for while one runs makes it run once more (partyAgain); the caller
-    // waits for that, so it always sees the party as the server has it now.
-    // known: the rooms answer the caller fetched a moment ago (ConnectAsync); the next whole refresh uses it
-    // instead of asking for the rooms again.
-    private Task RefreshPartyAsync(RoomsResponse? known = null) { partyAgain = true; if (known is not null) roomsKnown = known; return RunPartyRefreshAsync(); }
-    private RoomsResponse? roomsKnown;
-    // Realtime news of one room fetches only that room's snapshot. It joins the same queue as
-    // the whole party's refreshes: one fetch at a time, each asked for after the one before was
-    // applied, so an answer the server gave earlier can never replace one it gave later.
-    private Task RefreshRoomAsync(string roomId) { roomsAgain.Add(roomId); return RunPartyRefreshAsync(); }
-    private async Task RunPartyRefreshAsync()
+    // The party is fetched beside reader operations (PartyRefreshQueue); a caller waits until it shows the party as
+    // the server has it now. known: the rooms answer the caller fetched a moment ago (ConnectAsync).
+    private Task RefreshPartyAsync(RoomsResponse? known = null) => partyQueue.WholeAsync(known);
+    // The account's rooms and their snapshots, fetched for the connection that is still the window's.
+    private async Task ApplyRoomsAsync(RoomsResponse listed, FetchedSnapshot[] fetched)
     {
-        // A refresh that ended without doing what was asked (the account changed meanwhile) leaves it for the next.
-        while (partyRefresh is { IsCompleted: false } running) await running;
-        if (partyAgain || roomsAgain.Count > 0) await (partyRefresh = RefreshPartyNowAsync());
-    }
-    private async Task RefreshPartyNowAsync()
-    {
-        if (api is not { } current) return;
-        while (api == current && (partyAgain || roomsAgain.Count > 0))
-        {
-            try
-            {
-                if (partyAgain) await RefreshAllRoomsAsync(current);
-                else await RefreshSomeRoomsAsync(current);
-            }
-            // Connection problems are reported by the heartbeat; keep the last list.
-            catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { }
-        }
-    }
-    private async Task RefreshAllRoomsAsync(PartyApi current)
-    {
-        // This covers the rooms asked for alone too; news arriving meanwhile asks again.
-        partyAgain = false; roomsAgain.Clear();
-        var listed = roomsKnown ?? await current.GetRoomsAsync(); roomsKnown = null;
-        var fetched = await Task.WhenAll(listed.Rooms.Select(r => FetchSnapshotAsync(current, r.Id)));
-        if (api != current) return;
         rooms = listed.Rooms; odylePerCube = listed.OdylePerCube; clockRules = listed.Clock; maps = listed.Maps ?? [];
         snapshots = PartySnapshots.Merge(rooms, snapshots, fetched); if (PartySnapshots.ClockOffset(fetched) is { } offset) serverOffset = offset;
         await FollowNotificationsAsync(listed.Notifications); NoteReaderPause(listed.ReaderPaused); ShowAnnouncement(listed.Announcement);
         RenderRooms(); RenderParty(); RenderHero(); CheckReminders();
         if (realtime is { } listening) _ = listening.ListenAsync(RealtimeTopics.For(accountId, rooms));
     }
-    private async Task RefreshSomeRoomsAsync(PartyApi current)
+    // Some rooms' snapshots, fetched after realtime news of them.
+    private void ApplySnapshots(FetchedSnapshot[] fetched)
     {
-        var wanted = roomsAgain.ToArray(); roomsAgain.Clear();
-        // News of a room the list does not have yet (just joined) fetches the whole party.
-        if (!wanted.All(id => rooms.Any(r => r.Id == id))) { partyAgain = true; return; }
-        var fetched = await Task.WhenAll(wanted.Select(id => FetchSnapshotAsync(current, id)));
-        if (api != current) return;
         snapshots = PartySnapshots.Merge(rooms, snapshots, fetched); if (PartySnapshots.ClockOffset(fetched) is { } offset) serverOffset = offset;
-        // A room the server no longer shows the account changes its list of rooms.
-        if (fetched.Any(f => f.Gone)) partyAgain = true;
         RenderParty(); RenderHero(); CheckReminders();
-    }
-    // A room that fails or takes longer than the 12-second timeout keeps the snapshot it showed
-    // (PartySnapshots.Merge) instead of failing the whole party's refresh.
-    private static async Task<FetchedSnapshot> FetchSnapshotAsync(PartyApi current, string roomId)
-    {
-        try { var snapshot = await current.GetSnapshotAsync(roomId); return new(roomId, snapshot, DateTimeOffset.UtcNow); }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException)
-        {
-            var gone = error is HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.NotFound };
-            Log.Warn($"Room {roomId} could not be fetched{(gone ? "; the account no longer sees it" : "; it keeps what it showed")}: {error.Message}");
-            return new(roomId, null, DateTimeOffset.UtcNow, gone);
-        }
     }
     // The server's announcement above the reading card, as plain text. Hiding it lasts until the
     // text changes, across restarts too (preferences.json, odyle-dashboard#47); a new message also
@@ -2308,7 +2256,7 @@ public partial class MainWindow : Window
         // The pause is the server's: without a connection there is none.
         DropApi(); link.StopRetrying(); pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) { SessionStore.Clear(); link.Forget(); }
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
-        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
+        activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; partyQueue.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
         Status(message); RenderHero();
     }
