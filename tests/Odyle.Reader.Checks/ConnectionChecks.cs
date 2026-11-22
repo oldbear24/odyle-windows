@@ -64,6 +64,9 @@ static partial class ReaderChecks
         Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && window.Link.RetryTimer.IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
         await (Task)Call(window, "RestoreAsync")!;
         Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s"), "the next retry waits longer");
+        // The address box is editable while the saved pairing is retried: the dashboard links and diagnostics keep the pairing's server.
+        ((TextBox)settings.FindName("EndpointInput")).Text = "https://typed.example";
+        Check(((string)Call(window, "DiagnosticsReport")!).Contains("Account: paired · 127.0.0.1 · not reached yet") && window.Link.Endpoint == "http://127.0.0.1:1", "what is typed in the address box meanwhile is not the pairing's server");
         // Offline the character the game names is followed as online and its reading shown; both wait for the server.
         var offlineCapture = new PacketCapture(); Field("capture").SetValue(window, offlineCapture);
         Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });

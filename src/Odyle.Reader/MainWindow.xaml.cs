@@ -188,7 +188,8 @@ public partial class MainWindow : Window
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     public MainWindow() : this(true) { }
-    public MainWindow(bool enableTray)
+    // saved: the preferences App read at start (for the language), so they are read once; the checks read them here.
+    public MainWindow(bool enableTray, Preferences? saved = null)
     {
         // Starting over also forgets where the named character was and the party it was in.
         attribution = new(publishDelay, () => { locations.Reset(); groups.Reset(); });
@@ -252,7 +253,7 @@ public partial class MainWindow : Window
         clock.Start();
         if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged += Resumed;
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
-        preferences = PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
+        preferences = saved ?? PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
         settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetDiscordStatus(preferences.DiscordStatus, persist: false); SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
@@ -443,7 +444,7 @@ public partial class MainWindow : Window
         trayStatusItem.Text = state.Length > 60 ? state[..59] + "…" : state;
         readerItem.Text = capture is not null ? T("Stop reader") : T("Start reader");
         readerItem.Enabled = capture is not null || api is not null || Offline;
-        tasksItem.Checked = TasksPanel.Visibility == Visibility.Visible; tasksItem.Enabled = !compactMode;
+        tasksItem.Checked = TasksShown; tasksItem.Enabled = !compactMode;
         charactersItem.DropDownItems.Clear();
         var listed = ListedCharacters();
         foreach (var c in listed) charactersItem.DropDownItems.Add($"{c.CharacterName} · {CharacterDetail(c)}", null, (_, _) => Dispatcher.Invoke(ShowWindow));
@@ -923,7 +924,7 @@ public partial class MainWindow : Window
     private void ShowAccount(string displayName)
     {
         accountName = displayName;
-        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (ArgumentException) { host = T("server"); } catch (UriFormatException) { host = T("server"); }
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(ServerAddress)).Host; } catch (ArgumentException) { host = T("server"); } catch (UriFormatException) { host = T("server"); }
         settings.AccountDetail.Text = T("Signed in as {0} via Discord · {1}", accountName, host);
         RenderHero();
     }
@@ -1061,11 +1062,14 @@ public partial class MainWindow : Window
         RenderRooms(); RenderHero();
         return listed;
     }
+    // The server of the pairing (also while it is tried again), else what the settings' address box says before
+    // any pairing: the box is editable while a saved pairing is retried, so what is typed there is never used.
+    private string ServerAddress => link.Endpoint.Length > 0 ? link.Endpoint : settings.EndpointInput.Text;
     // The backend also serves the dashboard; "/" opens My rooms & characters. A page opens at its own
     // path once the server said it serves them (DashboardPages), else in the #/ form every server opens.
     private void OpenDashboard(string page)
     {
-        try { Process.Start(new ProcessStartInfo(DashboardPages.Url(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text), page, UsesPaths())) { UseShellExecute = true }); }
+        try { Process.Start(new ProcessStartInfo(DashboardPages.Url(ConnectionDetails.NormalizeEndpoint(ServerAddress), page, UsesPaths())) { UseShellExecute = true }); }
         catch (Exception error) { Status(T(error.Message)); }
     }
     // Whether the server serves the dashboard's pages at their own paths: asked once per connection
@@ -1374,7 +1378,7 @@ public partial class MainWindow : Window
         switch (action)
         {
             case "compact": ToggleCompact(); BringToFront(); break;
-            case "tasks": if (compactMode) SetCompact(false, persist: true); SetTasksShown(TasksPanel.Visibility != Visibility.Visible, persist: true); BringToFront(); break;
+            case "tasks": if (compactMode) SetCompact(false, persist: true); SetTasksShown(!TasksShown, persist: true); BringToFront(); break;
             case "reader": Reader_Click(this, new RoutedEventArgs()); break;
             case "dashboard": if (api is null && !Offline) { BringToFront(); OpenSettings(); } else OpenDashboard(""); break;
             case "settings": BringToFront(); OpenSettings(); break;
@@ -1481,7 +1485,7 @@ public partial class MainWindow : Window
         compactMode = on;
         Card.Visibility = on ? Visibility.Collapsed : Visibility.Visible; CompactPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         CardColumn.Width = new GridLength(on ? CompactStrip.Width : 280);
-        TasksPanel.Visibility = !on && settings.TasksToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        TasksPanel.Visibility = !on && preferences.ShowTasks ? Visibility.Visible : Visibility.Collapsed;
         RenderCompact(); Log.Info(on ? "Switched to compact mode." : "Switched back to the full card.");
     }
     private void Compact_Click(object sender, RoutedEventArgs e) => SetCompact(true, persist: true);
@@ -1582,16 +1586,19 @@ public partial class MainWindow : Window
         settings.HotkeyProblemLabel.Text = hotkeyProblem; settings.HotkeyProblemLabel.Visibility = hotkeyProblem.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         CompactButton.ToolTip = CompactStrip.Parse(hotkey) is null || hotkeyProblem.Length > 0 ? T("Compact mode · your Odyle and your party's, nothing else") : T("Compact mode · your Odyle and your party's, nothing else ({0})", hotkey);
     }
-    // The checklist opens beside the card; the window grows to the right.
+    // The checklist opens beside the card; the window grows to the right. Whether it is shown is the preference
+    // (compact mode hides it meanwhile); the panel, the toggles and the tray item follow it.
+    private bool TasksShown => preferences.ShowTasks && !compactMode;
     private void SetTasksShown(bool on, bool persist)
     {
+        preferences = preferences with { ShowTasks = on };
         TasksPanel.Visibility = on && !compactMode ? Visibility.Visible : Visibility.Collapsed; settings.TasksToggle.IsChecked = on;
         TasksButton.Foreground = Brush(on ? "Mint" : "Muted");
         TasksButton.ToolTip = on ? T("Hide the daily & weekly tasks") : T("Show your daily & weekly tasks beside the card");
-        if (persist) PreferencesStore.Save(preferences = preferences with { ShowTasks = on });
+        if (persist) PreferencesStore.Save(preferences);
         RenderTasks(); if (on) _ = RefreshTasksAsync();
     }
-    private void Tasks_Click(object sender, RoutedEventArgs e) => SetTasksShown(TasksPanel.Visibility != Visibility.Visible, persist: true);
+    private void Tasks_Click(object sender, RoutedEventArgs e) => SetTasksShown(!TasksShown, persist: true);
     private void ManageTasks_Click(object sender, RoutedEventArgs e) => OpenDashboard("/tasks");
     // Growing (the checklist opened, a longer party list) must not push the window off its screen.
     private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1688,7 +1695,7 @@ public partial class MainWindow : Window
         try { var found = PacketCapture.Adapters(); adapters = found.Length + (found.Length > 0 ? " · " + string.Join("; ", found) : ""); }
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { adapters = "unavailable · " + error.Message; }
         var npcap = !Npcap.Probe() ? "not found" : $"installed{(Npcap.Version() is { } version ? " " + version : "")}{(Npcap.Restricted() ? " · administrators only" : "")}";
-        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (Exception error) when (error is ArgumentException or UriFormatException) { host = "unknown server"; }
+        string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(ServerAddress)).Host; } catch (Exception error) when (error is ArgumentException or UriFormatException) { host = "unknown server"; }
         var account = api is not null ? $"paired · {host} · {(realtime?.IsConnected == true ? "realtime" : "polling")}" : link.RetryAt is not null ? $"paired · {host} · not reached yet" : "not paired";
         var reader = capture is { } running ? $"running · {readerState} · {running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game" : $"stopped · {readerState}";
         return Diagnostics.Report(DateTimeOffset.Now, [
@@ -1738,7 +1745,7 @@ public partial class MainWindow : Window
     // ticking them off happens here. Read-only against the reader's lock, like the party.
     private async Task RefreshTasksAsync()
     {
-        if (api is not { } current || TasksPanel.Visibility != Visibility.Visible || refreshingTasks) return;
+        if (api is not { } current || !TasksShown || refreshingTasks) return;
         refreshingTasks = true;
         try { var listed = await current.GetTasksAsync(); if (api == current) ApplyTasks(listed); }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException) { if (api == current) { tasksProblem = T(error.Message); RenderTasks(); } }
@@ -1796,7 +1803,7 @@ public partial class MainWindow : Window
     // Every second while the panel is open: the countdowns tick and a reset clears the ticks.
     private void TickTasks()
     {
-        if (TasksPanel.Visibility != Visibility.Visible || api is null || TaskGroups.ItemsSource is not TaskGroup[] groups) return;
+        if (!TasksShown || api is null || TaskGroups.ItemsSource is not TaskGroup[] groups) return;
         var now = DateTimeOffset.UtcNow + serverOffset;
         if (Checklist.PeriodStart("daily", now, resets) != renderedDaily || Checklist.PeriodStart("weekly", now, resets) != renderedWeekly) { RenderTasks(); return; }
         foreach (var group in groups) group.Reset = ResetIn(group.Cadence, now);
