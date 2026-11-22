@@ -75,6 +75,8 @@ public sealed class PacketCapture : IAsyncDisposable
             return handle;
         });
     }
+    // The signatures Npcap has always been called with: other string marshalling would change what reaches it.
+#pragma warning disable CA2101, CA1838
     [DllImport("kernel32", CharSet = CharSet.Unicode, EntryPoint = "LoadLibraryExW")] private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_findalldevs(out IntPtr devices, StringBuilder error);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern void pcap_freealldevs(IntPtr devices);
@@ -86,6 +88,7 @@ public sealed class PacketCapture : IAsyncDisposable
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_setfilter(IntPtr handle, ref Filter filter);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern void pcap_freecode(ref Filter filter);
     [DllImport("iphlpapi")] private static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool sorted, int family, int tableClass, uint reserved);
+#pragma warning restore CA2101, CA1838
 
     // Fails at once without Npcap or without any interface, so the window can say so;
     // after that the supervisor only adds, re-opens and restarts.
@@ -411,6 +414,7 @@ public sealed class PacketCapture : IAsyncDisposable
     // A worker that ended without being asked to is opened again after 5 s, then 10, 20,
     // 40 and at most 60 seconds while it keeps failing; a minute of capturing resets that.
     // Only the first failure of a series is logged.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "A private helper; its parameters follow the capture loop that calls it.")]
     private static void Stopped(string name, Worker worker, CancellationToken token, string reason)
     {
         if (token.IsCancellationRequested) return;

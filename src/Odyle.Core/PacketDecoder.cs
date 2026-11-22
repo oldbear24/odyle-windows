@@ -5,6 +5,7 @@ using K4os.Compression.LZ4;
 namespace Odyle.Core;
 
 // Bounded, receive-only TCP reassembly. Gaps never become guessed bytes.
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711", Justification = "It reassembles one TCP stream; it is not a System.IO.Stream, and the decoder's names stay as they are.")]
 public sealed class TcpReceiveStream
 {
     // Held segments are bounded by their bytes (PendingLimit); the count limit only guards

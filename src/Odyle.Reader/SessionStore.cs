@@ -14,8 +14,11 @@ public static class SessionStore
     // Checks point this at a temporary file so they never touch the user's pairing.
     public static string FilePath { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "session.bin");
     [StructLayout(LayoutKind.Sequential)] private struct Blob { public int Size; public IntPtr Data; }
+    // Saved sessions were protected with this signature; it stays as it is (CA2101).
+#pragma warning disable CA2101
     [DllImport("crypt32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CryptProtectData(ref Blob input, string description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, out Blob output);
+#pragma warning restore CA2101
     [DllImport("crypt32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CryptUnprotectData(ref Blob input, IntPtr description, IntPtr entropy, IntPtr reserved, IntPtr prompt, int flags, out Blob output);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr pointer);

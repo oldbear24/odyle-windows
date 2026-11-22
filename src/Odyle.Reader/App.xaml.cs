@@ -9,6 +9,7 @@ using System.Windows.Markup;
 using System.Windows.Threading;
 using Odyle.Core;
 namespace Odyle.Reader;
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "The application lives as long as the process; its handles are released when it ends (Release, from OnExit and Restart).")]
 public partial class App : System.Windows.Application
 {
     // The UI checks build the application beside a possibly running Odyle; they skip

@@ -52,6 +52,7 @@ public sealed class OneAtATime(string adapterRefused, string refusedLog, string 
 // (UseApi) and replaced when it drops it (DropApi), so a reset is one assignment and nothing one server
 // said carries over to the next, also when this PC pairs with another server without a restart (#92).
 // A new publisher session on the same connection (ReconnectAsync) keeps it.
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1051", Justification = "A plain bag of per-connection state that the window and the checks read and set in place.")]
 public sealed class ConnectionState
 {
     // Location sharing (an opt-in on the dashboard): the newest position waits while one is on its way.

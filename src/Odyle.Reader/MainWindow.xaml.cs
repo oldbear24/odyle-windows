@@ -20,6 +20,7 @@ using static Odyle.Core.Localizer;
 using Forms = System.Windows.Forms;
 
 namespace Odyle.Reader;
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "A WPF window is not disposed; quitting disposes what it owns (QuitAsync).")]
 public partial class MainWindow : Window
 {
     private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem, Paused }
