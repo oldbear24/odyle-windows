@@ -41,8 +41,12 @@ public static class Updater
     public static string Staging { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "updates");
     // Why the last automatic installation at start did not happen, shown in settings.
     public static string? LastFailure { get; set; }
-    private const long PackageLimit = 512L * 1024 * 1024;
-    private static readonly HttpClient Http = new(new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }) { Timeout = Timeout.InfiniteTimeSpan };
+    // The largest package a download takes; the checks lower it.
+    public static long PackageLimit { get; set; } = 512L * 1024 * 1024;
+    private static HttpClient Http = NewClient(new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }, disposeHandler: true);
+    // The checks pass a handler that answers like GitHub, as PartyApi takes one; the app always uses the network.
+    public static void UseHandler(HttpMessageHandler handler) => Http = NewClient(handler, disposeHandler: false);
+    private static HttpClient NewClient(HttpMessageHandler handler, bool disposeHandler) => new(handler, disposeHandler) { Timeout = Timeout.InfiniteTimeSpan };
 
     // The newest published release, whatever its version; null when there is none yet.
     public static async Task<AppRelease?> FetchLatestAsync(CancellationToken token)
