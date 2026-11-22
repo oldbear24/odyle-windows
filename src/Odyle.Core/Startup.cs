@@ -7,6 +7,8 @@ public static class StartupCommand
     public const string ValueName = "Odyle", TrayArgument = "--tray";
     // The uninstaller runs "<Odyle.exe>" --unpair when asked to disconnect this PC: no window opens.
     public const string UnpairArgument = "--unpair";
+    // It runs "<Odyle.exe>" --quit on every uninstall: a running Odyle closes so its files can be removed.
+    public const string QuitArgument = "--quit";
     // "<Odyle.exe>" --decoder-trace: the patch-day trace (DecoderTrace), started by hand after a game patch.
     public const string TraceArgument = "--decoder-trace";
     // "<Odyle.exe>" --build-info <file>: the publish script asks a fresh package what it is (BuildInfo) and
@@ -39,6 +41,7 @@ public static class StartupCommand
     }
     public static bool InTray(IEnumerable<string> args) => args.Any(a => string.Equals(a, TrayArgument, StringComparison.OrdinalIgnoreCase));
     public static bool Unpairs(IEnumerable<string> args) => args.Any(a => string.Equals(a, UnpairArgument, StringComparison.OrdinalIgnoreCase));
+    public static bool Quits(IEnumerable<string> args) => args.Any(a => string.Equals(a, QuitArgument, StringComparison.OrdinalIgnoreCase));
     public static bool Traces(IEnumerable<string> args) => args.Any(a => string.Equals(a, TraceArgument, StringComparison.OrdinalIgnoreCase));
     // The file --build-info writes to, or null without the argument (or without a file after it).
     public static string? BuildInfoPath(IReadOnlyList<string> args)

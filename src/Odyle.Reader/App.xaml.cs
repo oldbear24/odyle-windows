@@ -48,7 +48,15 @@ public partial class App : System.Windows.Application
         TaskScheduler.UnobservedTaskException += (_, args) => { Log.Error("Unobserved task exception", args.Exception); args.SetObserved(); };
         // --tray (Start with Windows) opens only the tray icon.
         var tray = StartupCommand.InTray(accepted); var user = WindowsIdentity.GetCurrent().User!.Value;
-        // The uninstaller waits for --unpair to end, so it ends whatever goes wrong, without a message box.
+        // The uninstaller runs --quit before it removes the files, whatever the pairing and also when it
+        // runs silently; it waits for --quit and --unpair to end, so they end whatever goes wrong, without a message box.
+        if (StartupCommand.Quits(accepted))
+        {
+            try { Log.Info("Closing a running Odyle (--quit)."); QuitRunning(user); }
+            catch (Exception error) { Log.Error("Closing a running Odyle failed (--quit)", error); }
+            finally { Shutdown(); }
+            return;
+        }
         if (StartupCommand.Unpairs(accepted))
         {
             try { Unpair(user); }
@@ -83,7 +91,7 @@ public partial class App : System.Windows.Application
     }
     private void StartWindow(System.Collections.Generic.IReadOnlyList<string> accepted, bool tray, string user, string? pairLink, string? action)
     {
-        Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
+        Updater.CleanUp(); Autostart.Repair();
         if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
         var window = new MainWindow(); MainWindow = window;
         // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
@@ -126,20 +134,7 @@ public partial class App : System.Windows.Application
     private static void Unpair(string user)
     {
         Log.Info("Disconnecting this PC from its account (--unpair).");
-        try
-        {
-            if (EventWaitHandle.TryOpenExisting("Local\\Odyle-Quit-" + user, out var quit))
-            {
-                using (quit) quit.Set();
-                using var running = new Mutex(false, "Local\\Odyle-" + user);
-                try { if (running.WaitOne(TimeSpan.FromSeconds(15))) running.ReleaseMutex(); else Log.Warn("The running Odyle did not quit within 15 seconds."); }
-                catch (AbandonedMutexException) { running.ReleaseMutex(); }
-            }
-        }
-        catch (Exception error) when (error is UnauthorizedAccessException or WaitHandleCannotBeOpenedException or System.IO.IOException)
-        {
-            Log.Warn("The running Odyle could not be asked to quit: " + error.Message);
-        }
+        QuitRunning(user);
         var saved = SessionStore.Load(out _);
         if (saved is null) { Log.Info("No pairing is saved on this PC."); return; }
         try
@@ -154,12 +149,52 @@ public partial class App : System.Windows.Application
         }
         SessionStore.Clear();
     }
-    // Builds before the global-reference-v2 decoder kept stat owner ids in stat-owners.json. Odyle
-    // is now read by its resource id, so the file is no longer used and is removed.
-    private static void ForgetStatOwners()
+    // Asks a running Odyle of this user to quit (it marks its reading stale) and waits until it ended,
+    // so the uninstaller can remove its files. An Odyle from this folder still running 10 seconds after
+    // it let go of the single-instance guard (or after 15 seconds without an answer) is ended: an
+    // uninstall must not leave its executable running and locked.
+    private static void QuitRunning(string user)
     {
-        try { System.IO.File.Delete(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "stat-owners.json")); }
-        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException) { }
+        try
+        {
+            if (EventWaitHandle.TryOpenExisting("Local\\Odyle-Quit-" + user, out var quit))
+            {
+                using (quit) quit.Set();
+                using var running = new Mutex(false, "Local\\Odyle-" + user);
+                try { if (running.WaitOne(TimeSpan.FromSeconds(15))) running.ReleaseMutex(); else Log.Warn("The running Odyle did not quit within 15 seconds."); }
+                catch (AbandonedMutexException) { running.ReleaseMutex(); }
+            }
+        }
+        catch (Exception error) when (error is UnauthorizedAccessException or WaitHandleCannotBeOpenedException or System.IO.IOException)
+        {
+            Log.Warn("The running Odyle could not be asked to quit: " + error.Message);
+        }
+        foreach (var process in SameExecutable())
+            using (process)
+                try
+                {
+                    if (process.WaitForExit(TimeSpan.FromSeconds(10))) continue;
+                    Log.Warn($"The running Odyle (process {process.Id}) did not end; it is ended now.");
+                    process.Kill(); process.WaitForExit(TimeSpan.FromSeconds(5));
+                }
+                catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+                {
+                    Log.Warn($"The running Odyle (process {process.Id}) could not be ended: {error.Message}");
+                }
+    }
+    // The other running processes of this very executable; an Odyle started from another folder is left alone.
+    private static System.Collections.Generic.List<System.Diagnostics.Process> SameExecutable()
+    {
+        var found = new System.Collections.Generic.List<System.Diagnostics.Process>();
+        if (Environment.ProcessPath is not { } self) return found;
+        foreach (var process in System.Diagnostics.Process.GetProcessesByName(System.IO.Path.GetFileNameWithoutExtension(self)))
+        {
+            var keep = false;
+            try { keep = process.Id != Environment.ProcessId && string.Equals(process.MainModule?.FileName, self, StringComparison.OrdinalIgnoreCase); }
+            catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+            if (keep) found.Add(process); else process.Dispose();
+        }
+        return found;
     }
     // This start came from the user, so it may hand the foreground on to the running Odyle.
     private static void ShowRunning(string user)

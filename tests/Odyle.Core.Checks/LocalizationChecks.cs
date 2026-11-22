@@ -49,17 +49,17 @@ static class LocalizationChecks
         foreach (var (key, forms) in Czech.Plurals) foreach (var form in forms) Check(Holes(key.Split('|')[1]) == Holes(form), "placeholders of " + key);
         // The Windows display language decides unless settings chose one; plurals follow Czech rules.
         var czech = CultureInfo.GetCultureInfo("cs-CZ"); var german = CultureInfo.GetCultureInfo("de-DE");
-        Check(Localizer.Resolve(null, czech) == "cs" && Localizer.Resolve("auto", german) == "en" && Localizer.Resolve("en", czech) == "en" && Localizer.Resolve("cs", german) == "cs", "language resolution");
+        Check(Localizer.Resolve(null, czech) == "cs", Localizer.Resolve("auto", german) == "en", Localizer.Resolve("en", czech) == "en", Localizer.Resolve("cs", german) == "cs", "language resolution");
         try
         {
             Localizer.Use("cs", german, german);
-            Check(Localizer.Culture.Name == "cs-CZ" && Localizer.T("Connecting to your account…") == "Připojuji se k tvému účtu…" && Localizer.T("Not a known text") == "Not a known text", "Czech lookup falls back to English");
+            Check(Localizer.Culture.Name == "cs-CZ", Localizer.T("Connecting to your account…") == "Připojuji se k tvému účtu…", Localizer.T("Not a known text") == "Not a known text", "Czech lookup falls back to English");
             Check(new[] { 1, 2, 4, 5, 0, 21 }.Select(n => Localizer.Tn(n, "{0} cube", "{0} cubes")).SequenceEqual(["1 kostka", "2 kostky", "4 kostky", "5 kostek", "0 kostek", "21 kostek"]), "Czech plurals");
             Check(Localizer.T("Offline · {0:N0} Odyle read here, sent when the server is back.", 12345) == "Offline · 12 345 Odyle přečteno tady, odešle se, až bude server zpět.", "numbers follow the Czech format");
             Localizer.Use("auto", CultureInfo.GetCultureInfo("en-US"), CultureInfo.GetCultureInfo("en-US"));
-            Check(Localizer.Language == "en" && Localizer.Culture.Name == "en-US" && Localizer.Tn(1, "{0} cube", "{0} cubes") == "1 cube" && Localizer.Tn(2, "{0} cube", "{0} cubes") == "2 cubes", "English keeps the regional format");
+            Check(Localizer.Language == "en", Localizer.Culture.Name == "en-US", Localizer.Tn(1, "{0} cube", "{0} cubes") == "1 cube", Localizer.Tn(2, "{0} cube", "{0} cubes") == "2 cubes", "English keeps the regional format");
             Localizer.Use("en", czech, czech); Check(Localizer.Culture.Name == "en-GB", "English on a Czech PC formats like the dashboard's English");
-            Check(Localizer.Wait(TimeSpan.FromSeconds(14.2)) == "15 s" && Localizer.Wait(TimeSpan.FromMinutes(5)) == "5 min" && Localizer.Wait(TimeSpan.Zero) == "1 s", "short waits");
+            Check(Localizer.Wait(TimeSpan.FromSeconds(14.2)) == "15 s", Localizer.Wait(TimeSpan.FromMinutes(5)) == "5 min", Localizer.Wait(TimeSpan.Zero) == "1 s", "short waits");
         }
         finally { Localizer.Use("en"); }
         Console.WriteLine($"Czech translations for {seen} texts, placeholders, language choice and plurals passed.");
@@ -70,5 +70,4 @@ static class LocalizationChecks
             if (Directory.Exists(Path.Combine(directory.FullName, "src", "Odyle.Reader"))) return directory.FullName;
         throw new Exception("Localization check: the repository root was not found.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Localization check failed: " + message); }
 }
