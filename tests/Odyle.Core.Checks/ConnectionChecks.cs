@@ -92,6 +92,7 @@ static class ConnectionChecks
             Check(signIn.RootElement.GetProperty("deviceKey").GetString() == "key", signIn.RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, "device sign-in names this PC");
         }
 
+        await SignInChecks();
         // A PC removed on the dashboard: its session request answers 401, the sign-in with the
         // forgotten key answers 401 too, and the pairing ends instead of looping.
         var removed = new Stub((route, _) => Answer(HttpStatusCode.Unauthorized, """{"status":401,"message":"This PC is no longer paired with an account."}"""));
@@ -196,6 +197,20 @@ static class ConnectionChecks
             Parallel.For(0, 200, i => log.Write("INFO", $"line {i:000} " + new string('x', 40)));
             var current = File.ReadAllLines(log.FilePath); var previous = File.ReadAllLines(log.PreviousPath);
             Check(new FileInfo(log.FilePath).Length <= 4096, Directory.GetFiles(folder).Length == 2, current.Concat(previous).All(l => l.Contains(" INFO  line ") && l.EndsWith(new string('x', 40))), "the log rotates into one previous file without torn lines");
+            // Another program holding the previous file blocks the rotation: the line is written anyway, and
+            // the rotation waits a minute instead of being tried before every line.
+            var held = new RotatingLog(Path.Combine(folder, "held.log"), limit: 600);
+            while (!File.Exists(held.FilePath) || new FileInfo(held.FilePath).Length < 520) held.Write("INFO", "filler");
+            File.WriteAllText(held.PreviousPath, "previous");
+            using (new FileStream(held.PreviousPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                held.Write("INFO", "written while the previous file is held " + new string('z', 40));
+                Check(File.ReadAllText(held.FilePath).Contains("written while the previous file is held"), new FileInfo(held.FilePath).Length > 600, "a blocked rotation still writes the line");
+            }
+            held.Write("INFO", "after the previous file was let go");
+            Check(File.ReadAllText(held.PreviousPath) == "previous", File.ReadAllText(held.FilePath).Contains("after the previous file was let go"), "a blocked rotation is not tried again at once");
+            new RotatingLog(held.FilePath, limit: 600).Write("INFO", "a fresh start rotates");
+            Check(File.ReadAllText(held.PreviousPath).Contains("written while the previous file is held"), File.ReadAllLines(held.FilePath).Single().EndsWith("a fresh start rotates"), "the rotation works again once the file is free");
             const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InUiLCJ0eXBlIjoiYXV0aCJ9.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
             var redacted = RotatingLog.Redact($"token {jwt} key q8Wm2Lz0Pa9XcV4bN7kR1tY6uI3oE5sD8fG2hJ0kL4zX7cV9 link https://party.example/#odyle-pair=ABCDEFGH23456789 code ABCD-EFGH-2345-6789 Authorization: Bearer abc.def");
             Check(!redacted.Contains("eyJ") && !redacted.Contains("q8Wm2") && !redacted.Contains("ABCDEFGH23456789") && !redacted.Contains("ABCD-EFGH") && !redacted.Contains("abc.def") && redacted.Contains("[token]") && redacted.Contains("[secret]") && redacted.Contains("odyle-pair=[code]"), "tokens, device keys and pairing codes never reach the log");
@@ -207,5 +222,84 @@ static class ConnectionChecks
         }
         finally { Directory.Delete(folder, true); }
         Console.WriteLine("Failure bodies, 429 pause with Retry-After, renewal without loops, ended pairings, device names, dashboard links, retry schedule, log rotation and redaction passed.");
+    }
+    const string Own401 = """{"status":401,"message":"The request requires valid record authorization token."}""";
+    // The realtime subscription renews like any request; two requests that meet an expired token at
+    // once share one sign-in; and the notification settings go out whole.
+    static async Task SignInChecks()
+    {
+        // SubscribeAsync: a 401 signs in once with the device key and subscribes again with the fresh token.
+        var expired = true;
+        var realtime = new Stub((route, _) =>
+        {
+            if (route == "/api/odyle/desktop-sign-in") { expired = false; return Answer(HttpStatusCode.OK, Auth); }
+            return expired ? Answer(HttpStatusCode.Unauthorized, Own401) : new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        using (var api = new PartyApi("https://party.example", "old", "key", realtime))
+        {
+            await api.SubscribeAsync("client", ["odyle.room.r", "odyle.account.u"]);
+            Check(realtime.Requests.Select(r => r.Route).SequenceEqual(["/api/realtime", "/api/odyle/desktop-sign-in", "/api/realtime"]), realtime.Requests[2].Token == "fresh", api.Token == "fresh", "a subscription answered 401 signs in once and subscribes again");
+            Check(realtime.Requests[2].Body == """{"clientId":"client","subscriptions":["odyle.room.r","odyle.account.u"]}""", "the subscription names the connection and its topics: " + realtime.Requests[2].Body);
+        }
+        // Without a device key there is nothing to sign in with: the 401 is the answer.
+        var keyless = new Stub((_, _) => Answer(HttpStatusCode.Unauthorized, Own401));
+        using (var api = new PartyApi("https://party.example", "old", null, keyless))
+        {
+            try { await api.SubscribeAsync("client", ["odyle.room.r"]); throw new Exception("Connection check failed: a refused subscription was accepted."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.Unauthorized, keyless.Requests.Count == 1, !api.PairingEnded, "a subscription without a device key fails with its 401 and signs in nowhere"); }
+        }
+        // A sign-in the server refuses ends the pairing, and the next subscription reaches nothing.
+        var refused = new Stub((_, _) => Answer(HttpStatusCode.Unauthorized, Own401));
+        using (var api = new PartyApi("https://party.example", "old", "key", refused))
+        {
+            try { await api.SubscribeAsync("client", ["odyle.room.r"]); throw new Exception("Connection check failed: a subscription with a refused sign-in was accepted."); }
+            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { }
+            try { await api.SubscribeAsync("client", ["odyle.room.r"]); throw new Exception("Connection check failed: an ended pairing subscribed."); }
+            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { }
+            Check(refused.Requests.Select(r => r.Route).SequenceEqual(["/api/realtime", "/api/odyle/desktop-sign-in"]), api.PairingEnded, "a refused sign-in ends the pairing, and an ended pairing subscribes to nothing");
+        }
+
+        // Two requests meet the expired token at once: the second waits for the first one's sign-in.
+        var signIns = 0; var refusals = 0; var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shared = new AsyncStub(async (route, token) =>
+        {
+            if (route == "/api/odyle/desktop-sign-in") { Interlocked.Increment(ref signIns); await released.Task; return Answer(HttpStatusCode.OK, Auth); }
+            if (token == "fresh") return Answer(HttpStatusCode.OK, route == "/api/odyle/rooms" ? """{"rooms":[],"odylePerCube":40}""" : """{"items":[]}""");
+            // Once both were refused, the sign-in answers a moment later: by then both asked for it.
+            if (Interlocked.Increment(ref refusals) == 2) _ = Task.Delay(300).ContinueWith(_ => released.TrySetResult());
+            return Answer(HttpStatusCode.Unauthorized, Own401);
+        });
+        using (var api = new PartyApi("https://party.example", "old", "key", shared))
+        {
+            var renewed = new List<string>(); api.SignedIn += auth => { lock (renewed) renewed.Add(auth.Token); };
+            var both = Task.WhenAll(api.GetRoomsAsync(), api.GetCharactersAsync());
+            if (await Task.WhenAny(both, Task.Delay(10_000)) != both) throw new Exception("Connection check failed: two requests waiting for one sign-in never finished.");
+            await both;
+            Check(signIns == 1, shared.Requests.Count(r => r.Token == "fresh") == 2, api.Token == "fresh", "two requests refused at once share one sign-in and are both repeated with its token");
+            Check(renewed.Count == 2 && renewed.All(t => t == "fresh"), "both callers hear the shared sign-in's answer");
+        }
+
+        // The notification settings are saved whole, with the defaults filled in.
+        var saved = new Stub((_, _) => Answer(HttpStatusCode.OK, """{"notifications":{"channels":{"tray":false,"browser":true,"push":true},"leadMinutes":[15],"kinds":{"runs":true,"cap":false},"saved":true}}"""));
+        using (var api = new PartyApi("https://party.example", "token", "key", saved))
+        {
+            var answer = await api.SaveNotificationsAsync(NotificationSettings.Default with { Channels = new(Tray: false) });
+            Check(saved.Requests.Single().Route == "/api/odyle/notifications", answer is { Saved: true, RunsInTray: false }, "the saved settings come back as the server keeps them");
+            Check(saved.Requests[0].Body == """{"channels":{"tray":false,"browser":true,"push":true},"leadMinutes":[15],"kinds":{"runs":true,"cap":false,"tasks":null,"ready":null},"capTicks":1,"quiet":{"from":"","to":"","timeZone":""}}""", "the notification settings go out whole: " + saved.Requests[0].Body);
+            saved.Requests.Clear();
+            await api.SaveNotificationsAsync(new NotificationSettings(LeadMinutes: [60, 5], Kinds: new(Cap: true, Tasks: false), Quiet: new("22:00", "07:00", "Europe/Prague"), CapTicks: 0));
+            using var body = JsonDocument.Parse(saved.Requests.Single().Body); var root = body.RootElement;
+            Check(root.GetProperty("leadMinutes").EnumerateArray().Select(e => e.GetInt32()).SequenceEqual([60, 5]), root.GetProperty("kinds").GetProperty("cap").GetBoolean() && !root.GetProperty("kinds").GetProperty("tasks").GetBoolean(), root.GetProperty("capTicks").GetInt32() == 0 && root.GetProperty("quiet").GetProperty("timeZone").GetString() == "Europe/Prague", "chosen leads, kinds, cap ticks and quiet hours are sent as chosen");
+        }
+    }
+    sealed class AsyncStub(Func<string, string?, Task<HttpResponseMessage>> answer) : HttpMessageHandler
+    {
+        public readonly System.Collections.Concurrent.ConcurrentQueue<(string Route, string? Token)> Requests = new();
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var route = request.RequestUri!.AbsolutePath; var bearer = request.Headers.Authorization?.Parameter;
+            Requests.Enqueue((route, bearer));
+            return answer(route, bearer);
+        }
     }
 }
