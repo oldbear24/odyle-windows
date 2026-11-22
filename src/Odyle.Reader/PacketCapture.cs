@@ -207,9 +207,9 @@ public sealed class PacketCapture : IAsyncDisposable
         }
         // About a minute without the game's connection while AION2 runs: the connection table
         // may say why (an accelerator, other ports). Looking lists every process, so it is
-        // done again after 15 seconds, then less often while the answer stays the same: 30 s,
-        // 1, 2 and at most 5 minutes. Another answer, or the connection coming or going, starts
-        // over at 15 seconds.
+        // done again after 15 seconds, then less often while the answer stays the same: after
+        // 30 s, then every minute, so a reason still shows within a minute of the game starting.
+        // Another answer, or the connection coming or going, starts over at 15 seconds.
         if (connected || now < explainAt) return;
         var reason = ExplainMissingConnection();
         explainEvery = reason == explained ? TimeSpan.FromTicks(Math.Min(explainEvery.Ticks * 2, ExplainAtMost.Ticks)) : ExplainFirst;
@@ -218,7 +218,7 @@ public sealed class PacketCapture : IAsyncDisposable
         explained = reason;
         Status?.Invoke(CaptureStatus.Waiting, reason ?? T("Waiting for the AION2 game connection…"));
     }
-    private static readonly TimeSpan ExplainAfter = TimeSpan.FromMinutes(1), ExplainFirst = TimeSpan.FromSeconds(15), ExplainAtMost = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ExplainAfter = TimeSpan.FromMinutes(1), ExplainFirst = TimeSpan.FromSeconds(15), ExplainAtMost = TimeSpan.FromMinutes(1);
     private TimeSpan explainEvery = ExplainFirst;
     private DateTimeOffset explainAt;
     private string? explained;
@@ -385,9 +385,11 @@ public sealed class PacketCapture : IAsyncDisposable
             {
                 if (DateTimeOffset.UtcNow >= nextRefresh) { nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = CurrentFlows(immediate: false); owners.Keep(flows); streams.Maintain(flows, DateTimeOffset.UtcNow); }
                 // Blocking: 0 means the read timeout passed without a packet, so the loop still sees
-                // a stop and refreshes the connections while nothing arrives.
+                // a stop and refreshes the connections while nothing arrives. An adapter that answers
+                // 0 at once instead of waiting would spin a core, so such an answer waits 50 ms.
+                var asked = Environment.TickCount64;
                 var received = pcap_next_ex(handle, out var header, out var pointer);
-                if (received == 0) continue;
+                if (received == 0) { if (Environment.TickCount64 - asked < 20) Thread.Sleep(50); continue; }
                 if (received < 0) throw new InvalidOperationException("Packet capture disconnected.");
                 Interlocked.Increment(ref receivedPackets);
                 var length = Marshal.ReadInt32(header, 8);

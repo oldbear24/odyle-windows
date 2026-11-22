@@ -182,6 +182,15 @@ end;
 // (An AppMutex would only detect a running Odyle: it asks the user to close it, and a silent
 // uninstall would stop there. The app's own mutex carries the user's SID, which Inno Setup
 // cannot name, while the installed Odyle.exe knows it.)
+// An Odyle.exe older than 0.37.0 does not know --quit and would start as usual, which the
+// uninstaller would then wait for; its file version (major << 16 or minor) says which it is.
+function KnowsQuit(Path: String): Boolean;
+var
+  VersionMS, VersionLS: Cardinal;
+begin
+  Result := GetVersionNumbers(Path, VersionMS, VersionLS) and (VersionMS >= 37);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
@@ -191,7 +200,7 @@ begin
     if not UninstallSilent and FileExists(ExpandConstant('{localappdata}\Odyle\session.bin')) then
       if MsgBox(CustomMessage('UnpairPrompt'), mbConfirmation, MB_YESNO) = IDYES then
         Exec(ExpandConstant('{app}\Odyle.exe'), '--unpair', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    if FileExists(ExpandConstant('{app}\Odyle.exe')) then
+    if FileExists(ExpandConstant('{app}\Odyle.exe')) and KnowsQuit(ExpandConstant('{app}\Odyle.exe')) then
       Exec(ExpandConstant('{app}\Odyle.exe'), '--quit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Odyle');
   end;

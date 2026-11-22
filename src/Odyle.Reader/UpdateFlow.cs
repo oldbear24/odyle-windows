@@ -144,6 +144,9 @@ internal sealed class UpdateFlow
     // quitting waits for it.
     internal async Task InstallAsync(bool automatic)
     {
+        // A build that has just updated proves itself first (about 30 s, App's ConfirmStart): installing
+        // over it sooner would keep an unproven build as the one a failed start rolls back to.
+        while (automatic && Updater.StartPending && !quitting()) await Task.Delay(TimeSpan.FromSeconds(1));
         if (Staged is not { } update || quitting() || Installing || (busy() && !automatic)) return;
         Log.Info($"Installing Odyle {update.Version}{(UpdateNow ? " as the server's operators asked" : automatic ? " found at start" : "")} and restarting.");
         Installing = true;
