@@ -250,24 +250,4 @@ static class GroupChecks
         return [3, slot, .. entityBytes, 0, 9, 0, 9, 36, .. id, .. U64(character), (byte)text.Length, .. text, 24, 0, 0, 0, .. new byte[24], 7, 6, .. "Legion"u8, 2, 0, 0, 0];
     }
     static byte[] U64(ulong value) { var b = new byte[8]; BinaryPrimitives.WriteUInt64LittleEndian(b, value); return b; }
-    static byte[] Identity(ulong id, string name)
-    {
-        var text = Encoding.UTF8.GetBytes(name); var tail = new byte[6]; BinaryPrimitives.WriteUInt16LittleEndian(tail, 2304); BinaryPrimitives.WriteUInt32LittleEndian(tail.AsSpan(2), 25);
-        return [0x33, 0x36, .. Varint(id), 0, 0, 0, 0, 1, (byte)text.Length, .. text, .. tail];
-    }
-    static byte[] Bundle(byte[] frames)
-    {
-        var encoded = new byte[LZ4Codec.MaximumOutputSize(frames.Length)]; var length = LZ4Codec.Encode(frames, encoded);
-        var bundle = new byte[6 + length]; bundle[0] = bundle[1] = 255;
-        BinaryPrimitives.WriteInt32LittleEndian(bundle.AsSpan(2), frames.Length); encoded.AsSpan(0, length).CopyTo(bundle.AsSpan(6));
-        return bundle;
-    }
-    static byte[] Varint(ulong value)
-    {
-        var bytes = new List<byte>();
-        do { var b = (byte)(value & 127); value >>= 7; bytes.Add((byte)(b | (value > 0 ? 128 : 0))); } while (value > 0);
-        return bytes.ToArray();
-    }
-    static byte[] Frame(byte[] content) => [.. Varint((ulong)content.Length + 4), .. content];
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Group check failed: " + message); }
 }

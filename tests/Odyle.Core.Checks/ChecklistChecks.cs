@@ -57,5 +57,4 @@ static class ChecklistChecks
         Check(NotificationSettings.Default.TasksInTray && !new NotificationSettings(Kinds: new(Tasks: false)).TasksInTray && !new NotificationSettings(Channels: new(Tray: false)).TasksInTray, "on until turned off, and only with the tray on");
         Console.WriteLine("Daily and weekly checklist periods, reset settings, done state and wire contract passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Checklist check failed: " + message); }
 }

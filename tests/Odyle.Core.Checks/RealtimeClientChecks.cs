@@ -146,5 +146,4 @@ static class RealtimeClientChecks
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
-    static void Check(bool condition, string what) { if (!condition) throw new Exception("Realtime client check failed: " + what + "."); }
 }

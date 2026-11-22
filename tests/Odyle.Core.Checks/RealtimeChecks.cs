@@ -108,5 +108,4 @@ static class RealtimeChecks
         await Next(n => n.Seen.ContainsKey(characterId), "heartbeat");
         Console.WriteLine("Windows realtime connection check passed.");
     }
-    static void Check(bool condition, string what) { if (!condition) throw new Exception("Realtime check failed: " + what + "."); }
 }

@@ -47,5 +47,4 @@ static class IdentityChecks
         Check(observed.Single().Server == "Lumiel", "fragmented own identity forwarded");
         Console.WriteLine("Automatic own-character identity, server mapping, region and malformed-input checks passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Identity check failed: " + message); }
 }

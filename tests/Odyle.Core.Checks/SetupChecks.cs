@@ -73,5 +73,4 @@ static class SetupChecks
         Check(SteamManifest.BuildId("\"AppState\"\n{\n\t\"appid\"\t\t\"3393110\"\n\t\"buildid\"\t\t\"25800038\"\n}") == "25800038" && SteamManifest.BuildId("\"AppState\" { \"buildid\" \"x1\" }") is null && SteamManifest.ManifestName == "appmanifest_3393110.acf" && SteamManifest.Label("25800038") == "Steam build 25800038", "the build id from AION 2's app manifest");
         Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail, --unpair, the decoder trace and the Steam build passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Setup check failed: " + message); }
 }

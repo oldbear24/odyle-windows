@@ -82,5 +82,4 @@ static class DiscordChecks
         Check(StartupCommand.PipeAction("odyle-do:tasks") == "tasks" && StartupCommand.PipeAction("odyle-do:other") is null && StartupCommand.PipeAction("odyle://pair?link=x") is null, "the pipe tells a jump list action from an Open in Odyle link");
         Console.WriteLine("The server's Discord application, Discord pipe frames and answers, the Discord status lines and the jump list actions passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Discord check failed: " + message); }
 }

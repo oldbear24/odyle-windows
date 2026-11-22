@@ -73,5 +73,4 @@ static class DesktopChecks
         Check(System.Text.Json.JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[]}""", options)!.Notifications is null && NotificationSettings.Default is { RunsInTray: true } && NotificationSettings.Default.Leads.SequenceEqual([15]), "older backends send none, and the defaults remind 15 minutes ahead");
         Console.WriteLine("Start with Windows command, tray start, saved window position, keep-on-screen, compact mode and planned-run reminders at the account's times and quiet hours passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Desktop check failed: " + message); }
 }

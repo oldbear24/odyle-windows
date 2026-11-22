@@ -43,5 +43,4 @@ static class AnswerChecks
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(answer(request), Encoding.UTF8, "application/json") });
     }
-    static void Check(bool condition, string what) { if (!condition) throw new Exception("Answer check failed: " + what + "."); }
 }

@@ -203,24 +203,4 @@ static class PvpChecks
         var p = new byte[46]; BinaryPrimitives.WriteUInt32LittleEndian(p.AsSpan(4), 600010); BinaryPrimitives.WriteSingleLittleEndian(p.AsSpan(16), 100); BinaryPrimitives.WriteSingleLittleEndian(p.AsSpan(20), 200); BinaryPrimitives.WriteSingleLittleEndian(p.AsSpan(24), 30);
         return [0x21, 0x36, .. p];
     }
-    static byte[] Identity(ulong id, string name)
-    {
-        var text = Encoding.UTF8.GetBytes(name); var tail = new byte[6]; BinaryPrimitives.WriteUInt16LittleEndian(tail, OwnServer); BinaryPrimitives.WriteUInt32LittleEndian(tail.AsSpan(2), 25);
-        return [0x33, 0x36, .. Varint(id), 0, 0, 0, 0, 1, (byte)text.Length, .. text, .. tail];
-    }
-    static byte[] Bundle(byte[] frames)
-    {
-        var encoded = new byte[LZ4Codec.MaximumOutputSize(frames.Length)]; var length = LZ4Codec.Encode(frames, encoded);
-        var bundle = new byte[6 + length]; bundle[0] = bundle[1] = 255;
-        BinaryPrimitives.WriteInt32LittleEndian(bundle.AsSpan(2), frames.Length); encoded.AsSpan(0, length).CopyTo(bundle.AsSpan(6));
-        return bundle;
-    }
-    static byte[] Varint(ulong value)
-    {
-        var bytes = new List<byte>();
-        do { var b = (byte)(value & 127); value >>= 7; bytes.Add((byte)(b | (value > 0 ? 128 : 0))); } while (value > 0);
-        return bytes.ToArray();
-    }
-    static byte[] Frame(byte[] content) => [.. Varint((ulong)content.Length + 4), .. content];
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("PvP check failed: " + message); }
 }

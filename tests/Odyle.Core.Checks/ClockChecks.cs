@@ -56,5 +56,4 @@ static class ClockChecks
         Check(JsonSerializer.Deserialize<Character>("""{"id":"c","user":"u","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":905,"confirmed":true,"valid":true,"lastReadingAt":"","answeredCap":560}""", options) is { AnsweredCap: 560 }, "a character carries the cap its account's membership answer settled");
         Console.WriteLine("Odyle clock ticks, caps, the membership answer, projection, card line, cap colours and rules passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Odyle clock check failed: " + message); }
 }

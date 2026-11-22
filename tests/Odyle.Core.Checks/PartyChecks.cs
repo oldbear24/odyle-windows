@@ -76,5 +76,4 @@ static class PartyChecks
             if (Directory.Exists(Path.Combine(directory.FullName, "src", "Odyle.Reader"))) return directory.FullName;
         throw new Exception("Party check: the repository root was not found.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Party check failed: " + message); }
 }

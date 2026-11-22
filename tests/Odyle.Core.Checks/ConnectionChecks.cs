@@ -208,5 +208,4 @@ static class ConnectionChecks
         finally { Directory.Delete(folder, true); }
         Console.WriteLine("Failure bodies, 429 pause with Retry-After, renewal without loops, ended pairings, device names, dashboard links, retry schedule, log rotation and redaction passed.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Connection check failed: " + message); }
 }

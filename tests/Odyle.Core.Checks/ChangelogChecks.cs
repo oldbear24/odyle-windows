@@ -29,5 +29,4 @@ static class ChangelogChecks
             if (File.Exists(Path.Combine(directory.FullName, "CHANGELOG.md")) && Directory.Exists(Path.Combine(directory.FullName, "src", "Odyle.Reader"))) return directory.FullName;
         throw new Exception("Changelog check: the repository root was not found.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Changelog check failed: " + message); }
 }
