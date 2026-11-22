@@ -93,7 +93,6 @@ public static class Czech
         ["Disconnect"] = "Odpojit", ["Disconnect this app from your account"] = "Odpojit tuto aplikaci od tvého účtu",
         ["Connecting to your account…"] = "Připojuji se k tvému účtu…", ["Pairing with your account…"] = "Páruji s tvým účtem…",
         ["Signed in as {0} via Discord · {1}"] = "Přihlášení přes Discord jako {0} · {1}", ["server"] = "server",
-        ["Server unavailable. Your connection is saved; reconnect in settings when it is back online."] = "Server je nedostupný. Připojení zůstává uložené; až bude zase online, připoj se znovu v nastavení.",
         ["This PC is no longer paired with your account. Copy a new connection link from the dashboard."] = "Tento počítač už není spárovaný s tvým účtem. Zkopíruj z dashboardu nový odkaz pro připojení.",
         ["Copy the connection link from the dashboard first."] = "Nejdřív zkopíruj odkaz pro připojení z dashboardu.",
         ["Disconnected · your characters stay saved on your account."] = "Odpojeno · postavy zůstávají uložené na tvém účtu.",

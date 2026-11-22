@@ -33,10 +33,10 @@ public static class Updater
     public static readonly bool SelfContained = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "SelfContained" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase));
     public static readonly string Runtime = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
     public static readonly string? Executable = Environment.ProcessPath;
-    // Built by the release workflow (scripts/publish.ps1 -Version marks it OdyleRelease). Builds from
-    // before semantic versions were told apart by the run number in their version (0.6.0.18); the
-    // semantic ones, 0.7.0 and 0.8.0, had neither and took themselves for development builds.
-    public static readonly bool Released = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "OdyleRelease" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase)) || Current.Revision > 0;
+    // Built by the release workflow (scripts/publish.ps1 -Version marks it OdyleRelease); every other
+    // build is a development build that never replaces itself. (0.7.0 and 0.8.0 lacked the mark and
+    // could not update; scripts/version.ps1 refuses the four-part versions of the builds before them.)
+    public static readonly bool Released = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "OdyleRelease" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase));
     public static bool IsReleaseBuild => Released && Executable is not null;
     public static string Staging { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "updates");
     // Why the last automatic installation at start did not happen, shown in settings.

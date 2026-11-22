@@ -58,7 +58,6 @@
 <Style x:Key="GhostDanger" TargetType="Button" BasedOn="{StaticResource Ghost}"><Setter Property="Foreground" Value="{StaticResource Rose}"/></Style>
 <!-- Header toggles drawn with Windows' own icon font; mint while active -->
 <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource Ghost}"><Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="12"/><Setter Property="Padding" Value="6,3"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
-<Style x:Key="Danger" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="#2E1F21"/><Setter Property="Foreground" Value="{StaticResource Rose}"/><Setter Property="BorderBrush" Value="#5A3437"/><Setter Property="BorderThickness" Value="1"/></Style>
 
 <!-- Inputs -->
 <Style TargetType="TextBox">

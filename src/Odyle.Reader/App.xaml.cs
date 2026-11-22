@@ -83,7 +83,7 @@ public partial class App : System.Windows.Application
     }
     private void StartWindow(System.Collections.Generic.IReadOnlyList<string> accepted, bool tray, string user, string? pairLink, string? action)
     {
-        Updater.CleanUp(); Autostart.Repair(); ForgetStatOwners();
+        Updater.CleanUp(); Autostart.Repair();
         if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
         var window = new MainWindow(); MainWindow = window;
         // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
@@ -153,13 +153,6 @@ public partial class App : System.Windows.Application
             Log.Warn("The server could not be told to forget this PC: " + error.Message);
         }
         SessionStore.Clear();
-    }
-    // Builds before the global-reference-v2 decoder kept stat owner ids in stat-owners.json. Odyle
-    // is now read by its resource id, so the file is no longer used and is removed.
-    private static void ForgetStatOwners()
-    {
-        try { System.IO.File.Delete(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "stat-owners.json")); }
-        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException) { }
     }
     // This start came from the user, so it may hand the foreground on to the running Odyle.
     private static void ShowRunning(string user)
