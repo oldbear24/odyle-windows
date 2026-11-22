@@ -143,6 +143,7 @@ static class UpdaterChecks
         }
     }
     sealed class Recorder(Action<double> report) : IProgress<double> { public void Report(double value) => report(value); }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Updater check failed: " + message); }
+    // Counted and reported by the runner like every other Reader check; the scenario goes on after a failure.
+    static void Check(bool condition, string message) => ReaderChecks.Check(condition, message);
     static void Check(bool a, bool b, bool c, string message) { Check(a, message + " (the executable)"); Check(b, message + " (no .old left)"); Check(c, message + " (the locked file)"); }
 }

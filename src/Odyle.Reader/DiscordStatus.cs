@@ -16,7 +16,9 @@ namespace Odyle.Reader;
 public sealed class DiscordStatus : IDisposable
 {
     public enum State { Off, NotRunning, Shown, Refused, AsAdministrator }
-    private static readonly TimeSpan SendEvery = TimeSpan.FromSeconds(15), LookEvery = TimeSpan.FromSeconds(30);
+    // The checks shorten the waits and talk to a pipe of their own instead of Discord's.
+    internal TimeSpan SendEvery = TimeSpan.FromSeconds(15), LookEvery = TimeSpan.FromSeconds(30);
+    internal string PipePrefix = "discord-ipc-";
     private readonly SemaphoreSlim busy = new(1, 1), writing = new(1, 1);
     private NamedPipeClientStream? pipe;
     // refusedBy: the application Discord turned down (an unknown one); it is not tried again.
@@ -61,7 +63,7 @@ public sealed class DiscordStatus : IDisposable
         lookedAt = DateTimeOffset.UtcNow;
         // The pipes are listed rather than tried, so a Discord that is not running costs nothing.
         string[] names;
-        try { names = Directory.GetFiles(@"\\.\pipe\").Select(Path.GetFileName).Where(n => n is not null && n.StartsWith("discord-ipc-", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray()!; }
+        try { names = Directory.GetFiles(@"\\.\pipe\").Select(Path.GetFileName).Where(n => n is not null && n.StartsWith(PipePrefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray()!; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { names = []; }
         var failure = ""; var denied = false;
         foreach (var name in names)

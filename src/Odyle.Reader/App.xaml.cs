@@ -40,7 +40,8 @@ public partial class App : System.Windows.Application
         }
         // The language chosen in settings, else the Windows display language; numbers
         // and dates follow it (Localizer.Culture).
-        Localizer.Use(PreferencesStore.Load().Language);
+        var preferences = PreferencesStore.Load();
+        Localizer.Use(preferences.Language);
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.CurrentCulture = Localizer.Culture;
         FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement), new FrameworkPropertyMetadata(XmlLanguage.GetLanguage(Localizer.Culture.IetfLanguageTag)));
         DispatcherUnhandledException += OnUnhandled;
@@ -79,7 +80,7 @@ public partial class App : System.Windows.Application
         // A newer version downloaded and verified by an earlier run replaces this
         // build before any window opens; the new version then starts in its place.
         if (Updater.IsReleaseBuild && Updater.Staged() is { } staged && TryInstall(staged, tray)) return;
-        try { StartWindow(accepted, tray, user, pairLink, action); }
+        try { StartWindow(accepted, tray, user, pairLink, action, preferences); }
         // A build an update just installed that cannot build its window ends, so its next start can count
         // it, or, the second time, starts the build before it again. Any other start keeps running as before.
         catch (Exception error) when (Updater.StartPending)
@@ -89,11 +90,11 @@ public partial class App : System.Windows.Application
             else { Release(); Shutdown(); }
         }
     }
-    private void StartWindow(System.Collections.Generic.IReadOnlyList<string> accepted, bool tray, string user, string? pairLink, string? action)
+    private void StartWindow(System.Collections.Generic.IReadOnlyList<string> accepted, bool tray, string user, string? pairLink, string? action, Preferences preferences)
     {
         Updater.CleanUp(); Autostart.Repair();
         if (Updater.IsReleaseBuild) PairProtocol.Register(Environment.ProcessPath);
-        var window = new MainWindow(); MainWindow = window;
+        var window = new MainWindow(true, preferences); MainWindow = window;
         // --decoder-trace: the patch-day trace, for re-deriving the decoder after a game patch.
         if (StartupCommand.Traces(accepted)) window.StartTrace();
         showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Odyle-Show-" + user);
