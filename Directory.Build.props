@@ -1,0 +1,10 @@
+<Project>
+  <!-- Every project here (src/ and tests/) builds with the .NET analyzers at their recommended level, and
+       any warning fails the build. Rule-wide exceptions live in .editorconfig (tests/.editorconfig for the
+       checks), each with its reason; single ones sit beside the code they excuse. -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

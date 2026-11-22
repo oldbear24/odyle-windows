@@ -1,0 +1,11 @@
+# The checks (tests/) do not ship; these rules do not fit them.
+[*.cs]
+# A failed check throws a plain Exception with its message, which the runner prints.
+dotnet_diagnostic.CA2201.severity = none
+# Checks build and compare text the way the app shows it, in the culture they run in.
+dotnet_diagnostic.CA1305.severity = none
+# Each check runs once: copies, array literals, JSON options and interpreted regexes cost nothing that matters.
+dotnet_diagnostic.CA1832.severity = none
+dotnet_diagnostic.CA1861.severity = none
+dotnet_diagnostic.CA1869.severity = none
+dotnet_diagnostic.SYSLIB1045.severity = none

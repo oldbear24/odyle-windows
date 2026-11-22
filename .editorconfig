@@ -1,0 +1,9 @@
+root = true
+
+# Analyzer settings for every project (Directory.Build.props turns on the recommended .NET analyzers and
+# makes warnings errors). tests/.editorconfig adds the checks' own exceptions.
+[*.cs]
+# Odyle is an app, not a library: no Visual Basic code calls it, so names like Get and Set are fine.
+dotnet_diagnostic.CA1716.severity = none
+# Regexes are source-generated ([GeneratedRegex]): no interpreted Regex built at run time.
+dotnet_diagnostic.SYSLIB1045.severity = warning
