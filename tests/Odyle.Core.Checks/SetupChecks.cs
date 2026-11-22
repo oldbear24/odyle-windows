@@ -37,6 +37,7 @@ static class SetupChecks
         finally { Directory.Delete(folder, true); }
 
         Check(StartupCommand.Unpairs(["--unpair"]), StartupCommand.Unpairs(["--UNPAIR"]), !StartupCommand.Unpairs(["--tray"]), !StartupCommand.InTray(["--unpair"]), "the uninstaller's --unpair argument");
+        Check(StartupCommand.Quits(["--quit"]), StartupCommand.Quits(["--QUIT"]), !StartupCommand.Quits(["--unpair"]), !StartupCommand.Unpairs(["--quit"]), "the uninstaller's --quit argument");
 
         // The patch-day trace counts opcodes and keeps plain numbers, never a character's name.
         Check(StartupCommand.Traces(["--tray", "--decoder-trace"]), StartupCommand.Traces(["--DECODER-TRACE"]), !StartupCommand.Traces(["--tray"]), "the --decoder-trace argument");
