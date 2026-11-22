@@ -10,7 +10,7 @@ static partial class ReaderChecks
 {
     static void PartyListScenario(MainWindow window)
     {
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         // The party list shows other members' live and stale characters, never your own or offline ones.
         Field("accountId").SetValue(window, "u"); Field("rooms").SetValue(window, new[] { new Room("r1", "Evening", 40, "owner", true) });
         Field("snapshots").SetValue(window, new[] { PartySnapshot() }); Call(window, "RenderParty");
@@ -32,7 +32,7 @@ static partial class ReaderChecks
         Check(together.Shown is [MateBand { Label: "In your force in game", Count: "3 players", Items: [MateBand { Label: "In your party in game", Count: "2 players", Items: [PartyMate { Name: "Lumina" }] }, PartyMate { Name: "Rin" }] },
             MateBand { Label: "In one party in game", Count: "2 players", Items: [PartyMate { Name: "Tor" }, PartyMate { Name: "Vex" }] }, PartyMate { Name: "KaelenAlt" }],
             "a party's frame sits in its force's, each labelled with how many players it holds, you included");
-        Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+        Field("capture").SetValue(window, null); window.Link.Api = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
         Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); window.Attribution.Latest = null;
         Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
         Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
@@ -94,7 +94,7 @@ static partial class ReaderChecks
         void ClearNotice() => typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
         // The settings move to the dashboard: Settings links there, and an old local "off" moves to the account once.
         Check(settings.FindName("RemindersToggle") is null && settings.FindName("NotificationsButton") is Button, "settings link to the dashboard's notification settings");
-        var moving = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, moving));
+        var moving = new FakeServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, moving);
         Field("preferences").SetValue(window, PreferencesStore.Load() with { RemindRuns = false, RemindRunsMoved = false });
         await (Task)Call(window, "FollowNotificationsAsync", NotificationSettings.Default)!;
         Check(moving.LastNotifications.Contains("\"tray\":false") && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false, Saved: true } && PreferencesStore.Load().RemindRunsMoved, "an old local switch-off moves to the account");
@@ -117,7 +117,7 @@ static partial class ReaderChecks
         Character Member(string id, string user, string name, int value) => new(id, user, name, "Lumiel", "GLOBAL_EU", value, true, true, Stamp(DateTimeOffset.UtcNow.AddHours(-1)), seenNow, "packet", Shared: true);
         RoomSnapshot Room(params PlannedRun[] runs) => new(new Room("r1", "Evening", 40, "owner", true), [new RoomMember("m1", "u", "owner", "You", [Member("c1", "u", "Ayla", 130)], true), new RoomMember("m2", "k", "reporter", "Kaelen", [Member("c2", "k", "Kael", 85)], true), new RoomMember("m3", "n", "reporter", "Nyx", [], false)], DateTime.UtcNow.ToString("O"), runs);
         var planned = new PlannedRun("run9", "Fire Temple", RunAt(DateTimeOffset.UtcNow.AddMinutes(50)), "", "u", ["u", "k"]);
-        var planServer = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, planServer)); Field("accountId").SetValue(window, "u");
+        var planServer = new FakeServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, planServer); Field("accountId").SetValue(window, "u");
         Field("snapshots").SetValue(window, new[] { Room(planned) }); Call(window, "RenderParty");
         var partyRooms = (PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource;
         Check(partyRooms is [{ Summary: "Party · 2 cubes · lowest Kaelen · 1 not live", Mates.Length: 1 }], "a room's party line counts your character with your mates': " + partyRooms.FirstOrDefault()?.Summary);

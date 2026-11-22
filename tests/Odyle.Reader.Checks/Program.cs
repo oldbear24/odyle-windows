@@ -77,6 +77,7 @@ static partial class ReaderChecks
         Add("layout", LayoutScenario);
         AddStatic("updates", UpdateChecks);
         AddStatic("session-store", SessionStoreScenario);
+        AddStatic("connection-lifecycle", ConnectionLifecycleScenario);
         Add("offline-restore", OfflineRestoreScenario);
         Add("pairing", PairingChecks);
         Add("early-reading", EarlyReadingChecks);
@@ -171,7 +172,7 @@ static partial class ReaderChecks
         var probeNpcap = Npcap.Probe; Npcap.Probe = () => false;
         var makeApi = Field("newApi").GetValue(window);
         Field("newApi").SetValue(window, (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, server)));
-        var restore = (DispatcherTimer)Field("restoreTimer").GetValue(window)!;
+        var restore = window.Link.RetryTimer;
         try
         {
             // One operation at a time: a click while one runs is dropped, an action from outside waits and then runs.
@@ -186,12 +187,12 @@ static partial class ReaderChecks
             // Paired, but the session cannot start: the pairing is saved, the app is not half-connected, and it tries again.
             ((PasswordBox)settings.FindName("CodeInput")).Password = "https://party.example/#odyle-pair=ABCDEFGH23456789";
             await (Task)Call(window, "PairAsync")!;
-            Check(server.Paired == 1 && Field("api").GetValue(window) is null && restore.IsEnabled && Field("retryAt").GetValue(window) is not null && SessionStore.Load(out _) is { Endpoint: "https://party.example", DeviceKey: "pairing-check-key" }
-                && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible && !((DispatcherTimer)Field("heartbeat").GetValue(window)!).IsEnabled, "a pairing whose session fails keeps the saved pairing and tries again by itself");
+            Check(server.Paired == 1 && window.Link.Api is null && restore.IsEnabled && window.Link.RetryAt is not null && SessionStore.Load(out _) is { Endpoint: "https://party.example", DeviceKey: "pairing-check-key" }
+                && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible && !window.Link.Heartbeat.IsEnabled, "a pairing whose session fails keeps the saved pairing and tries again by itself");
             Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s"), "the footer counts down to the next try: " + Control<TextBlock>(window, "StatusLabel").Text);
             server.FailSession = false;
             await (Task)Call(window, "RestoreAsync")!;
-            Check(Field("api").GetValue(window) is PartyApi && (string)Field("sessionId").GetValue(window)! == "s1" && ((DispatcherTimer)Field("heartbeat").GetValue(window)!).IsEnabled && !restore.IsEnabled && Field("retryAt").GetValue(window) is null, "the next try connects the saved pairing");
+            Check(window.Link.Api is PartyApi && window.Link.SessionId == "s1" && window.Link.Heartbeat.IsEnabled && !restore.IsEnabled && window.Link.RetryAt is null, "the next try connects the saved pairing");
             // Party and force members' names: an answer { shared: false } turns them off until the server says otherwise.
             var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
             Field("currentCharacterId").SetValue(window, "c1"); window.Attribution.GameId = 7UL; window.Attribution.DetectedKey = "Hero|2304"; window.Attribution.GameKey = "Hero|2304";
@@ -229,7 +230,7 @@ static partial class ReaderChecks
                 server.PreviousSession = null; server.PreviousUnreachable = false;
                 return server.Sessions - before;
             }
-            Check(await Reconnect(HttpStatusCode.NotFound) == 2 && await Reconnect(HttpStatusCode.BadRequest) == 2 && (string)Field("sessionId").GetValue(window)! == "s1", "a server that answered for the previous session is asked for a fresh one");
+            Check(await Reconnect(HttpStatusCode.NotFound) == 2 && await Reconnect(HttpStatusCode.BadRequest) == 2 && window.Link.SessionId == "s1", "a server that answered for the previous session is asked for a fresh one");
             Check(await Reconnect(HttpStatusCode.ServiceUnavailable) == 1 && await Reconnect(HttpStatusCode.BadGateway) == 1 && await Reconnect(null, unreachable: true) == 1, "a server error or no connection is not asked twice");
             Check(Conn(window).Group.Refused && Conn(window).AdapterOutdated, "a new session on the same connection keeps what the server refused");
             server.Heartbeat = """{"serverNow":"2026-11-21 12:01:00.000Z","shareTeammates":false}"""; await (Task)Call(window, "PulseAsync")!;
@@ -242,7 +243,7 @@ static partial class ReaderChecks
             ((PasswordBox)settings.FindName("CodeInput")).Password = "https://other.example/#odyle-pair=ABCDEFGH23456789";
             await (Task)Call(window, "PairAsync")!;
             var fresh = Conn(window);
-            Check(Field("api").GetValue(window) is PartyApi { Endpoint: "https://other.example" } && !fresh.Group.Refused && fresh.TeammatesSent.Count == 0 && !fresh.AdapterOutdated && fresh.NoOdyleSent == "" && !fresh.TeammatesOff, "pairing with another server forgets what the first one refused and was sent");
+            Check(window.Link.Api is PartyApi { Endpoint: "https://other.example" } && !fresh.Group.Refused && fresh.TeammatesSent.Count == 0 && !fresh.AdapterOutdated && fresh.NoOdyleSent == "" && !fresh.TeammatesOff, "pairing with another server forgets what the first one refused and was sent");
             Field("capture").SetValue(window, inert);
             Field("currentCharacterId").SetValue(window, "c1"); window.Attribution.GameId = 7UL; window.Attribution.DetectedKey = "Hero|2304"; window.Attribution.GameKey = "Hero|2304";
             await (Task)Call(window, "SendGroupAsync")!;
@@ -252,9 +253,9 @@ static partial class ReaderChecks
         finally
         {
             Field("capture").SetValue(window, null); window.Attribution.Reset();
-            if (Field("api").GetValue(window) is not null || restore.IsEnabled) await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
+            if (window.Link.Api is not null || restore.IsEnabled) await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
-            Field("newApi").SetValue(window, makeApi); Field("sessionId").SetValue(window, ""); Field("currentCharacterId").SetValue(window, "");
+            Field("newApi").SetValue(window, makeApi); window.Link.SessionId = ""; Field("currentCharacterId").SetValue(window, "");
         }
     }
     // The reader starts before the server is asked (#86): what it reads meanwhile, the login snapshot included,
@@ -272,7 +273,7 @@ static partial class ReaderChecks
             var restoring = (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => (Task)Call(window, "RestoreAsync")!), false)!;
             await server.SignInArrived!.Task;
             var reading = Field("capture").GetValue(window) as PacketCapture;
-            Check(reading is not null && Field("api").GetValue(window) is PartyApi && Field("sessionId").GetValue(window) is "", "the reader runs while the server is still being asked");
+            Check(reading is not null && window.Link.Api is PartyApi && window.Link.SessionId is "", "the reader runs while the server is still being asked");
             Call(window, "OnCandidate", reading!, new PacketCandidate(512, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 12, Bonus = 500 });
             var naming = (Task)Call(window, "SaveDetectedCharacterAsync", reading!, new GameIdentity(46, "EarlyHero", 2304, "Lumiel", "GLOBAL_EU"))!;
             await Task.Delay(100);
@@ -296,19 +297,19 @@ static partial class ReaderChecks
             await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             server.EndPairing = true; SessionStore.Save(new SavedSession("https://party.example", "token", "pairing-check-key"));
             await (Task)Call(window, "ExecuteAsync", (Func<Task>)(() => (Task)Call(window, "RestoreAsync")!), false)!;
-            Check(Field("capture").GetValue(window) is null && !(bool)Field("readerWanted").GetValue(window)! && Field("api").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "a pairing the server ended stops the reader that started for the login snapshot");
+            Check(Field("capture").GetValue(window) is null && !(bool)Field("readerWanted").GetValue(window)! && window.Link.Api is null && !File.Exists(SessionStore.FilePath), "a pairing the server ended stops the reader that started for the login snapshot");
             // A server that cannot be reached at start turns the card offline, also when the reader started before it was
             // asked (the failure itself renders the card, not only the operation around it).
             server.EndPairing = false; server.FailSignIn = true; SessionStore.Save(new SavedSession("https://party.example", "token", "pairing-check-key"));
             await (Task)Call(window, "RestoreAsync")!;
-            Check(Field("capture").GetValue(window) is PacketCapture && Field("api").GetValue(window) is null && Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Offline · "),
+            Check(Field("capture").GetValue(window) is PacketCapture && window.Link.Api is null && Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Offline · "),
                 "an unreachable server at start leaves the card offline, not connecting: " + Control<TextBlock>(window, "AccountLabel").Text);
         }
         finally
         {
             await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
-            Field("newApi").SetValue(window, makeApi); Field("startCapture").SetValue(window, startCapture); Field("sessionId").SetValue(window, ""); Field("currentCharacterId").SetValue(window, "");
+            Field("newApi").SetValue(window, makeApi); Field("startCapture").SetValue(window, startCapture); window.Link.SessionId = ""; Field("currentCharacterId").SetValue(window, "");
         }
     }
     // Answers pairing, sign-in, the session (503 while FailSession), the account's characters and rooms, the
@@ -369,7 +370,7 @@ static partial class ReaderChecks
     // runs beside a refresh of the whole party, so an older answer can never replace a newer one.
     static async Task PartyRefreshChecks(MainWindow window)
     {
-        var server = new PartyServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, server)); Field("accountId").SetValue(window, "u");
+        var server = new PartyServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, server); Field("accountId").SetValue(window, "u");
         int Value(string room) => ((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single(s => s.Room.Id == room).Members.Single().Characters.Single().Value;
         string[] Shown() => ((RoomSnapshot[])Field("snapshots").GetValue(window)!).Select(s => s.Room.Id).ToArray();
         Task Refresh() => (Task)Call(window, "RefreshPartyAsync", new object[] { null! })!;
@@ -580,7 +581,7 @@ static partial class ReaderChecks
         Snapshot(window, Path.Combine(directory, "connect-preview.png"));
         Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), 320);
         Field("accountName").SetValue(window, "Sample account");
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
         Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });

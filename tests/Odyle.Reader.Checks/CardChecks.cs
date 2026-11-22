@@ -64,7 +64,7 @@ static partial class ReaderChecks
     {
         // A decoded reading is displayed immediately, before its owner is known or saved.
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
@@ -120,7 +120,7 @@ static partial class ReaderChecks
         // A snapshot without Odyle waits for the game's name like any snapshot; the named character then
         // says it has no Odyle yet instead of waiting for a snapshot forever. A reading still waiting for a
         // name belonged to the character the game left.
-        var server = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, server)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+        var server = new FakeServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, server); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
         Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, "");
         Call(window, "OnSnapshotWithoutOdyle", inert);
         Check(window.Attribution.Latest is null, "an unnamed reading is dropped by a snapshot without Odyle");
@@ -190,8 +190,8 @@ static partial class ReaderChecks
         await (Task)Call(window, "StartReaderAsync")!;
         Check(Field("capture").GetValue(window) is null && Control<TextBlock>(window, "StateText").Text == "Paused", "nothing starts while readers are paused");
         // The heartbeat says the pause is over: the reader starts again by itself (here it finds no Npcap and says so).
-        server.Paused = false; Npcap.Probe = () => false; Field("sessionId").SetValue(window, "s"); Field("needsReconnect").SetValue(window, false);
-        Field("tokenRenewedAt").SetValue(window, DateTimeOffset.UtcNow); Field("lastTick").SetValue(window, DateTimeOffset.UtcNow);
+        server.Paused = false; Npcap.Probe = () => false; window.Link.SessionId = "s"; window.Link.NeedsReconnect = false;
+        window.Link.TokenRenewedAt = DateTimeOffset.UtcNow; window.Link.LastTick = DateTimeOffset.UtcNow;
         await (Task)Call(window, "PulseAsync")!; await Task.Delay(100);
         var npcapTimer = (DispatcherTimer)Field("npcapTimer").GetValue(window)!;
         Check(!(bool)Field("readerPaused").GetValue(window)! && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is not installed · Odyle needs it to read the game." && Control<Button>(window, "NpcapLink").Visibility == Visibility.Visible && npcapTimer.IsEnabled, "once the pause is over the reader starts again by itself");
@@ -200,7 +200,7 @@ static partial class ReaderChecks
     }
     static async Task HandoverScenario(MainWindow window)
     {
-        Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        Field("capture").SetValue(window, new PacketCapture()); window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
         window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304";
@@ -232,19 +232,19 @@ static partial class ReaderChecks
         // without asking for an update, and this build reads the next Odyle change.
         await (Task)Call(window, "StopCaptureAsync", false)!;
         File.WriteAllText(HandoverStore.FilePath, $$"""{"Endpoint":"http://127.0.0.1:8090","AccountId":"u","CharacterId":"c1","CharacterKey":"TestHero|2304","CharacterName":"TestHero","Total":390,"EntityId":51591,"OwnerConfirmed":true,"ParserVersion":"global-reference-v1","Source":0,"SavedAt":"{{DateTimeOffset.UtcNow:O}}"}""");
-        var refusing = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, refusing)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+        var refusing = new FakeServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, refusing); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
         Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
         Check(!File.Exists(HandoverStore.FilePath) && refusing.Reports == 1 && window.Attribution.OwnerKey == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && window.Attribution.Latest is null && !Conn(window).AdapterOutdated, "a refused reading of the previous adapter is dropped without asking for an update");
         Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Updated · the value is read again at the next Odyle change.", "the reader line says the value is read again");
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         await (Task)Call(window, "StopCaptureAsync", false)!;
-        Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
+        window.Link.Api = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
         Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("accountId").SetValue(window, ""); Call(window, "RenderHero");
     }
     static void TrayAndCharactersScenario(MainWindow window)
     {
         // An update restart hands the live character to the next start, which takes it over without a relog.
-        Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        Field("capture").SetValue(window, new PacketCapture()); window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
         // The tray menu (W#17): the reader's state line, Stop while it reads, and the characters, the
         // fullest first, each with its value and cubes; nameless records are left out. (WinForms

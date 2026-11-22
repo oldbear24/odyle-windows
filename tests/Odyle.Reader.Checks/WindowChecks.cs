@@ -58,7 +58,7 @@ static partial class ReaderChecks
         Check(Control<Border>(window, "TasksPanel").Visibility == Visibility.Visible && ((CheckBox)settings.FindName("TasksToggle")).IsChecked == true && PreferencesStore.Load() is { StayOnTop: true, ShowTasks: true }, "the checklist opens beside the card and is remembered");
         Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource).Length == 0 && Control<TextBlock>(window, "TasksHint").Text.StartsWith("Pair"), "without an account the panel asks for pairing");
         // Done follows the game's resets: a tick from before the current period no longer counts.
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         string Stamp(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
         Field("tasks").SetValue(window, new[] { new UserTask("t1", "u", "Daily dungeon", "daily", Stamp(DateTimeOffset.UtcNow)), new UserTask("t2", "u", "Daily bounty", "daily"), new UserTask("t3", "u", "Weekly raid", "weekly", Stamp(Checklist.PeriodStart("weekly", DateTimeOffset.UtcNow).AddMinutes(-1))), new UserTask("t4", "u", "Weekly boss", "weekly", Stamp(DateTimeOffset.UtcNow)) });
         Field("tasksLoaded").SetValue(window, true); Call(window, "RenderTasks");
@@ -83,7 +83,7 @@ static partial class ReaderChecks
     }
     static void CompactModeScenario(MainWindow window)
     {
-        var settings = Settings(window); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
+        var settings = Settings(window); window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         // Compact mode cuts the window down to your Odyle and your party's, in the same window and place, and is remembered.
         Check(!PreferencesStore.Load().CompactMode && Control<Border>(window, "CompactPanel").Visibility == Visibility.Collapsed && (string)Control<Button>(window, "CompactButton").ToolTip == "Compact mode · your Odyle and your party's, nothing else (Ctrl+Alt+O)", "the window starts with the full card, and the compact button names its shortcut");
         var mateSeen = Stamp(DateTimeOffset.UtcNow);
@@ -130,7 +130,7 @@ static partial class ReaderChecks
     }
     static void CapMismatchScenario(MainWindow window)
     {
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("currentCharacterId").SetValue(window, "c1");
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("currentCharacterId").SetValue(window, "c1");
         // A membership answer the readings contradict is pointed out under the clock; readings that fit it are not.
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 700, true, true, Stamp(DateTimeOffset.UtcNow.AddMinutes(-5)), NaturalMax: 700, AnsweredCap: 560) }); Call(window, "RenderHero");
         Check(Control<TextBlock>(window, "CapMismatchLabel") is { Visibility: Visibility.Visible, Text: "Natural pool held 700, more than 560: has the membership started? Answer on the dashboard." }, "the card points out readings above the answered cap");
@@ -175,7 +175,7 @@ static partial class ReaderChecks
     static async Task NpcapScenario(MainWindow window)
     {
         var settings = Settings(window); var npcapTimer = (DispatcherTimer)Field("npcapTimer").GetValue(window)!;
-        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090"));
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         // Npcap is checked whenever settings open.
         Npcap.Probe = () => false; Call(window, "RenderNpcap");
         Check(((TextBlock)settings.FindName("NpcapLabel")).Text == "Npcap not found · install it to read the game" && ((Button)settings.FindName("NpcapButton")).Visibility == Visibility.Visible, "a missing Npcap is pointed out with its download");
@@ -188,7 +188,7 @@ static partial class ReaderChecks
         Npcap.Restricted = () => false;
         // Without Npcap the reader line links to its download and Npcap is looked for every 10 seconds;
         // once it is there an unpaired app only clears the line (a paired one starts the reader).
-        var paired = Field("api").GetValue(window); Field("api").SetValue(window, null);
+        var paired = window.Link.Api; window.Link.Api = null;
         Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
         Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is not installed · Odyle needs it to read the game." && Control<Button>(window, "NpcapLink") is { Visibility: Visibility.Visible, Content: "Install Npcap ↗" } && npcapTimer.IsEnabled, "a missing Npcap shows in the reader row with its download");
         await (Task)Call(window, "NpcapTickAsync")!;
@@ -196,23 +196,23 @@ static partial class ReaderChecks
         Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
         Check(!npcapTimer.IsEnabled && Control<Button>(window, "NpcapLink").Visibility == Visibility.Collapsed && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is installed · pair Odyle in settings to read the game.", "an installed Npcap clears the line");
         // A saved pairing that is still being retried does not ask to pair again.
-        Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15)); Call(window, "RenderReaderButton"); Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
+        window.Link.RetryAt = DateTimeOffset.UtcNow.AddSeconds(15); Call(window, "RenderReaderButton"); Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! });
         Npcap.Probe = () => true; await (Task)Call(window, "NpcapTickAsync")!;
         Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Stopped · start the reader before logging in." && (string)Control<Button>(window, "ReportButton").Content == "Start", "a paired app still retrying the server can start its reader: it reads locally until the server answers");
-        Field("retryAt").SetValue(window, null);
+        window.Link.RetryAt = null;
     }
     static void DiagnosticsScenario(MainWindow window)
     {
         // The reader's last states hold a missing Npcap, which is installed by now.
         Npcap.Probe = () => false; Call(window, "ShowNpcapProblem", new object[] { null! }); Npcap.Probe = () => true;
-        ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); var paired = Field("api").GetValue(window);
+        ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); var paired = window.Link.Api;
         // Copy diagnostics: version, Npcap, interfaces, the reader's last states and the end of the log,
         // with the account and this PC's name masked (built here without touching the clipboard).
         Log.Info("Connected to http://127.0.0.1:8090 as account abcdefghij12345 on device \"DESKTOP-CHECK\".");
         var diagnostics = (string)Call(window, "DiagnosticsReport")!;
         Check(diagnostics.StartsWith("Odyle diagnostics · ") && diagnostics.Contains("Npcap: installed") && diagnostics.Contains("Capture interfaces: ") && diagnostics.Contains("Account: not paired") && diagnostics.Contains("Problem · Npcap is not installed"), "diagnostics list the version, Npcap and the reader's last states");
         Check(diagnostics.Contains("account [account] on device \"[this PC]\"") && !diagnostics.Contains("abcdefghij12345") && !diagnostics.Contains("DESKTOP-CHECK") && !diagnostics.Contains("device-key"), "diagnostics mask the account and this PC's name");
-        Field("api").SetValue(window, paired);
+        window.Link.Api = paired;
     }
     static void UnpairScenario()
     {

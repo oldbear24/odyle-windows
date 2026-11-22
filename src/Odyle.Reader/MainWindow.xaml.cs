@@ -73,10 +73,13 @@ public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropert
 public partial class MainWindow : Window
 {
     private enum ReaderState { Stopped, Waiting, Listening, Midstream, Live, Stale, Problem, Paused }
-    private PartyApi? api;
+    // The connection to the paired server: request client, publisher session, heartbeat and retries (ConnectionLifecycle).
+    private readonly ConnectionLifecycle link = new();
+    internal ConnectionLifecycle Link => link;
+    private PartyApi? api => link.Api;
     private PacketCapture? capture;
     private readonly SettingsWindow settings = new();
-    private string sessionId = "", activeCharacterId = "", accountName = "", accountId = "";
+    private string activeCharacterId = "", accountName = "", accountId = "";
     // The character always comes from the game; the user cannot pick one. currentCharacterId: character shown in
     // the card (last one the game named). Which character owns the reading is the attribution's (ReaderAttribution).
     private string currentCharacterId = "";
@@ -147,8 +150,8 @@ public partial class MainWindow : Window
     private WhatsNewWindow? whatsNew;
     private static string VersionText => $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}";
     private int heroCost = 40;
-    private long sequence, lastGameBytes;
-    private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, tokenRenewedAt;
+    private long lastGameBytes;
+    private DateTimeOffset publishBlockedUntil = DateTimeOffset.MinValue;
     private int publishedTotal = -1;
     // The natural pool of the reading saved last, and the last change the game made (a spend, a
     // regeneration tick or an item), for the reading's kind (OdyleChange) and the card's split line.
@@ -156,18 +159,11 @@ public partial class MainWindow : Window
     private (int Delta, string Kind, DateTimeOffset At, string CharacterId)? lastChange;
     private string? publishFailure;
     private ReaderState readerState = ReaderState.Stopped;
-    private bool exit, quitting, busy, needsReconnect, busyShown;
-    // A saved pairing the server could not confirm at start (offline, 403, 5xx, 429) is
-    // tried again by itself: 15 s, 30 s, 1 min, 2 min, then every 5 minutes (Retry.Backoff).
-    private readonly DispatcherTimer restoreTimer = new();
-    private DateTimeOffset? retryAt;
-    private int restoreAttempt;
-    private string retryProblem = "";
+    private bool exit, quitting, busy, busyShown;
     // A detected character that could not be saved (offline, busy) is saved after the next heartbeat.
     private (PacketCapture Capture, GameIdentity Identity)? pendingIdentity;
     private string lastStatus = "", lastReaderLog = "";
     private readonly SemaphoreSlim operations = new(1, 1);
-    private readonly DispatcherTimer heartbeat = new() { Interval = TimeSpan.FromSeconds(20) };
     private readonly DispatcherTimer publishDelay = new() { Interval = TimeSpan.FromSeconds(5) };
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
     // The Odyle clock's rules from the server; null from older backends (the defaults apply).
@@ -226,10 +222,10 @@ public partial class MainWindow : Window
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("/account");
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
-        restoreTimer.Tick += async (_, _) => await Guarded("Reconnecting the saved account", async () =>
+        link.RetryTimer.Tick += async (_, _) => await Guarded("Reconnecting the saved account", async () =>
         {
-            restoreTimer.Stop();
-            if (busy) { restoreTimer.Interval = TimeSpan.FromSeconds(2); restoreTimer.Start(); return; }
+            link.RetryTimer.Stop();
+            if (busy) { link.RetryTimer.Interval = TimeSpan.FromSeconds(2); link.RetryTimer.Start(); return; }
             await ExecuteAsync(RestoreAsync);
         });
         updateTimer.Tick += async (_, _) => await Guarded("The update timer", UpdateTickAsync);
@@ -248,7 +244,7 @@ public partial class MainWindow : Window
             else if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
             else if (notifications.RunsInTray && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         });
-        heartbeat.Tick += async (_, _) => await Guarded("The heartbeat", PulseAsync);
+        link.Heartbeat.Tick += async (_, _) => await Guarded("The heartbeat", PulseAsync);
         npcapTimer.Tick += async (_, _) => await Guarded("The Npcap check", NpcapTickAsync);
         publishDelay.Tick += async (_, _) => await Guarded("Sending the reading", async () => { publishDelay.Stop(); AttributePending(); RenderHero(); await PublishLatestAsync(); });
         // Every second: a failure is logged once per distinct message and the next tick runs as usual (#83).
@@ -593,7 +589,7 @@ public partial class MainWindow : Window
         else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
     }
     // Paired, but the server has not confirmed the pairing yet: it is tried again by itself (retryAt).
-    private bool Offline => api is null && retryAt is not null;
+    private bool Offline => link.Offline;
     private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character) => HeroRoom(character)?.Cost is > 0 and var cost ? cost : odylePerCube;
@@ -825,8 +821,7 @@ public partial class MainWindow : Window
             try { await action(); }
             catch (Exception error)
             {
-                // A 429 only pauses requests; it never rotates the publisher session.
-                if (api is not null && error is not ServerBusyException && (error is TaskCanceledException || error is HttpRequestException http && (http.StatusCode is null || (int)http.StatusCode >= 500 || http.StatusCode == HttpStatusCode.Unauthorized))) needsReconnect = true;
+                link.NoteFailure(error);
                 if (error is not (HttpRequestException or TaskCanceledException or ArgumentException or InvalidOperationException)) Log.Error("Operation failed", error);
                 Status(Describe(error));
             }
@@ -844,7 +839,7 @@ public partial class MainWindow : Window
         // Npcap missing shows in the reader row from the start, also before the app is paired.
         if (!Npcap.Probe()) ShowNpcapProblem(null);
         await ExecuteAsync(RestoreAsync);
-        if (StartupCommand.ShowsWindow(tray, paired: api is not null || retryAt is not null))
+        if (StartupCommand.ShowsWindow(tray, paired: api is not null || link.RetryAt is not null))
         {
             if (!IsVisible) ShowWindow();
             if (api is null && !Offline) OpenSettings();
@@ -853,7 +848,7 @@ public partial class MainWindow : Window
     private async void Retry_Click(object sender, RoutedEventArgs e) => await Guarded("Reconnect saved account", () => ExecuteAsync(RestoreAsync));
     private async Task RestoreAsync()
     {
-        restoreTimer.Stop(); retryAt = null;
+        link.StopRetrying();
         if (api is not null) return;
         var saved = SessionStore.Load(out var unreadable);
         if (saved is null)
@@ -861,20 +856,20 @@ public partial class MainWindow : Window
             if (unreadable) { settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); }
             return;
         }
-        settings.EndpointInput.Text = saved.Endpoint; Status(T("Connecting to your account…"));
+        settings.EndpointInput.Text = link.Endpoint = saved.Endpoint; Status(T("Connecting to your account…"));
         PartyApi next;
         try { next = UseApi(newApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
-        catch (ArgumentException error) { Log.Error("The saved server address is not usable", error); SessionStore.Clear(); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); return; }
+        catch (ArgumentException error) { Log.Error("The saved server address is not usable", error); SessionStore.Clear(); link.Forget(); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); return; }
         // The login snapshot names the character, so the first try reads before the server is asked (#86). What it
         // reads meanwhile waits for the operations lock this start holds: once the account is connected it is saved
         // and sent, and while the server cannot confirm the pairing it stays on this PC like any offline reading.
-        if (capture is null && restoreAttempt == 0) await StartReaderAsync();
+        if (capture is null && link.Attempt == 0) await StartReaderAsync();
         try { var auth = await next.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
         // Only the server's own 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the
         // dashboard); a 401 from something in front of the server arrives as 502 (PartyApi.IsServersOwn401).
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
         {
-            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
+            DropApi(); SessionStore.Clear(); link.Forget(); link.Attempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
             // Unpaired, the reader that started for the login snapshot stops again.
             readerWanted = false; if (capture is not null) await StopReaderAsync();
             Log.Warn("The server no longer knows this PC's pairing; the saved connection was removed."); Status(Unpaired); RenderHero();
@@ -888,17 +883,14 @@ public partial class MainWindow : Window
         // A reader that could not start before (Npcap missing, say) is tried again once the account is connected,
         // or, while the server cannot confirm the pairing, after its first failed try (a reader stopped by hand
         // meanwhile stays stopped).
-        if (capture is null && (api is not null || Offline && restoreAttempt <= 1)) await StartReaderAsync();
+        if (capture is null && (api is not null || Offline && link.Attempt <= 1)) await StartReaderAsync();
         if (capture is not null) await TakeOverAsync();
         // The character the game named while offline is saved and its reading sent now (not under this lock).
         if (api is not null && pendingIdentity is { } named) { pendingIdentity = null; _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the character named offline", () => SaveDetectedCharacterAsync(named.Capture, named.Identity))); }
     }
     private void ScheduleRestore(Exception error)
     {
-        var now = DateTimeOffset.UtcNow; var wait = Retry.Backoff(restoreAttempt++);
-        if (error is ServerBusyException paused && paused.Until - now > wait) wait = paused.Until - now;
-        retryAt = now + wait; retryProblem = error is ServerBusyException ? "busy" : ""; restoreTimer.Interval = wait; restoreTimer.Start();
-        Log.Warn($"The saved pairing could not be confirmed ({(error is HttpRequestException { StatusCode: { } code } ? (int)code : error.GetType().Name)}: {error.Message}); attempt {restoreAttempt}, next in {wait.TotalSeconds:0} s.");
+        link.ScheduleRetry(error, DateTimeOffset.UtcNow);
         // The card turns offline at once: the reader may have rendered it while the server was asked, and the tick
         // no longer renders the whole card (#84).
         RenderRetry(); RenderHero();
@@ -906,9 +898,9 @@ public partial class MainWindow : Window
     // Counts down to the next automatic try in the footer; Reconnect saved account tries at once.
     private void RenderRetry()
     {
-        if (retryAt is not { } at || api is not null) return;
+        if (link.RetryAt is not { } at || api is not null) return;
         var left = Wait(at - DateTimeOffset.UtcNow);
-        StatusLabel.Text = retryProblem == "busy" ? T("Server busy · retrying in {0}.", left) : T("Server unavailable · retrying in {0}. Your pairing is kept.", left);
+        StatusLabel.Text = link.RetryProblem == "busy" ? T("Server busy · retrying in {0}.", left) : T("Server unavailable · retrying in {0}. Your pairing is kept.", left);
     }
     // While the server asks the app to wait (429) the footer counts down; requests resume by themselves.
     private void RenderBusy()
@@ -921,11 +913,11 @@ public partial class MainWindow : Window
     // Every request client of this window reports the account names its sign-ins return.
     private PartyApi UseApi(PartyApi next)
     {
-        api = next; NewConnection(); next.AppVersion = Updater.Current.ToString();
+        link.Use(next); NewConnection();
         next.SignedIn += auth => Dispatcher.BeginInvoke(() => { if (api == next && auth.Record.Id == accountId) ShowAccount(auth.Record.DisplayName); });
         return next;
     }
-    private void DropApi() { heartbeat.Stop(); partyTimer.Stop(); realtime?.Dispose(); realtime = null; api?.Dispose(); api = null; NewConnection(); }
+    private void DropApi() { partyTimer.Stop(); realtime?.Dispose(); realtime = null; link.Drop(); NewConnection(); }
     // Forgets what the previous server answered and refused; the capture reads PvP only for an account that wants it.
     private void NewConnection() { connection = new(); roomsKnown = null; if (capture is { } reading) reading.ReadPvp = PvpWanted; }
     private void ShowAccount(string displayName)
@@ -953,15 +945,14 @@ public partial class MainWindow : Window
         // character the game named is saved again there before anything is sent, never as the new account's last one.
         if (accountId.Length > 0 && (auth.Record.Id != accountId || connectedEndpoint != api.Endpoint)) ForgetSavedCharacter();
         connectedEndpoint = api.Endpoint;
-        sessionId = session.SessionId; sequence = session.Sequence; activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
+        link.Connected(session); activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
         NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
-        restoreTimer.Stop(); retryAt = null; restoreAttempt = 0;
         Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true); UsesPaths();
         var listed = await ReloadAsync();
         Status("");
-        lastTick = tokenRenewedAt = DateTimeOffset.UtcNow; needsReconnect = false; heartbeat.Start();
+        link.StartHeartbeat(DateTimeOffset.UtcNow);
         partyTimer.Start(); StartRealtime();
         // The rooms' snapshots and the checklist load beside the reader, not under the operations lock, and the
         // rooms just fetched are not asked for again (#86).
@@ -1122,12 +1113,12 @@ public partial class MainWindow : Window
         {
             DropApi(); settings.RetryButton.Visibility = Visibility.Visible; settings.ServerOptions.IsExpanded = true; ShowConnected(false);
             Log.Warn($"Paired, but connecting failed: {error.Message}");
-            restoreAttempt = 0; ScheduleRestore(error);
+            link.Attempt = 0; ScheduleRestore(error);
         }
         // The server's own 401 right after pairing: the new pairing ended at once (removed on the dashboard).
         catch (HttpRequestException) when (api == next)
         {
-            DropApi(); SessionStore.Clear(); restoreAttempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); RenderHero();
+            DropApi(); SessionStore.Clear(); link.Forget(); link.Attempt = 0; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); RenderHero();
             throw;
         }
         catch { if (api != next) next.Dispose(); throw; }
@@ -1698,7 +1689,7 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { adapters = "unavailable · " + error.Message; }
         var npcap = !Npcap.Probe() ? "not found" : $"installed{(Npcap.Version() is { } version ? " " + version : "")}{(Npcap.Restricted() ? " · administrators only" : "")}";
         string host; try { host = new Uri(ConnectionDetails.NormalizeEndpoint(settings.EndpointInput.Text)).Host; } catch (Exception error) when (error is ArgumentException or UriFormatException) { host = "unknown server"; }
-        var account = api is not null ? $"paired · {host} · {(realtime?.IsConnected == true ? "realtime" : "polling")}" : retryAt is not null ? $"paired · {host} · not reached yet" : "not paired";
+        var account = api is not null ? $"paired · {host} · {(realtime?.IsConnected == true ? "realtime" : "polling")}" : link.RetryAt is not null ? $"paired · {host} · not reached yet" : "not paired";
         var reader = capture is { } running ? $"running · {readerState} · {running.ReceivedPackets:N0} packets · {running.GameBytes / 1024.0:N0} KB from the game" : $"stopped · {readerState}";
         return Diagnostics.Report(DateTimeOffset.Now, [
             ("App", $"Odyle {Updater.Current} · {Updater.Runtime} · {(Updater.SelfContained ? "self-contained" : "small")} package · {(Updater.IsReleaseBuild ? "release" : "development")} build"),
@@ -1816,7 +1807,7 @@ public partial class MainWindow : Window
     {
         if (api is null || activeCharacterId.Length == 0) return;
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
-        try { await api.InvalidateAsync(id, sessionId); } catch { }
+        try { await api.InvalidateAsync(id, link.SessionId); } catch { }
     }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
     // invalidate is false when a restart hands the live character over (QuitAsync).
@@ -2009,11 +2000,11 @@ public partial class MainWindow : Window
             // What changed since the reading saved before it on this live streak (none after a snapshot).
             var streak = publishedTotal >= 0 && activeCharacterId == character.Id;
             var (kind, delta) = OdyleChange.Of(reading.Source, reading.Total, reading.Base, streak ? publishedTotal : null, streak ? publishedBase : null);
-            var saved = await api.ReportAsync(new PacketReading(sessionId, ++sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id, Base: reading.Base, Bonus: reading.Bonus, Kind: kind, Delta: delta));
+            var saved = await api.ReportAsync(new PacketReading(link.SessionId, ++link.Sequence, character.CharacterName, character.Server, character.Region, reading.Total, reading.ParserVersion, character.Id, Base: reading.Base, Bonus: reading.Bonus, Kind: kind, Delta: delta));
             publishedBase = reading.Base;
             if (delta is { } change && kind is OdyleChange.Spend or OdyleChange.Regen or OdyleChange.Item) lastChange = (change, kind, DateTimeOffset.Now, saved.Id);
-            if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, sessionId); } catch { } }
-            activeCharacterId = saved.Id; publishedTotal = reading.Total; lastTick = DateTimeOffset.UtcNow; publishFailure = null; connection.AdapterOutdated = false;
+            if (activeCharacterId.Length > 0 && activeCharacterId != saved.Id) { var previous = activeCharacterId; try { await api.InvalidateAsync(previous, link.SessionId); } catch { } }
+            activeCharacterId = saved.Id; publishedTotal = reading.Total; link.LastTick = DateTimeOffset.UtcNow; publishFailure = null; connection.AdapterOutdated = false;
             UpdateCharacterInList(saved);
             SetReaderState(ReaderState.Live, T("Live"));
             OfferAutostart();
@@ -2052,10 +2043,10 @@ public partial class MainWindow : Window
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
         {
             publishFailure = T(error.Message); publishBlockedUntil = DateTimeOffset.UtcNow.AddSeconds(60);
-            if (error.StatusCode == HttpStatusCode.Forbidden) needsReconnect = true;
+            if (error.StatusCode == HttpStatusCode.Forbidden) link.NeedsReconnect = true;
             SetReaderState(ReaderState.Problem, T("The server refused the reading: {0}", T(error.Message)));
         }
-        catch (Exception error) { needsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
+        catch (Exception error) { link.NeedsReconnect = true; publishFailure = T("Connection problem"); SetReaderState(ReaderState.Problem, T("Could not send the reading: {0}", Describe(error))); }
         RenderHero();
         if (readerPaused) await FollowReaderPauseAsync();
     }
@@ -2187,24 +2178,24 @@ public partial class MainWindow : Window
     private Task SendLocationAsync(LocationReport report)
     {
         var state = connection;
-        if (!state.ShareLocation || !state.Location.Open || api is null || sessionId.Length == 0) return Task.CompletedTask;
+        if (!state.ShareLocation || !state.Location.Open || api is null || link.SessionId.Length == 0) return Task.CompletedTask;
         state.LocationNext = report;
         return state.Location.RunAsync(() =>
         {
-            if (state != connection || !state.ShareLocation || api is not { } current || sessionId.Length == 0 || state.LocationNext is not { } next) return null;
+            if (state != connection || !state.ShareLocation || api is not { } current || link.SessionId.Length == 0 || state.LocationNext is not { } next) return null;
             state.LocationNext = null;
             return SendPositionAsync(state, current, next);
         }, refused: () => state.LocationNext = null);
     }
     private async Task SendPositionAsync(ConnectionState state, PartyApi current, LocationReport report)
     {
-        if (await current.LocationAsync(sessionId, report)) { ShowOwnPlace(report); return; }
+        if (await current.LocationAsync(link.SessionId, report)) { ShowOwnPlace(report); return; }
         state.ShareLocation = false; state.LocationNext = null;
         Log.Info("The server says this account does not share its location; nothing is sent until it does.");
     }
     // What the location, party and force, teammates' names and PvP wait for: a connected session and
     // the character the game named, saved to the account.
-    private bool NamedAndSaved => api is not null && sessionId.Length > 0 && currentCharacterId.Length > 0 && attribution.NamedSaved;
+    private bool NamedAndSaved => api is not null && link.SessionId.Length > 0 && currentCharacterId.Length > 0 && attribution.NamedSaved;
 
     // ----- Parties and forces -----
     // The party and force the named character is in (GroupTracker), sent when either changes and each
@@ -2224,7 +2215,7 @@ public partial class MainWindow : Window
     {
         var state = connection;
         if (!GroupReady) return Task.CompletedTask;
-        return state.Group.RunAsync(() => state == connection && GroupReady && api is { } current ? current.GameGroupAsync(sessionId, currentCharacterId, groups.Party, groups.Force) : null);
+        return state.Group.RunAsync(() => state == connection && GroupReady && api is { } current ? current.GameGroupAsync(link.SessionId, currentCharacterId, groups.Party, groups.Force) : null);
     }
 
     // ----- Party and force members -----
@@ -2266,7 +2257,7 @@ public partial class MainWindow : Window
     }
     private async Task SendNamesAsync(ConnectionState state, PartyApi current, string[] names)
     {
-        if (!await current.TeammatesAsync(sessionId, currentCharacterId, names)) { if (state == connection) NoteShareTeammates(false); return; }
+        if (!await current.TeammatesAsync(link.SessionId, currentCharacterId, names)) { if (state == connection) NoteShareTeammates(false); return; }
         // A long session forgets them rather than growing without end.
         if (state.TeammatesSent.Count > 5000) state.TeammatesSent.Clear();
         state.TeammatesSent.UnionWith(names);
@@ -2313,7 +2304,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                if (!(await current.PvpAsync(sessionId, currentCharacterId, batch)).Enabled) { if (state == connection) NotePvpStats(false); return; }
+                if (!(await current.PvpAsync(link.SessionId, currentCharacterId, batch)).Enabled) { if (state == connection) NotePvpStats(false); return; }
             }
             // Events the server will not take as they are would be refused again: they are dropped.
             catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message != PartyApi.PvpAdapterRefused) { state.PvpOutbox.Sent(batch); Log.Warn($"The server refused {batch.Length} PvP events: {error.Message}"); return; }
@@ -2480,23 +2471,14 @@ public partial class MainWindow : Window
     // ----- Session upkeep -----
     private async Task ReconnectAsync()
     {
-        if (api is null) return;
-        PublisherSession session;
-        // The previous session may be gone (expired, or deleted with a PC removed on the dashboard);
-        // a fresh one names the device key, and a removed PC answers 401 there.
-        // Only a server that answered (below 500) is asked again without it: offline, a timeout or a server error
-        // would fail the same way, and Stop or Disconnect would wait for both (#86).
-        try { session = await api.StartSessionAsync(sessionId); }
-        catch (HttpRequestException error) when (SessionGone(error)) { session = await api.StartSessionAsync(); }
-        sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
+        if (api is not { } current) return;
+        var session = await link.RenewSessionAsync(current);
+        activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
         Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && attribution.Latest is not null) await PublishCoreAsync();
         RenderHero();
     }
-    // Whether a failed session start with the previous session id is worth one more try without it: the server
-    // answered, and not 401 (the pairing ended) or 429 (it asks to wait).
-    internal static bool SessionGone(HttpRequestException error) => error.StatusCode is { } status && (int)status < 500 && status is not (HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests);
     private async Task PulseAsync()
     {
         if (api is not { } current || !await operations.WaitAsync(0)) return;
@@ -2504,10 +2486,9 @@ public partial class MainWindow : Window
         {
             var now = DateTimeOffset.UtcNow;
             // Paused by a 429: nothing is sent, and the quiet time does not count as a lost connection.
-            if (current.BusyUntil > now) { lastTick = current.BusyUntil; return; }
-            // Account tokens last seven days: renew daily so a long-running app never holds an expired one.
-            if (now - tokenRenewedAt > TimeSpan.FromHours(24)) { await SavePairingAsync(await current.SignInAsync()); tokenRenewedAt = now; }
-            if (needsReconnect || now - lastTick > TimeSpan.FromSeconds(45)) await ReconnectAsync();
+            if (link.Waiting(current, now)) return;
+            if (link.TokenDue(now)) { await SavePairingAsync(await current.SignInAsync()); link.TokenRenewedAt = now; }
+            if (link.SessionDue(now)) await ReconnectAsync();
             if (api is null) return;
             if (capture is { } running && attribution.Latest is not null)
             {
@@ -2516,7 +2497,7 @@ public partial class MainWindow : Window
                 if (alive) await PublishCoreAsync();
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
-            var answer = await api.HeartbeatAsync(sessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); lastTick = DateTimeOffset.UtcNow;
+            var answer = await api.HeartbeatAsync(link.SessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); link.LastTick = DateTimeOffset.UtcNow;
             // The pause switch reaches every paired app within one heartbeat, both ways.
             NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation); NotePvpStats(answer.PvpStats); NoteShareTeammates(answer.ShareTeammates);
             // PvP events that could not be sent (no connection, a busy server) go with the next heartbeat.
@@ -2531,15 +2512,15 @@ public partial class MainWindow : Window
             Log.Warn("The server no longer knows this PC's pairing (401)."); await DisconnectAsync(Unpaired, clearSaved: true);
             if (!IsVisible) Notify(T("Odyle is no longer paired"), Unpaired);
         }
-        catch (ServerBusyException error) { lastTick = error.Until; Log.Warn($"Server busy (429); requests pause until {error.Until.ToLocalTime():HH:mm:ss}."); RenderBusy(); }
-        catch (Exception error) { needsReconnect = true; Log.Warn($"Heartbeat failed: {error.Message}"); Status(Describe(error)); }
+        catch (ServerBusyException error) { link.LastTick = error.Until; Log.Warn($"Server busy (429); requests pause until {error.Until.ToLocalTime():HH:mm:ss}."); RenderBusy(); }
+        catch (Exception error) { link.NeedsReconnect = true; Log.Warn($"Heartbeat failed: {error.Message}"); Status(Describe(error)); }
         finally { operations.Release(); }
     }
     private async Task DisconnectAsync(string message, bool clearSaved)
     {
         await StopReaderAsync();
         // The pause is the server's: without a connection there is none.
-        DropApi(); restoreTimer.Stop(); retryAt = null; pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) SessionStore.Clear();
+        DropApi(); link.StopRetrying(); pendingIdentity = null; busyShown = false; readerWanted = false; readerPaused = false; if (clearSaved) { SessionStore.Clear(); link.Forget(); }
         Log.Info(clearSaved ? "Disconnected; the saved connection was removed." : "Disconnected.");
         activeCharacterId = ""; currentCharacterId = ""; accountName = ""; accountId = ""; characters = []; maps = []; rooms = []; snapshots = []; roomsAgain.Clear(); tasks = []; tasksLoaded = false; tasksProblem = null;
         settings.RetryButton.Visibility = clearSaved ? Visibility.Collapsed : Visibility.Visible; ShowConnected(false); RenderRooms(); RenderParty(); RenderTasks(); ShowAnnouncement(null);
@@ -2609,7 +2590,7 @@ public partial class MainWindow : Window
         if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged -= Resumed;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
-        SavePosition(); heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); restoreTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace();
+        SavePosition(); link.Heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); link.RetryTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace();
         // An update being installed finishes first (its failure is the installer's to report).
         try { await installRun; } catch (Exception) { }
         // A quit that came while an update was copied in restarts into it, handing the live character over.

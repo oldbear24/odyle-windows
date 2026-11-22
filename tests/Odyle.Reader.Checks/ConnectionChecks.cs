@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Windows;
@@ -11,6 +12,43 @@ using Odyle.Reader;
 // whole flow against a live backend (the dashboard's integration suite runs it).
 static partial class ReaderChecks
 {
+    // The connection's life on its own (ConnectionLifecycle), without a window: the retries of a saved pairing, what
+    // starts a new session, and a server that asks the app to wait.
+    static async Task ConnectionLifecycleScenario()
+    {
+        var link = new ConnectionLifecycle(); var now = DateTimeOffset.UtcNow; var offline = new HttpRequestException("No such host is known.");
+        var waits = Enumerable.Range(0, 6).Select(_ => link.ScheduleRetry(offline, now).TotalSeconds).ToArray();
+        Check(waits.SequenceEqual([15, 30, 60, 120, 300, 300]) && link.Attempt == 6 && link.RetryTimer.IsEnabled && link.RetryAt == now + TimeSpan.FromMinutes(5) && link.RetryProblem == "" && link.Offline, "a saved pairing is tried again after 15 s, 30 s, 1 min, 2 min, then every 5 minutes: " + string.Join(", ", waits));
+        Check(link.ScheduleRetry(new ServerBusyException("Too Many Requests.", now.AddMinutes(20)), now) == TimeSpan.FromMinutes(20) && link.RetryProblem == "busy", "a 429 that asks for longer waits as long as it asks");
+        link.Connected(new PublisherSession("s9", 4));
+        Check(link.SessionId == "s9" && link.Sequence == 4 && link.Attempt == 0 && !link.RetryTimer.IsEnabled && link.RetryAt is null && !link.Offline, "a connected session ends the retries");
+        HttpRequestException Status(HttpStatusCode? code) => new("x", null, code);
+        Check(ConnectionLifecycle.SessionGone(Status(HttpStatusCode.NotFound)) && ConnectionLifecycle.SessionGone(Status(HttpStatusCode.BadRequest)) && !ConnectionLifecycle.SessionGone(Status(HttpStatusCode.Unauthorized))
+            && !ConnectionLifecycle.SessionGone(Status(HttpStatusCode.TooManyRequests)) && !ConnectionLifecycle.SessionGone(Status(HttpStatusCode.ServiceUnavailable)) && !ConnectionLifecycle.SessionGone(Status(null)), "only a server that answered below 500, and not 401 or 429, is asked for a fresh session");
+        link.NoteFailure(new TaskCanceledException());
+        Check(!link.NeedsReconnect, "without a connection a failure starts no new session");
+        var busyAnswers = 0;
+        var api = new PartyApi("https://party.example", "token", null, new Answering(_ => { busyAnswers++; var answer = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("""{"message":"Too Many Requests."}""") }; answer.Headers.Add("Retry-After", "30"); return answer; }));
+        link.Use(api);
+        Check(link.Endpoint == "https://party.example" && api.AppVersion == Updater.Current.ToString(), "the connection names its server and this build");
+        foreach (var (error, renews) in new (Exception, bool)[] { (new ServerBusyException("x", now), false), (Status(HttpStatusCode.BadRequest), false), (Status(HttpStatusCode.Forbidden), false), (new TaskCanceledException(), true), (Status(null), true), (Status(HttpStatusCode.BadGateway), true), (Status(HttpStatusCode.Unauthorized), true) })
+        {
+            link.NeedsReconnect = false; link.NoteFailure(error);
+            Check(link.NeedsReconnect == renews, $"{(error is HttpRequestException { StatusCode: { } code } ? (int)code : error.GetType().Name)} {(renews ? "starts" : "does not start")} a new session");
+        }
+        link.NeedsReconnect = false; link.LastTick = link.TokenRenewedAt = now;
+        Check(!link.SessionDue(now.AddSeconds(44)) && link.SessionDue(now.AddSeconds(46)) && !link.TokenDue(now.AddHours(23)) && link.TokenDue(now.AddHours(25)), "a session silent for 45 seconds is started again and the token is renewed daily");
+        try { await api.HeartbeatAsync("s9", null); } catch (ServerBusyException) { }
+        Check(busyAnswers == 1 && link.Waiting(api, DateTimeOffset.UtcNow) && link.LastTick == api.BusyUntil && api.BusyUntil > DateTimeOffset.UtcNow.AddSeconds(25), "while the server asks to wait the heartbeat sends nothing, and the quiet time is no lost connection");
+        link.Drop();
+        Check(link.Api is null && !link.Heartbeat.IsEnabled && link.Endpoint == "https://party.example" && !link.Offline, "dropping the connection keeps the pairing's server");
+        link.Forget();
+        Check(link.Endpoint == "" && link.RetryAt is null, "forgetting the pairing forgets its server");
+    }
+    sealed class Answering(Func<HttpRequestMessage, HttpResponseMessage> answer) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(answer(request));
+    }
     static async Task OfflineRestoreScenario(MainWindow window)
     {
         var settings = Settings(window);
@@ -22,8 +60,8 @@ static partial class ReaderChecks
         Check((bool)Field("readerWanted").GetValue(window)! && ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).IsEnabled, "while the server cannot confirm the pairing the reader starts anyway (here it waits for Npcap)");
         Check(Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · the reader reads locally and sends what it reads when the server is back.", "the card says it is offline, not that the PC is unpaired");
         ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
-        Check(Field("api").GetValue(window) is null && File.Exists(SessionStore.FilePath) && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible, "an unreachable server keeps the pairing and offers Reconnect saved account");
-        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && ((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
+        Check(window.Link.Api is null && File.Exists(SessionStore.FilePath) && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible, "an unreachable server keeps the pairing and offers Reconnect saved account");
+        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && window.Link.RetryTimer.IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
         await (Task)Call(window, "RestoreAsync")!;
         Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s"), "the next retry waits longer");
         // Offline the character the game names is followed as online and its reading shown; both wait for the server.
@@ -37,7 +75,7 @@ static partial class ReaderChecks
         Check(window.Attribution.Latest is null && window.Attribution.OwnerKey == "", "a switch offline never moves the reading to the next character");
         Field("capture").SetValue(window, null); Field("pendingIdentity").SetValue(window, null); window.Attribution.Reset();
         await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
-        Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
+        Check(!window.Link.RetryTimer.IsEnabled && window.Link.RetryAt is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
         Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
     }
     // Online (args: <url> <pair code>): the dashboard's integration suite asserts the sentence this prints.
@@ -45,7 +83,7 @@ static partial class ReaderChecks
     {
         var settings = Settings(window); var failed = failures.Count;
         var api = new PartyApi(url); var auth = await api.PairAsync(code);
-        Field("api").SetValue(window, api);
+        window.Link.Api = api;
         await (Task)Call(window, "ConnectAsync", auth)!;
         Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
         Check(Control<TextBlock>(window, "StatusLabel").Text == "", "once connected the footer says nothing: " + Control<TextBlock>(window, "StatusLabel").Text);
@@ -64,21 +102,21 @@ static partial class ReaderChecks
         var published = (await api.GetCharactersAsync()).Single(c => c.Id == automatic.Id);
         Check(published.Confirmed && published.Valid && published.Value == 390, "decoded reading is saved to the detected character");
         // Odyle is sent only on first read and on change; the heartbeat keeps it live.
-        var sent = (long)Field("sequence").GetValue(window)!;
+        var sent = window.Link.Sequence;
         await (Task)Call(window, "PublishLatestAsync")!;
         Call(window, "OnCandidate", capture, new PacketCandidate(390, "test-fixture-v1", CandidateSource.Update) { Base = 0, Bonus = 390 });
         await Task.Delay(300);
-        Check((long)Field("sequence").GetValue(window)! == sent, "an unchanged value is not sent again");
+        Check(window.Link.Sequence == sent, "an unchanged value is not sent again");
         Call(window, "OnCandidate", capture, new PacketCandidate(395, "test-fixture-v1", CandidateSource.Update) { Base = 5, Bonus = 390 });
         await Until(() => (int)Field("publishedTotal").GetValue(window)! == 395, 200);
-        Check((long)Field("sequence").GetValue(window)! == sent + 1, "a changed value is sent once");
+        Check(window.Link.Sequence == sent + 1, "a changed value is sent once");
         // In-game switches: a character without Odyle is named (its snapshot has no Odyle field), then
         // one with Odyle. The game sends the new snapshot first and names the character only after the
         // loading screen, 6 to 10 seconds later, when the publish delay has long run out.
         await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(45, "NoOdyleHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Call(window, "OnCandidate", capture, new PacketCandidate(120, "test-fixture-v1") { Base = 0, Bonus = 120 });
         window.Attribution.AttributePending(DateTimeOffset.UtcNow); await (Task)Call(window, "PublishLatestAsync")!;
-        Check((long)Field("sequence").GetValue(window)! == sent + 1 && Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot is not sent before the game names its character, however long the loading screen takes");
+        Check(window.Link.Sequence == sent + 1 && Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot is not sent before the game names its character, however long the loading screen takes");
         // Two capture interfaces see the same connection, and each reports the switch and the identity.
         for (var copy = 0; copy < 2; copy++)
         {
@@ -88,7 +126,7 @@ static partial class ReaderChecks
         var afterSwitch = await api.GetCharactersAsync();
         Check(afterSwitch.Single(c => c.Id == automatic.Id) is { Value: 395, Valid: false } && afterSwitch.Single(c => c.CharacterName == "NoOdyleHero") is { Confirmed: false }, "a switch never moves the new character's Odyle onto the previous one");
         var switched = afterSwitch.Single(c => c.CharacterName == "SwitchedHero");
-        Check(switched is { Value: 120, Valid: true, Confirmed: true } && (long)Field("sequence").GetValue(window)! == sent + 2, "the new character receives its own snapshot, and the second interface's report keeps it live");
+        Check(switched is { Value: 120, Valid: true, Confirmed: true } && window.Link.Sequence == sent + 2, "the new character receives its own snapshot, and the second interface's report keeps it live");
         Check((string)Field("currentCharacterId").GetValue(window)! == switched.Id, "the card switches with the game");
         // An update restart: the live character is handed over instead of marked stale, and the
         // next start takes it over under its own session, whose heartbeat keeps it live.
@@ -96,11 +134,11 @@ static partial class ReaderChecks
         Check(handed is { CharacterName: "SwitchedHero", Total: 120 }, "the live character is handed to the restart");
         HandoverStore.Save(handed!); await (Task)Call(window, "StopCaptureAsync", false)!;
         Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Valid: true, Value: 120 }, "a restart does not mark the handed-over character stale");
-        var before = (string)Field("sessionId").GetValue(window)!;
+        var before = window.Link.SessionId;
         await (Task)Call(window, "ConnectAsync", auth)!;
         capture = new PacketCapture(); Field("capture").SetValue(window, capture);
         await (Task)Call(window, "TakeOverAsync")!;
-        var resumed = (string)Field("sessionId").GetValue(window)!;
+        var resumed = window.Link.SessionId;
         Check(resumed != before && (string)Field("activeCharacterId").GetValue(window)! == switched.Id && Control<TextBlock>(window, "StateText").Text == "Live", "the next start takes the character over under its own session");
         var seen = (await api.GetCharactersAsync()).Single(c => c.Id == switched.Id).LastSeenAt;
         await Task.Delay(100); await api.HeartbeatAsync(resumed, switched.Id);
@@ -141,12 +179,12 @@ static partial class ReaderChecks
         Check((await api.GetCharactersAsync()).Single(c => c.Id == switched.Id) is { Confirmed: true, Value: 120 }, "stopping the reader keeps the value");
         // The server unreachable (as at a start during an outage): the character the game names and its
         // reading wait on this PC, and both reach the server once it answers again.
-        var offlineRun = new PacketCapture(); Field("api").SetValue(window, null); Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15));
+        var offlineRun = new PacketCapture(); window.Link.Api = null; window.Link.RetryAt = DateTimeOffset.UtcNow.AddSeconds(15);
         Field("capture").SetValue(window, offlineRun); window.Attribution.Reset();
         Call(window, "OnCandidate", offlineRun, new PacketCandidate(512, "test-fixture-v1") { Base = 12, Bonus = 500 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineRun, new GameIdentity(46, "ReturnHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Check(!(await api.GetCharactersAsync()).Any(c => c.CharacterName == "ReturnHero"), "offline nothing reaches the server");
-        Field("api").SetValue(window, api); Field("retryAt").SetValue(window, null); await (Task)Call(window, "ConnectAsync", auth)!;
+        window.Link.Api = api; window.Link.RetryAt = null; await (Task)Call(window, "ConnectAsync", auth)!;
         await (Task)Call(window, "PulseAsync")!;
         for (var i = 0; i < 50 && !(await api.GetCharactersAsync()).Any(c => c.CharacterName == "ReturnHero" && c.Confirmed && c.Value == 512); i++) await Task.Delay(100);
         Check((await api.GetCharactersAsync()).Single(c => c.CharacterName == "ReturnHero") is { Confirmed: true, Value: 512 }, "the character named offline is saved and its reading sent once the server answers");
