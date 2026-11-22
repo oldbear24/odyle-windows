@@ -27,7 +27,7 @@ static class PartyChecks
         {
             var name = one.GetProperty("name").GetString()!; var expect = one.GetProperty("expect");
             var got = PartyReadiness.Character(one.GetProperty("character").Deserialize<PartyEntry>(Web)!, now, one.GetProperty("cost").GetInt32());
-            Check(got.State.ToString().ToLowerInvariant() == expect.GetProperty("state").GetString(), got.Known == expect.GetProperty("known").GetBoolean(), got.Cubes == expect.GetProperty("cubes").GetInt32(), got.Ready == expect.GetProperty("ready").GetBoolean(), name);
+            Check(string.Equals(got.State.ToString(), expect.GetProperty("state").GetString(), StringComparison.OrdinalIgnoreCase), got.Known == expect.GetProperty("known").GetBoolean(), got.Cubes == expect.GetProperty("cubes").GetInt32(), got.Ready == expect.GetProperty("ready").GetBoolean(), name);
             cases++;
         }
         Check(PartyReadiness.Party([], now, 40) is { Characters.Length: 0, Players.Length: 0, Lowest: null, Cubes: 0, Uncounted.Length: 0 }, "an empty room");
@@ -53,8 +53,8 @@ static class PartyChecks
         Check(RunChip.Line(next, now.AddMinutes(89.5)) == "Fire Temple · starting now · 2 going · Evening", RunChip.Pick([WithRuns(mine)], "u", now.AddMinutes(106)) is null, "starting now, gone 15 minutes after the start");
         Check(RunChip.Pick([WithRuns(mine with { StartsAt = "2026-10-16 13:00:00.000Z" })], "u", now) is null, "only the next 24 hours");
         // A run you were going to that was cancelled or moved says so.
-        Check(RunChip.Change(next, [WithRuns()], now)!.StartsWith("Fire Temple at "), RunChip.Change(next, [WithRuns()], now)!.EndsWith(" was cancelled"), "a cancelled run");
-        Check(RunChip.Change(next, [WithRuns(mine with { StartsAt = "2026-10-15 14:00:00.000Z" })], now)!.StartsWith("Fire Temple moved to "), "a moved run");
+        Check(RunChip.Change(next, [WithRuns()], now)!.StartsWith("Fire Temple at ", StringComparison.Ordinal), RunChip.Change(next, [WithRuns()], now)!.EndsWith(" was cancelled", StringComparison.Ordinal), "a cancelled run");
+        Check(RunChip.Change(next, [WithRuns(mine with { StartsAt = "2026-10-15 14:00:00.000Z" })], now)!.StartsWith("Fire Temple moved to ", StringComparison.Ordinal), "a moved run");
         Check(RunChip.Change(next, [WithRuns(mine)], now) is null, RunChip.Change(next with { Going = false }, [WithRuns()], now) is null, "nothing for an unchanged run or one you were not going to");
         try
         {

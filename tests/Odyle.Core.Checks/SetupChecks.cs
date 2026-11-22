@@ -19,7 +19,7 @@ static class SetupChecks
         const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InUiLCJ0eXBlIjoiYXV0aCJ9.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
         var report = Diagnostics.Report(new DateTimeOffset(2026, 10, 15, 20, 0, 0, TimeSpan.Zero), [("App", "Odyle 0.6.0.12"), ("Npcap", "installed 1.79")], ["20:01:02 Waiting · Waiting for the AION2 game connection…"],
             ["Connected to https://party.example as account abcdefghij12345 on device \"DESKTOP-PLAYER\".", @"Odyle 0.6.0.13 is waiting in C:\Users\Player Name\AppData\Local\Odyle\updates\0.6.0.13.", "Decoder: own character TestHero, server 2304.", "token " + jwt]);
-        Check(report.StartsWith("Odyle diagnostics · 2026-10-15 20:00:00 +00:00"), report.Contains("App: Odyle 0.6.0.12"), report.Contains("Npcap: installed 1.79"), report.ReplaceLineEndings("\n").Contains("Last reader states:\n  20:01:02 Waiting"), "the report lists the facts and the reader's last states");
+        Check(report.StartsWith("Odyle diagnostics · 2026-10-15 20:00:00 +00:00", StringComparison.Ordinal), report.Contains("App: Odyle 0.6.0.12"), report.Contains("Npcap: installed 1.79"), report.ReplaceLineEndings("\n").Contains("Last reader states:\n  20:01:02 Waiting"), "the report lists the facts and the reader's last states");
         Check(report.Contains("Log, last 4 lines:") && report.Contains("account [account]") && report.Contains("device \"[this PC]\"") && report.Contains(@"C:\Users\[user]\AppData") && report.Contains("[token]"), "the account, the PC's name, the user folder and tokens are masked");
         Check(!report.Contains("abcdefghij12345") && !report.Contains("DESKTOP-PLAYER") && !report.Contains("Player Name") && !report.Contains("eyJ") && report.Contains("TestHero") && report.Contains("https://party.example"), "nothing personal is left, the game's facts are kept");
         Check(Diagnostics.Report(DateTimeOffset.UnixEpoch, [], [], []).Contains("none this run"), "a report without reader states says so");
@@ -31,7 +31,7 @@ static class SetupChecks
             var log = new RotatingLog(Path.Combine(folder, "odyle.log"), limit: 600);
             for (var i = 0; i < 12; i++) log.Write("INFO", $"line {i:00} " + new string('x', 40));
             var tail = log.Tail(5);
-            Check(tail.Length == 5, tail[^1].EndsWith("line 11 " + new string('x', 40)), tail.Select(l => l[^43..^41]).SequenceEqual(["07", "08", "09", "10", "11"]), "the tail is the newest lines in order, across the rotation");
+            Check(tail.Length == 5, tail[^1].EndsWith("line 11 " + new string('x', 40), StringComparison.Ordinal), tail.Select(l => l[^43..^41]).SequenceEqual(["07", "08", "09", "10", "11"]), "the tail is the newest lines in order, across the rotation");
             Check(log.Tail(1000).Length <= 12, new RotatingLog(Path.Combine(folder, "missing.log")).Tail(10).Length == 0, "a short or missing log gives what there is");
         }
         finally { Directory.Delete(folder, true); }

@@ -280,14 +280,14 @@ static class PacketChecks
         // Two heartbeats, then a length no frame can have.
         var unframed = new byte[] { 0x06, 0x00, 0x36, 0x06, 0x00, 0x36, 0x01, 0x00 };
         int Unframed() { var decoded = streams.Feed(game, later, 0x18, unframed); later += (uint)unframed.Length; return decoded; }
-        Check(Unframed() == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var unreadable } && unreadable.StartsWith("Unreadable"), "bytes that do not frame resync");
+        Check(Unframed() == 0 && !streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Resyncing, Message: var unreadable } && unreadable.StartsWith("Unreadable", StringComparison.Ordinal), "bytes that do not frame resync");
         var resyncs = statuses.Count(s => s.Kind == CaptureStatus.Resyncing);
         streams.Feed(game, later - (uint)unframed.Length, 0x18, unframed);
         Check(statuses.Count(s => s.Kind == CaptureStatus.Resyncing) == resyncs, "a retransmission of bytes already read does not resync again");
         Unframed(); Unframed();
         Check(!streams.IsBlocked(game), "five resyncs in a minute are tolerated");
         Unframed();
-        Check(streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var damaged } && damaged.StartsWith("Unsupported"), "a sixth resync within a minute blocks the connection and says so");
+        Check(streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var damaged } && damaged.StartsWith("Unsupported", StringComparison.Ordinal), "a sixth resync within a minute blocks the connection and says so");
         Check(streams.Feed(game, 1, 0x18, snapshot) == 0, candidates.Last().Total == 140, "a blocked connection is not decoded and counts no bytes");
         streams.Feed(game, 1, 0x11, []); Check(streams.Count == 0, "FIN ends the connection");
         var relog = game with { LocalPort = 50001 };

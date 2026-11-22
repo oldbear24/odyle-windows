@@ -17,7 +17,7 @@ static partial class ReaderChecks
         var resets = new TaskResets(); var now = Checklist.NextReset("daily", DateTimeOffset.UtcNow, resets).AddHours(-1);
         UserTask[] tasks = [new("t1", "u", "Daily dungeon", "daily"), new("t2", "u", "Weekly raid", "weekly")];
         reminders.Resets(tasks, resets, now);
-        Check(told is [{ Title: var title, Text: "Still open: Daily dungeon" }] && title.StartsWith("Daily reset in ") && title.EndsWith(" · 1 task open") && saved.RemindedResets is [_], "an open daily task is told an hour before the reset: " + string.Join(" | ", told));
+        Check(told is [{ Title: var title, Text: "Still open: Daily dungeon" }] && title.StartsWith("Daily reset in ", StringComparison.Ordinal) && title.EndsWith(" · 1 task open", StringComparison.Ordinal) && saved.RemindedResets is [_], "an open daily task is told an hour before the reset: " + string.Join(" | ", told));
         reminders.Resets(tasks, resets, now.AddMinutes(10));
         Check(told.Count == 1, "and only once");
         var tomorrow = now.AddDays(1); var hhmm = (DateTimeOffset at) => at.UtcDateTime.ToString("HH:mm");
@@ -44,7 +44,7 @@ static partial class ReaderChecks
         // with the force's other player, then another party's frame, each labelled with its players.
         Field("snapshots").SetValue(window, new[] { PartySnapshot(inGame: true) }); Call(window, "RenderParty");
         var together = ((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource)[0];
-        Check(together.Mates.Select(m => m.Name).SequenceEqual(["Lumina", "Rin", "Tor", "Vex", "KaelenAlt"]) && together.Mates[0].Hint.EndsWith("live from the game\nIn your party in game\nIn your force in game") && together.Mates[2].Hint.EndsWith("game\nIn one party in game"),
+        Check(together.Mates.Select(m => m.Name).SequenceEqual(["Lumina", "Rin", "Tor", "Vex", "KaelenAlt"]) && together.Mates[0].Hint.EndsWith("live from the game\nIn your party in game\nIn your force in game", StringComparison.Ordinal) && together.Mates[2].Hint.EndsWith("game\nIn one party in game", StringComparison.Ordinal),
             "the party list puts the players of one party or force together, yours first, and the tooltips say so: " + string.Join(", ", together.Mates.Select(m => m.Name)));
         Check(together.Shown is [MateBand { Label: "In your force in game", Count: "3 players", Items: [MateBand { Label: "In your party in game", Count: "2 players", Items: [PartyMate { Name: "Lumina" }] }, PartyMate { Name: "Rin" }] },
             MateBand { Label: "In one party in game", Count: "2 players", Items: [PartyMate { Name: "Tor" }, PartyMate { Name: "Vex" }] }, PartyMate { Name: "KaelenAlt" }],
@@ -89,9 +89,9 @@ static partial class ReaderChecks
         (string Title, string Text)? Notice() => ((string Title, string Text)?)typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window);
         void ClearNotice() => typeof(MainWindow).GetProperty("LastNotice", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, null);
         Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon)) }); Call(window, "CheckReminders");
-        Check(Notice() is { Title: "Fire Temple starts in 10 minutes", Text: var text } && text.StartsWith("Evening · starts at ") && text.EndsWith("\nBring potions"), "a joined run is announced with its dungeon, room, local time and note");
+        Check(Notice() is { Title: "Fire Temple starts in 10 minutes", Text: var text } && text.StartsWith("Evening · starts at ", StringComparison.Ordinal) && text.EndsWith("\nBring potions", StringComparison.Ordinal), "a joined run is announced with its dungeon, room, local time and note");
         ClearNotice(); Call(window, "CheckReminders");
-        Check(Notice() is null && PreferencesStore.Load().RemindedRuns is [var reminded] && reminded.StartsWith("run1|"), "a run is announced once, also across restarts, and runs others joined are not");
+        Check(Notice() is null && PreferencesStore.Load().RemindedRuns is [var reminded] && reminded.StartsWith("run1|", StringComparison.Ordinal), "a run is announced once, also across restarts, and runs others joined are not");
         Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(3))) }); Call(window, "CheckReminders");
         Check(Notice() is { Title: "Fire Temple starts in 13 minutes" }, "a run moved to another time is announced again");
         // The account's notification settings (the dashboard's Account & data): no tray reminders, quiet hours.
@@ -142,7 +142,7 @@ static partial class ReaderChecks
         Call(window, "RunGoing_Click", Control<Button>(window, "RunGoingButton"), new RoutedEventArgs()); await Task.Delay(300);
         Check(planServer.LastPlan.Contains("\"roomId\":\"r1\"") && planServer.LastPlan.Contains("\"id\":\"run9\"") && planServer.LastPlan.Contains("\"going\":false"), "Going ✓ leaves the run: " + planServer.LastPlan);
         Field("snapshots").SetValue(window, new[] { Room() }); Call(window, "RenderRunChip");
-        Check(Control<TextBlock>(window, "RunChipNotice") is { Visibility: Visibility.Visible, Text: var cancelled } && cancelled.StartsWith("Fire Temple at ") && cancelled.EndsWith(" was cancelled") && Control<TextBlock>(window, "RunChipLabel").Visibility == Visibility.Collapsed, "a cancelled run of yours says so");
+        Check(Control<TextBlock>(window, "RunChipNotice") is { Visibility: Visibility.Visible, Text: var cancelled } && cancelled.StartsWith("Fire Temple at ", StringComparison.Ordinal) && cancelled.EndsWith(" was cancelled", StringComparison.Ordinal) && Control<TextBlock>(window, "RunChipLabel").Visibility == Visibility.Collapsed, "a cancelled run of yours says so");
         Field("chipNoticeUntil").SetValue(window, DateTimeOffset.MinValue); Call(window, "RenderRunChip");
         Check(Control<Border>(window, "RunChipBox").Visibility == Visibility.Collapsed, "no run, no chip");
         // A character none of your rooms can see says so on the card, with a link to the dashboard.

@@ -35,7 +35,7 @@ static partial class ReaderChecks
         Fresh(scratch, "start"); Log.UseFolder(Path.Combine(scratch, "logs"));
         // Start with Windows writes to a Run key kept in memory, never to the real one.
         Autostart.Key = runKey; Autostart.Executable = @"C:\Odyle\Odyle.exe";
-        Register(args is [var url, var code] && !url.StartsWith("--") ? (url, code) : null);
+        Register(args is [var url, var code] && !url.StartsWith("--", StringComparison.Ordinal) ? (url, code) : null);
         if (args is ["--list"]) { foreach (var scenario in scenarios) Console.WriteLine(scenario.Name); return; }
         App.Headless = true; var app = new App(); app.InitializeComponent();
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
@@ -201,7 +201,7 @@ static partial class ReaderChecks
             await (Task)Call(window, "PairAsync")!;
             Check(server.Paired == 1 && window.Link.Api is null && restore.IsEnabled && window.Link.RetryAt is not null && SessionStore.Load(out _) is { Endpoint: "https://party.example", DeviceKey: "pairing-check-key" }
                 && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible && !window.Link.Heartbeat.IsEnabled, "a pairing whose session fails keeps the saved pairing and tries again by itself");
-            Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s"), "the footer counts down to the next try: " + Control<TextBlock>(window, "StatusLabel").Text);
+            Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s", StringComparison.Ordinal), "the footer counts down to the next try: " + Control<TextBlock>(window, "StatusLabel").Text);
             server.FailSession = false;
             await (Task)Call(window, "RestoreAsync")!;
             Check(window.Link.Api is PartyApi && window.Link.SessionId == "s1" && window.Link.Heartbeat.IsEnabled && !restore.IsEnabled && window.Link.RetryAt is null, "the next try connects the saved pairing");
@@ -314,7 +314,7 @@ static partial class ReaderChecks
             // asked (the failure itself renders the card, not only the operation around it).
             server.EndPairing = false; server.FailSignIn = true; SessionStore.Save(new SavedSession("https://party.example", "token", "pairing-check-key"));
             await (Task)Call(window, "RestoreAsync")!;
-            Check(Field("capture").GetValue(window) is PacketCapture && window.Link.Api is null && Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Offline · "),
+            Check(Field("capture").GetValue(window) is PacketCapture && window.Link.Api is null && Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text.StartsWith("Offline · ", StringComparison.Ordinal),
                 "an unreachable server at start leaves the card offline, not connecting: " + Control<TextBlock>(window, "AccountLabel").Text);
         }
         finally
@@ -436,7 +436,7 @@ static partial class ReaderChecks
             var route = request.RequestUri!.AbsolutePath; lock (Requests) Requests.Add(route);
             HttpResponseMessage Answer(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
             if (route == "/api/odyle/rooms") return Answer(HttpStatusCode.OK, $$"""{"rooms":[{{string.Join(",", Rooms.Select(Room))}}],"odylePerCube":40,"announcement":null}""");
-            if (!route.StartsWith("/api/odyle/snapshot/")) return Answer(HttpStatusCode.OK, "{}");
+            if (!route.StartsWith("/api/odyle/snapshot/", StringComparison.Ordinal)) return Answer(HttpStatusCode.OK, "{}");
             var id = route["/api/odyle/snapshot/".Length..];
             if (TimesOut.Contains(id)) throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 12 seconds elapsing.", new TimeoutException());
             if (Fails.TryGetValue(id, out var failure)) return Answer(failure, """{"message":"Something went wrong."}""");

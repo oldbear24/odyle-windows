@@ -18,12 +18,12 @@ static class ClockChecks
             var now = At("2026-10-15T05:00:00Z"); var read = At("2026-10-14T22:30:00Z");
             var projected = OdyleClock.Of(500, 300, read, now, rules, null, 600)!;
             Check(projected is { Base: 530, Total: 830, Cap: 840, Tick: 15, Full: false, Settled: true, Projected: true }, projected.Next == At("2026-10-15T07:00:00Z"), projected.Fills.Single() == new ClockFill(840, At("2026-10-17T19:00:00Z")), "a projection from an older reading");
-            Check(OdyleClock.Line(projected, now, false).StartsWith("≈830 now if unspent · +15 in 2h 0m · full ≈ "), !OdyleClock.Line(projected, now, false).Contains('/'), "the line of a character not read right now");
-            Check(OdyleClock.Line(projected, now, true).StartsWith("+15 in 2h 0m · full ≈ "), "a character read right now shows no estimate");
+            Check(OdyleClock.Line(projected, now, false).StartsWith("≈830 now if unspent · +15 in 2h 0m · full ≈ ", StringComparison.Ordinal), !OdyleClock.Line(projected, now, false).Contains('/'), "the line of a character not read right now");
+            Check(OdyleClock.Line(projected, now, true).StartsWith("+15 in 2h 0m · full ≈ ", StringComparison.Ordinal), "a character read right now shows no estimate");
             var open = OdyleClock.Of(500, 300, read, now, rules, null, 500)!;
             Check(open is { Cap: 560, Settled: false }, open.Fills.SequenceEqual([new ClockFill(560, At("2026-10-15T10:00:00Z")), new ClockFill(840, At("2026-10-17T19:00:00Z"))]), "an open cap gives both fill times");
             var reached = OdyleClock.Of(500, 300, At("2026-10-13T00:30:00Z"), now, rules, null, 500)!;
-            Check(reached is { Base: 560, Full: true }, OdyleClock.Line(reached, now, true).StartsWith("natural pool at 560: full if its cap is 560 · full ≈ "), OdyleClock.Line(reached, now, true).EndsWith(" at 840"), "an open cap is not called full");
+            Check(reached is { Base: 560, Full: true }, OdyleClock.Line(reached, now, true).StartsWith("natural pool at 560: full if its cap is 560 · full ≈ ", StringComparison.Ordinal), OdyleClock.Line(reached, now, true).EndsWith(" at 840", StringComparison.Ordinal), "an open cap is not called full");
             var full = OdyleClock.Of(840, 0, read, now, rules, 20, 840)!;
             Check(full is { Full: true, Settled: true, Total: 840, Tick: 20, Projected: false }, OdyleClock.Line(full, now, true) == "natural pool full · each tick of 20 is lost", "a full pool loses each tick of the character's own size");
             Check(OdyleClock.Of(500, 300, read, now, rules with { Paused = true }) is null, OdyleClock.Line(null, now, false) == "", "the operators can hide the clock");

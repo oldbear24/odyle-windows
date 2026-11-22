@@ -61,9 +61,9 @@ static partial class ReaderChecks
         Check(Control<TextBlock>(window, "AccountLabel").Text == "OFFLINE" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · the reader reads locally and sends what it reads when the server is back.", "the card says it is offline, not that the PC is unpaired");
         ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
         Check(window.Link.Api is null && File.Exists(SessionStore.FilePath) && ((Button)settings.FindName("RetryButton")).Visibility == Visibility.Visible, "an unreachable server keeps the pairing and offers Reconnect saved account");
-        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s") && window.Link.RetryTimer.IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
+        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 15 s", StringComparison.Ordinal) && window.Link.RetryTimer.IsEnabled, "the first automatic retry comes after 15 seconds and is shown");
         await (Task)Call(window, "RestoreAsync")!;
-        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s"), "the next retry waits longer");
+        Check(Control<TextBlock>(window, "StatusLabel").Text.StartsWith("Server unavailable · retrying in 30 s", StringComparison.Ordinal), "the next retry waits longer");
         // The address box is editable while the saved pairing is retried: the dashboard links and diagnostics keep the pairing's server.
         ((TextBox)settings.FindName("EndpointInput")).Text = "https://typed.example";
         Check(((string)Call(window, "DiagnosticsReport")!).Contains("Account: paired · 127.0.0.1 · not reached yet") && window.Link.Endpoint == "http://127.0.0.1:1", "what is typed in the address box meanwhile is not the pairing's server");
@@ -156,9 +156,9 @@ static partial class ReaderChecks
         }
         await (Task)Call(window, "RefreshPartyAsync", new object[] { null! })!;
         var summary = (CharacterSharing[])((ItemsControl)settings.FindName("SharingList")).ItemsSource;
-        Check(summary.Single(g => g.Title.StartsWith("SwitchedHero")).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero")).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
+        Check(summary.Single(g => g.Title.StartsWith("SwitchedHero", StringComparison.Ordinal)).Rooms == "Shared in UI room" && summary.Single(g => g.Title.StartsWith("DetectedHero", StringComparison.Ordinal)).Rooms == "Private in every room", "settings reflect sharing chosen on the dashboard");
         Check(((RoomSnapshot[])Field("snapshots").GetValue(window)!).Single().Members.Single().Characters.Length == 3, "the room snapshot is read from the server");
-        Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource) is [{ Mates.Length: 0, Summary: var line }] && line.StartsWith("Party · ") && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters count for the room's party but are not listed as party members");
+        Check(((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource) is [{ Mates.Length: 0, Summary: var line }] && line.StartsWith("Party · ", StringComparison.Ordinal) && Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Visible, "your own characters count for the room's party but are not listed as party members");
         // The checklist kept on the dashboard is shown beside the card and ticked off from here.
         using (var http = new HttpClient { BaseAddress = new Uri(url.TrimEnd('/') + "/") })
         {

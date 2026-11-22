@@ -68,7 +68,7 @@ static partial class ReaderChecks
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
-        Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
+        Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes", StringComparison.Ordinal), "cube count derives from the reading");
         Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
         Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
         Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
@@ -151,9 +151,9 @@ static partial class ReaderChecks
             ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
         }
         await Change(0, 0, 0);
-        Check(server.LastReport.Contains("\"base\":0,\"bonus\":0,\"kind\":\"spend\",\"delta\":-15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 0 · items 0 · −15 at "), "a spend is sent as one, and the card shows the split and the change");
+        Check(server.LastReport.Contains("\"base\":0,\"bonus\":0,\"kind\":\"spend\",\"delta\":-15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 0 · items 0 · −15 at ", StringComparison.Ordinal), "a spend is sent as one, and the card shows the split and the change");
         await Change(15, 15, 0);
-        Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at "), "a rise of the natural pool alone is a regeneration tick");
+        Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at ", StringComparison.Ordinal), "a rise of the natural pool alone is a regeneration tick");
         // The Odyle clock under the split: the next tick and when each cap the character may have is reached; the operators can hide it.
         var odyleClock = Control<TextBlock>(window, "OdyleClockLabel");
         Check(odyleClock.Visibility == Visibility.Visible && System.Text.RegularExpressions.Regex.IsMatch(odyleClock.Text, @"^\+15 in .+ · full ≈ .+ at 560 / .+ at 840$"), "the card shows the Odyle clock: " + odyleClock.Text);
@@ -163,11 +163,11 @@ static partial class ReaderChecks
         // Near its cap the clock turns orange (11 ticks to 560: 30 to 33 hours), and red with the value once the pool is full.
         var shownReading = window.Attribution.Latest;
         window.Attribution.Latest = new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }; Call(window, "RenderOdyleClock");
-        Check(odyleClock.Text.StartsWith("Nearly full · +15 in ") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
+        Check(odyleClock.Text.StartsWith("Nearly full · +15 in ", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
         // The taskbar button fills with the natural pool towards its cap, in the card's colours.
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
         window.Attribution.Latest = new PacketCandidate(560, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }; Call(window, "RenderOdyleClock");
-        Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
+        Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
         window.Attribution.Latest = shownReading; Call(window, "RenderOdyleClock");
         Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
@@ -175,7 +175,7 @@ static partial class ReaderChecks
         // The Discord status (off by default): while the reader has the game, the card's character with its Odyle.
         Check(Settings(window).FindName("DiscordToggle") is CheckBox { IsChecked: false } && Call(window, "PresenceNow") is null, "the Discord status is off unless chosen");
         Call(window, "SetDiscordStatus", true, false); Field("gamePresent").SetValue(window, true);
-        Check(Call(window, "PresenceNow") is DiscordActivity { Details: var details } && details.EndsWith(" · " + Control<TextBlock>(window, "ValueLabel").Text + " Odyle") && ((TextBlock)Settings(window).FindName("DiscordNoteLabel")).Visibility == Visibility.Visible, "chosen, Discord shows the character and its Odyle while the game is read");
+        Check(Call(window, "PresenceNow") is DiscordActivity { Details: var details } && details.EndsWith(" · " + Control<TextBlock>(window, "ValueLabel").Text + " Odyle", StringComparison.Ordinal) && ((TextBlock)Settings(window).FindName("DiscordNoteLabel")).Visibility == Visibility.Visible, "chosen, Discord shows the character and its Odyle while the game is read");
         Field("gamePresent").SetValue(window, false);
         Check(Call(window, "PresenceNow") is null, "without the game Discord shows nothing");
         Call(window, "SetDiscordStatus", false, false);
@@ -254,7 +254,7 @@ static partial class ReaderChecks
         Call(window, "TrayMenuOpening");
         var trayRows = ((System.Collections.IEnumerable)TrayItem(window, "Characters").GetType().GetProperty("DropDownItems")!.GetValue(TrayItem(window, "Characters"))!).Cast<object>().Select(ItemText).ToArray();
         Check(ItemText(TrayItem(window, "Reader")) == "Stop reader" && ItemText(TrayItem(window, "Status")) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
-        Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ") && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · "), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
+        Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ", StringComparison.Ordinal) && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · ", StringComparison.Ordinal), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
         // The card's "Your characters" (W#17): closed until asked, then the tray's rows; it opens by
         // itself while the game switches characters and closes once the game names the next one.
         var altToggle = Control<Button>(window, "AltToggle"); var alts = Control<ItemsControl>(window, "AltList");

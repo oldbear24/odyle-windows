@@ -38,7 +38,7 @@ static class UpdaterChecks
             var staged = await Updater.DownloadAsync(release, new Recorder(reported.Add), CancellationToken.None);
             Check(staged.Version == release.Version && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0") && File.Exists(Path.Combine(staged.Directory, "Odyle.exe")) && File.ReadAllText(Path.Combine(staged.Directory, "THIRD-PARTY.md")) == "notices", "a verified package is staged under its version");
             Check(Leftovers().SequenceEqual(["1.0.0.0"]) && reported.Count > 0 && reported[^1] == 1, "the download is removed once staged, and progress reaches 100 %: " + string.Join(", ", Leftovers()));
-            Check(github.Requests.All(r => r.UserAgent.StartsWith("Odyle/")), "every request names Odyle as its user agent");
+            Check(github.Requests.All(r => r.UserAgent.StartsWith("Odyle/", StringComparison.Ordinal)), "every request names Odyle as its user agent");
             Directory.Delete(staged.Directory, true);
 
             // A package that does not match the release checksum is never extracted.

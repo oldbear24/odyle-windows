@@ -14,10 +14,10 @@ static class RealtimeChecks
         var refresh = RealtimeNews.Parse(Json("""{"refresh":true}"""));
         // Wishlist invites (odyle-dashboard#45): who invites to which run, worded for the tray.
         var invites = RealtimeNews.Parse(Json("""{"invites":[{"runId":"r1","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","by":"Lumina"},{"runId":"","dungeon":"x"}]}""")).Invites;
-        Check(invites is [{ RunId: "r1", By: "Lumina", Now: false }], invites[0].Notice().Title == "Lumina invites you to Fire Temple", invites[0].Notice().Text.StartsWith("Raid night · "), refresh.Invites.Length == 0, "invite news");
+        Check(invites is [{ RunId: "r1", By: "Lumina", Now: false }], invites[0].Notice().Title == "Lumina invites you to Fire Temple", invites[0].Notice().Text.StartsWith("Raid night · ", StringComparison.Ordinal), refresh.Invites.Length == 0, "invite news");
         // A call to a run now (odyle-dashboard 0.41.0) says so, with the start time.
         var call = RealtimeNews.Parse(Json("""{"invites":[{"runId":"r2","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","by":"Lumina","now":true}]}""")).Invites;
-        Check(call is [{ RunId: "r2", Now: true }], call[0].Notice().Title == "Lumina calls the party to Fire Temple", call[0].Notice().Text.StartsWith("Raid night · starts "), "call news");
+        Check(call is [{ RunId: "r2", Now: true }], call[0].Notice().Title == "Lumina calls the party to Fire Temple", call[0].Notice().Text.StartsWith("Raid night · starts ", StringComparison.Ordinal), "call news");
         // Party ready (odyle-dashboard#48): the runs whose attendees can all claim a cube, worded for the tray.
         var party = RealtimeNews.Parse(Json("""{"partyReady":[{"runId":"r1","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","of":5},{"runId":"","dungeon":"x","of":1}]}""")).PartyReady;
         Check(party is [{ RunId: "r1", Of: 5 }], party[0].Notice() == ("Fire Temple: the party is ready", "All 5 going can claim a cube · Raid night"), refresh.PartyReady.Length == 0, "party-ready news");
@@ -39,7 +39,7 @@ static class RealtimeChecks
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");
         var saved = RealtimeNews.Parse(Json("""{"notifications":{"channels":{"tray":true,"browser":false,"push":false},"leadMinutes":[30],"kinds":{"runs":false,"cap":true},"capTicks":2,"quiet":{"from":"23:00","to":"06:00","timeZone":"Europe/Prague"},"saved":true}}"""));
         var capped = RealtimeNews.Parse(Json("""{"capAlerts":[{"characterId":"c","characterName":"Lumina","state":"soon","base":545,"cap":560,"settled":false,"tick":15,"at":"2026-10-15T19:00:00.000Z"},{"characterId":"x","characterName":"","state":"soon"},{"characterId":"y","characterName":"Odd","state":"later"}]}"""));
-        Check(capped is { Refresh: false, CapAlerts: [{ CharacterName: "Lumina", Cap: 560, Settled: false }] } && capped.CapAlerts[0].Notice() is ("Lumina caps soon", var body) && body.StartsWith("Its natural pool reaches 560 ≈ ") && body.EndsWith(", full if that is its cap."), "cap alerts of the account's characters");
+        Check(capped is { Refresh: false, CapAlerts: [{ CharacterName: "Lumina", Cap: 560, Settled: false }] } && capped.CapAlerts[0].Notice() is ("Lumina caps soon", var body) && body.StartsWith("Its natural pool reaches 560 ≈ ", StringComparison.Ordinal) && body.EndsWith(", full if that is its cap.", StringComparison.Ordinal), "cap alerts of the account's characters");
         Check(new CapAlert("c", "Lumina", "full", 840, 840, true, 15).Notice() == ("Lumina is losing Odyle", "Its natural pool is full: each tick of 15 is lost until you spend some."), "a full pool loses each tick");
         Check(saved is { Refresh: false, Notifications: { RunsInTray: false, Saved: true } } && saved.Notifications.Leads.SequenceEqual([30]) && saved.Notifications.Quiet!.From == "23:00" && saved.Notifications is { CapInTray: true, CapTicks: 2 }, "notification settings saved on the dashboard");
         // News for everyone on the account's topic: a new release and a changed announcement.

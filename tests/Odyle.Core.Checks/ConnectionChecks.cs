@@ -196,7 +196,7 @@ static class ConnectionChecks
             var log = new RotatingLog(Path.Combine(folder, "odyle.log"), limit: 4096);
             Parallel.For(0, 200, i => log.Write("INFO", $"line {i:000} " + new string('x', 40)));
             var current = File.ReadAllLines(log.FilePath); var previous = File.ReadAllLines(log.PreviousPath);
-            Check(new FileInfo(log.FilePath).Length <= 4096, Directory.GetFiles(folder).Length == 2, current.Concat(previous).All(l => l.Contains(" INFO  line ") && l.EndsWith(new string('x', 40))), "the log rotates into one previous file without torn lines");
+            Check(new FileInfo(log.FilePath).Length <= 4096, Directory.GetFiles(folder).Length == 2, current.Concat(previous).All(l => l.Contains(" INFO  line ") && l.EndsWith(new string('x', 40), StringComparison.Ordinal)), "the log rotates into one previous file without torn lines");
             // Another program holding the previous file blocks the rotation: the line is written anyway, and
             // the rotation waits a minute instead of being tried before every line.
             var held = new RotatingLog(Path.Combine(folder, "held.log"), limit: 600);
@@ -210,7 +210,7 @@ static class ConnectionChecks
             held.Write("INFO", "after the previous file was let go");
             Check(File.ReadAllText(held.PreviousPath) == "previous", File.ReadAllText(held.FilePath).Contains("after the previous file was let go"), "a blocked rotation is not tried again at once");
             new RotatingLog(held.FilePath, limit: 600).Write("INFO", "a fresh start rotates");
-            Check(File.ReadAllText(held.PreviousPath).Contains("written while the previous file is held"), File.ReadAllLines(held.FilePath).Single().EndsWith("a fresh start rotates"), "the rotation works again once the file is free");
+            Check(File.ReadAllText(held.PreviousPath).Contains("written while the previous file is held"), File.ReadAllLines(held.FilePath).Single().EndsWith("a fresh start rotates", StringComparison.Ordinal), "the rotation works again once the file is free");
             const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InUiLCJ0eXBlIjoiYXV0aCJ9.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
             var redacted = RotatingLog.Redact($"token {jwt} key q8Wm2Lz0Pa9XcV4bN7kR1tY6uI3oE5sD8fG2hJ0kL4zX7cV9 link https://party.example/#odyle-pair=ABCDEFGH23456789 code ABCD-EFGH-2345-6789 Authorization: Bearer abc.def");
             Check(!redacted.Contains("eyJ") && !redacted.Contains("q8Wm2") && !redacted.Contains("ABCDEFGH23456789") && !redacted.Contains("ABCD-EFGH") && !redacted.Contains("abc.def") && redacted.Contains("[token]") && redacted.Contains("[secret]") && redacted.Contains("odyle-pair=[code]"), "tokens, device keys and pairing codes never reach the log");
@@ -218,7 +218,7 @@ static class ConnectionChecks
             // Atomic writes leave the old file or the new one, never a temporary file.
             var target = Path.Combine(folder, "preferences.json");
             AtomicFile.WriteText(target, "{\"a\":1}"); AtomicFile.WriteText(target, "{\"a\":2}");
-            Check(File.ReadAllText(target) == "{\"a\":2}", !Directory.GetFiles(folder, "*.tmp").Any(), "atomic writes replace the file and leave no temporary file");
+            Check(File.ReadAllText(target) == "{\"a\":2}", Directory.GetFiles(folder, "*.tmp").Length == 0, "atomic writes replace the file and leave no temporary file");
         }
         finally { Directory.Delete(folder, true); }
         Console.WriteLine("Failure bodies, 429 pause with Retry-After, renewal without loops, ended pairings, device names, dashboard links, retry schedule, log rotation and redaction passed.");

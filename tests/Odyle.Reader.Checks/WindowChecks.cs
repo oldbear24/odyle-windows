@@ -56,7 +56,7 @@ static partial class ReaderChecks
         Check(window.Topmost && ((CheckBox)settings.FindName("StayOnTopToggle")).IsChecked == true && PreferencesStore.Load().StayOnTop, "pinning stays on top and is remembered");
         Call(window, "SetTasksShown", true, true);
         Check(Control<Border>(window, "TasksPanel").Visibility == Visibility.Visible && ((CheckBox)settings.FindName("TasksToggle")).IsChecked == true && PreferencesStore.Load() is { StayOnTop: true, ShowTasks: true }, "the checklist opens beside the card and is remembered");
-        Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource).Length == 0 && Control<TextBlock>(window, "TasksHint").Text.StartsWith("Pair"), "without an account the panel asks for pairing");
+        Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource).Length == 0 && Control<TextBlock>(window, "TasksHint").Text.StartsWith("Pair", StringComparison.Ordinal), "without an account the panel asks for pairing");
         // Done follows the game's resets: a tick from before the current period no longer counts.
         window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         string Stamp(DateTimeOffset at) => at.ToString("yyyy-MM-dd HH:mm:ss.fffZ");
@@ -65,7 +65,7 @@ static partial class ReaderChecks
         var groups = (TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource;
         Check(groups.Length == 2 && groups[0].Header == "DAILY" && groups[0].Tasks.Select(t => t.Done).SequenceEqual(new[] { true, false }) && groups[0].Progress.Trim() == "1 / 2", "daily tasks show done and open items with their count");
         Check(groups[1].Header == "WEEKLY" && groups[1].Tasks.Select(t => t.Done).SequenceEqual(new[] { false, true }) && groups[1].Percent == 50, "a weekly tick from before the current period no longer counts");
-        Check(groups.All(g => g.Reset.StartsWith("resets in ")) && groups[0].Tasks[0].Hint.StartsWith("Done") && groups[0].Tasks[1].Hint == "Still to do today", "each list counts down to its reset");
+        Check(groups.All(g => g.Reset.StartsWith("resets in ", StringComparison.Ordinal)) && groups[0].Tasks[0].Hint.StartsWith("Done", StringComparison.Ordinal) && groups[0].Tasks[1].Hint == "Still to do today", "each list counts down to its reset");
         // A list per character (#38): the card's character's tasks join the account's, the others' stay on the dashboard.
         var accountTasks = (UserTask[])Field("tasks").GetValue(window)!;
         Field("tasks").SetValue(window, accountTasks.Concat(new[] { new UserTask("t4", "u", "Nightmare", "weekly", Character: "alt", CharacterName: "Altie"), new UserTask("t5", "u", "Main boss", "weekly", Character: "main", CharacterName: "Mainy") }).ToArray());
@@ -108,10 +108,10 @@ static partial class ReaderChecks
             new RoomMember("m1", "l", "reporter", "Lumina", [new Character("l1", "l", "Lumina", "Lumiel", "GLOBAL_EU", 180, true, true, mateSeen, mateSeen, "packet", GameGroup: ours)]),
             new RoomMember("m2", "z", "reporter", "Zed", [new Character("z1", "z", "Zed", "Lumiel", "GLOBAL_EU", 900, true, true, mateSeen, mateSeen, "packet")])], mateSeen) });
         Call(window, "RenderParty");
-        Check(Control<ItemsControl>(window, "CompactOwnPartyMates").ItemsSource is object[] and [CompactMate { Name: "Lumina" } lumina] && lumina.Hint.EndsWith("\nIn your party in game")
+        Check(Control<ItemsControl>(window, "CompactOwnPartyMates").ItemsSource is object[] and [CompactMate { Name: "Lumina" } lumina] && lumina.Hint.EndsWith("\nIn your party in game", StringComparison.Ordinal)
             && Control<ItemsControl>(window, "CompactMates").ItemsSource is object[] and [CompactMate { Name: "Zed", Gap.Top: 3 }] && Control<ItemsControl>(window, "CompactOwnForceMates").Items.Count == 0
             && Control<Border>(window, "CompactOwnParty") is { BorderBrush: not null, Background: not null, BorderThickness.Left: 1, Margin.Left: -8, ToolTip: "In your party in game" } && Control<Border>(window, "CompactOwnForce").BorderBrush is null
-            && Control<Border>(window, "CompactDivider").Visibility == Visibility.Collapsed && ((string)Control<Border>(window, "CompactPanel").ToolTip).EndsWith("\nIn your party in game"),
+            && Control<Border>(window, "CompactDivider").Visibility == Visibility.Collapsed && ((string)Control<Border>(window, "CompactPanel").ToolTip).EndsWith("\nIn your party in game", StringComparison.Ordinal),
             "your in-game party is framed around your row and its players, in place of the divider");
         compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
         var nameAt = (FrameworkElement f) => f.TranslatePoint(new Point(0, 0), compactShell).X;
@@ -210,7 +210,7 @@ static partial class ReaderChecks
         // with the account and this PC's name masked (built here without touching the clipboard).
         Log.Info("Connected to http://127.0.0.1:8090 as account abcdefghij12345 on device \"DESKTOP-CHECK\".");
         var diagnostics = (string)Call(window, "DiagnosticsReport")!;
-        Check(diagnostics.StartsWith("Odyle diagnostics · ") && diagnostics.Contains("Npcap: installed") && diagnostics.Contains("Capture interfaces: ") && diagnostics.Contains("Account: not paired") && diagnostics.Contains("Problem · Npcap is not installed"), "diagnostics list the version, Npcap and the reader's last states");
+        Check(diagnostics.StartsWith("Odyle diagnostics · ", StringComparison.Ordinal) && diagnostics.Contains("Npcap: installed") && diagnostics.Contains("Capture interfaces: ") && diagnostics.Contains("Account: not paired") && diagnostics.Contains("Problem · Npcap is not installed"), "diagnostics list the version, Npcap and the reader's last states");
         Check(diagnostics.Contains("account [account] on device \"[this PC]\"") && !diagnostics.Contains("abcdefghij12345") && !diagnostics.Contains("DESKTOP-CHECK") && !diagnostics.Contains("device-key"), "diagnostics mask the account and this PC's name");
         window.Link.Api = paired;
     }
