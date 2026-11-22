@@ -2,6 +2,13 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.0.0 · 2026-11-22
+
+### Changed
+- Odyle now needs a server on dashboard 1.0.0 or later. With an older server it keeps working, and the footer and **Settings** say the server runs an older Odyle and that its operator should update it.
+- A PC paired before device keys (before October 2026) has to pair again: Odyle asks for a new connection link from the dashboard and keeps the server's address.
+- Server names now follow your server, so a renamed game server shows its new name without an Odyle update.
+
 ## 0.37.0 · 2026-11-22
 
 ### New
