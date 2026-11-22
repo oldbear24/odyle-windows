@@ -117,10 +117,11 @@ public sealed class PartyApi : IDisposable
     // The pairing's lasting credential. Account tokens run out after seven days; the key
     // signs in again for a fresh one, so the app stays paired until it disconnects.
     public string? DeviceKey { get => deviceKey; private set => deviceKey = value; }
-    // The dashboard version the server named in its latest pair, sign-in, session or heartbeat answer that named
-    // one; null while none did (dashboards before 1.0.0 name none). The window shows ServerVersions' notice by it.
+    // The dashboard version the server named in its latest pair, sign-in, session or heartbeat answer; null when
+    // that answer named none (dashboards before 1.0.0 name none, so a server rolled back shows the notice again).
+    // The window shows ServerVersions' notice by it.
     public string? ServerVersion { get => serverVersion; private set => serverVersion = value; }
-    private T Named<T>(T answer, string? version) { if (!string.IsNullOrWhiteSpace(version)) ServerVersion = version; return answer; }
+    private T Named<T>(T answer, string? version) { ServerVersion = string.IsNullOrWhiteSpace(version) ? null : version; return answer; }
     // Set once the server refused the pairing itself (a sign-in answered 401): every later
     // request fails at once with 401 instead of signing in again and again.
     public bool PairingEnded { get => pairingEnded; private set => pairingEnded = value; }

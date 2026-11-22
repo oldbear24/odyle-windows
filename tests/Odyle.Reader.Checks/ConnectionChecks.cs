@@ -89,6 +89,9 @@ static partial class ReaderChecks
         window.Link.Api = api;
         await (Task)Call(window, "ConnectAsync", auth)!;
         Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
+        // A backend on dashboard 1.0.0 or later names its version (its test build answers "test"); one that forgot
+        // the field would show every player the older-server notice, so this run needs it.
+        Check(api.ServerVersion is not null, "the server names its version in its answers (serverVersion, dashboard 1.0.0 or later)");
         // A backend on dashboard 1.0.0 or later names its version; before that the footer says the server runs an older Odyle.
         Check(Control<TextBlock>(window, "StatusLabel").Text == (ServerVersions.Outdated(api.ServerVersion) ? OlderServerNotice : ""), "once connected the footer says nothing (dashboard " + (api.ServerVersion ?? "before 1.0.0") + "): " + Control<TextBlock>(window, "StatusLabel").Text);
         Check(Control<Button>(window, "ReportButton").Content as string == "Start", "a paired account can start the reader");
