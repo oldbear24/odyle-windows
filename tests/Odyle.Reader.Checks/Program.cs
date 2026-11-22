@@ -106,6 +106,8 @@ static partial class ReaderChecks
         Add("notification-settings", NotificationSettingsScenario);
         Add("run-chip-and-places", RunChipAndPlacesScenario);
         Add("party-refresh", PartyRefreshChecks);
+        Add("server-version", ServerVersionScenario);
+        Add("keyless-session", KeylessSessionScenario);
         if (online is { } live) Add("online", window => OnlineScenario(window, live.Url, live.Code));
         Add("heartbeat-unpaired", HeartbeatUnpairedScenario);
         Add("server-busy", ServerBusyScenario);
@@ -338,6 +340,8 @@ static partial class ReaderChecks
         public string LastReport = "";
         public TaskCompletionSource? SignInGate, SignInArrived;
         public string Teammates = """{"serverNow":"x"}""", Heartbeat = """{"serverNow":"2026-11-21 12:00:00.000Z"}""";
+        // The dashboard version the session answer names; null like a dashboard before 1.0.0.
+        public string? Version;
         const string Auth = """{"token":"pairing-check-token","record":{"id":"u","displayName":"Player"},"deviceKey":"pairing-check-key"}""";
         string Early => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
         string EarlyRead => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":512,"confirmed":true,"valid":true,"lastReadingAt":"2026-11-21 12:00:00.000Z"}""";
@@ -363,7 +367,7 @@ static partial class ReaderChecks
                 "/api/odyle/pair" or "/api/odyle/desktop-sign-in" => (HttpStatusCode.OK, Auth),
                 "/api/odyle/session" when FailSession => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
                 "/api/odyle/session" when previous && PreviousSession is { } answer => (answer, $$"""{"status":{{(int)answer}},"message":"Unknown session."}"""),
-                "/api/odyle/session" => (HttpStatusCode.OK, """{"sessionId":"s1","sequence":0}"""),
+                "/api/odyle/session" => (HttpStatusCode.OK, Version is null ? """{"sessionId":"s1","sequence":0}""" : $$"""{"sessionId":"s1","sequence":0,"serverVersion":"{{Version}}"}"""),
                 "/api/collections/characters/records" => (HttpStatusCode.OK, "{\"items\":[" + string.Join(",", new[] { HasAlt ? Alt : "", Saved > 0 ? Early : "" }.Where(c => c.Length > 0)) + "]}"),
                 "/api/odyle/character" => (HttpStatusCode.OK, $$"""{"character":{{Early}}}"""),
                 "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{EarlyRead}}}"""),

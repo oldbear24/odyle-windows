@@ -95,6 +95,10 @@ public static class Czech
         ["Signed in as {0} via Discord · {1}"] = "Přihlášení přes Discord jako {0} · {1}", ["server"] = "server",
         ["This PC is no longer paired with your account. Copy a new connection link from the dashboard."] = "Tento počítač už není spárovaný s tvým účtem. Zkopíruj z dashboardu nový odkaz pro připojení.",
         ["Copy the connection link from the dashboard first."] = "Nejdřív zkopíruj odkaz pro připojení z dashboardu.",
+        // A server on a dashboard older than 1.0.0, and a pairing from before device keys
+        ["This server runs an older Odyle; ask its operator to update."] = "Tento server běží na starší verzi Odyle; požádej jeho provozovatele o aktualizaci.",
+        ["This server runs an Odyle too old to pair with. Ask its operator to update."] = "Tento server běží na příliš staré verzi Odyle, se kterou se spárovat nedá. Požádej jeho provozovatele o aktualizaci.",
+        ["This PC was paired with an older Odyle and needs to pair again. Copy a new connection link from the dashboard."] = "Tento počítač byl spárovaný se starší verzí Odyle a musí se spárovat znovu. Zkopíruj z dashboardu nový odkaz pro připojení.",
         ["Disconnected · your characters stay saved on your account."] = "Odpojeno · postavy zůstávají uložené na tvém účtu.",
         ["Use an HTTPS server address, or HTTP on localhost. Do not include credentials or query parameters."] = "Použij adresu serveru s HTTPS, nebo HTTP na localhostu, bez přihlašovacích údajů a parametrů.",
         ["Copy the connection link from Pair Windows app on the dashboard."] = "Zkopíruj odkaz pro připojení z dialogu Spárovat Windows aplikaci na dashboardu.",

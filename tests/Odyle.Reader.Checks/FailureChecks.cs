@@ -68,7 +68,7 @@ static partial class ReaderChecks
             return request.RequestUri.AbsolutePath switch
             {
                 "/api/odyle/heartbeat" when busy => Json(HttpStatusCode.TooManyRequests, """{"status":429,"message":"Too Many Requests."}""", "2"),
-                "/api/odyle/heartbeat" => Json(HttpStatusCode.OK, """{"serverNow":"2026-11-22 12:00:00.000Z"}"""),
+                "/api/odyle/heartbeat" => Json(HttpStatusCode.OK, """{"serverNow":"2026-11-22 12:00:00.000Z","serverVersion":"1.0.0"}"""),
                 "/api/odyle/desktop-sign-in" => Json(HttpStatusCode.TooManyRequests, """{"status":429,"message":"Too Many Requests."}""", "120"),
                 _ => Json(HttpStatusCode.OK, "{}"),
             };

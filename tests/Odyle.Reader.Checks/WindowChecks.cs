@@ -33,7 +33,7 @@ static partial class ReaderChecks
     }
     static void SessionStoreScenario()
     {
-        Check(System.Text.Json.JsonSerializer.Deserialize<SavedSession>("""{"Endpoint":"https://party.example","Token":"t"}""") is { Token: "t", DeviceKey: null }, "a session saved before device keys still loads and is upgraded on connect");
+        Check(System.Text.Json.JsonSerializer.Deserialize<SavedSession>("""{"Endpoint":"https://party.example","Token":"t"}""") is { Token: "t", DeviceKey: null }, "a session saved before device keys still loads (RestoreAsync then asks to pair again)");
         SessionChecks();
     }
     static void PreferencesAndTasksScenario(MainWindow window)

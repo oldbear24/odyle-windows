@@ -6,8 +6,8 @@ using System.Text.Json;
 using Odyle.Core;
 
 namespace Odyle.Reader;
-// DeviceKey keeps the pairing across restarts and expired tokens; sessions saved by
-// older versions have none until the app fetches one (PartyApi.EnsureDeviceKeyAsync).
+// DeviceKey keeps the pairing across restarts and expired tokens. A session saved before device keys
+// (Oct 2026) has none: it still loads, and the app then removes it and asks to pair again (MainWindow.RestoreAsync).
 public sealed record SavedSession(string Endpoint, string Token, string? DeviceKey = null);
 public static class SessionStore
 {

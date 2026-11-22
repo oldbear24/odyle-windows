@@ -9,7 +9,9 @@ static class LiveChecks
     {
         var pairing = ConnectionDetails.Parse(args[^1], args.Length == 2 ? args[0] : "http://127.0.0.1:8090");
         using var api = new PartyApi(pairing.Endpoint); var paired = await api.PairAsync(pairing.Code);
-        if ((await api.RefreshAsync()).Record.Id != paired.Record.Id) throw new Exception("Pairing changed account identity.");
+        if ((await api.SignInAsync()).Record.Id != paired.Record.Id) throw new Exception("Pairing changed account identity.");
+        // Dashboard 1.0.0 and newer name their version; this app shows a notice for a server that names none or an older one.
+        Console.WriteLine($"The test backend names dashboard version {api.ServerVersion ?? "(none)"}{(ServerVersions.Outdated(api.ServerVersion) ? ", older than " + ServerVersions.Minimum + ": the app would show its notice" : "")}.");
         var session = await api.StartSessionAsync();
         var saved = await api.SaveCharacterAsync(" Main ", " EU ", "GLOBAL_EU");
         if (saved.CharacterName != "Main" || saved.Server != "EU" || saved.User != paired.Record.Id) throw new Exception("Saving character identity failed.");
@@ -25,18 +27,16 @@ static class LiveChecks
         if (!(await api.GetCharactersAsync()).Any(c => c.Id == character.Id && c.Value == 0 && c.Confirmed && !c.Valid)) throw new Exception("Character persistence failed.");
         await api.GetRoomsAsync(); Console.WriteLine("Windows account pairing and persistent character API check passed.");
         await RealtimeChecks.RunLive(api, paired.Record.Id, session.SessionId, character.Id);
-        if (paired.DeviceKey is { } key)
-        {
-            // The pairing outlives its token: a request with an expired token signs in with the key and is repeated.
-            using var later = new PartyApi(pairing.Endpoint, "expired-token", key);
-            await later.GetRoomsAsync();
-            if (later.Token is null or "expired-token" || (await later.GetCharactersAsync()).All(c => c.Id != character.Id)) throw new Exception("An expired token did not sign in again with the device key.");
-            if ((await later.SignInAsync()).Record.Id != paired.Record.Id) throw new Exception("Device sign-in changed account identity.");
-            await later.UnpairAsync();
-            using var forgotten = new PartyApi(pairing.Endpoint, null, key);
-            try { await forgotten.SignInAsync(); throw new Exception("An unpaired device key still signed in."); }
-            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized) { }
-            Console.WriteLine("Windows lasting pairing check passed.");
-        }
+        // The pairing outlives its token: a request with an expired token signs in with the key and is repeated.
+        var key = paired.DeviceKey!;
+        using var later = new PartyApi(pairing.Endpoint, "expired-token", key);
+        await later.GetRoomsAsync();
+        if (later.Token is null or "expired-token" || (await later.GetCharactersAsync()).All(c => c.Id != character.Id)) throw new Exception("An expired token did not sign in again with the device key.");
+        if ((await later.SignInAsync()).Record.Id != paired.Record.Id) throw new Exception("Device sign-in changed account identity.");
+        await later.UnpairAsync();
+        using var forgotten = new PartyApi(pairing.Endpoint, null, key);
+        try { await forgotten.SignInAsync(); throw new Exception("An unpaired device key still signed in."); }
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized) { }
+        Console.WriteLine("Windows lasting pairing check passed.");
     }
 }

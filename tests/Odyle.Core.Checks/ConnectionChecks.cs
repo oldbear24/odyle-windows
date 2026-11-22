@@ -126,20 +126,67 @@ static class ConnectionChecks
         {
             try { await api.HeartbeatAsync("s", "c"); } catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.Forbidden, error.Message == "Publisher session expired. Reconnect.", forbidden.Requests.Count == 1, !api.PairingEnded, "403 is not a lost pairing"); }
         }
-        // Pairing and the device key request name this PC; a session without key or previous session sends neither.
+        // Pairing names this PC and takes the device key; a session without a previous one sends the key alone. Without a
+        // key nothing signs in: a session request then sends none.
         var pairing = new Stub((route, _) => route switch
         {
-            "/api/odyle/pair" => Answer(HttpStatusCode.OK, """{"token":"t","record":{"id":"u","displayName":"Lumina"}}"""),
-            "/api/odyle/desktop-device" => Answer(HttpStatusCode.OK, """{"deviceKey":"k"}"""),
+            "/api/odyle/pair" => Answer(HttpStatusCode.OK, """{"token":"t","record":{"id":"u","displayName":"Lumina"},"deviceKey":"k"}"""),
             _ => Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0}"""),
         });
         using (var api = new PartyApi("https://party.example", null, null, pairing))
         {
-            await api.PairAsync("ABCDEFGH23456789"); await api.StartSessionAsync(); await api.EnsureDeviceKeyAsync(); await api.StartSessionAsync();
-            using var pair = JsonDocument.Parse(pairing.Requests[0].Body);
-            Check(pair.RootElement.GetProperty("code").GetString() == "ABCDEFGH23456789", pair.RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, "pairing sends the code and this PC's name");
-            Check(pairing.Requests[1].Body == "{}", JsonElement.Parse(pairing.Requests[2].Body).GetProperty("name").GetString() == PartyApi.DeviceName, pairing.Requests[3].Body == """{"deviceKey":"k"}""", "absent session fields are left out; the device request names this PC");
+            await api.StartSessionAsync(); var paired = await api.PairAsync("ABCDEFGH23456789"); await api.StartSessionAsync();
+            using var pair = JsonDocument.Parse(pairing.Requests[1].Body);
+            Check(pair.RootElement.GetProperty("code").GetString() == "ABCDEFGH23456789", pair.RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, paired.DeviceKey == "k" && api.DeviceKey == "k" && api.Token == "t", "pairing sends the code and this PC's name and keeps the device key");
+            Check(pairing.Requests[0].Body == "{}", pairing.Requests[2].Body == """{"deviceKey":"k"}""", "absent session fields are left out");
         }
+        // A server that pairs without a device key (one from before device keys) cannot keep this PC paired past its token's
+        // week: pairing fails with a message instead of leaving a pairing that ends by itself.
+        var keyless = new Stub((route, _) => Answer(HttpStatusCode.OK, """{"token":"t","record":{"id":"u","displayName":"Lumina"}}"""));
+        using (var api = new PartyApi("https://party.example", null, null, keyless))
+        {
+            try { await api.PairAsync("ABCDEFGH23456789"); throw new Exception("Connection check failed: a pairing without a device key was taken."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.UpgradeRequired, error.Message == "This server runs an Odyle too old to pair with. Ask its operator to update.", api.Token is null && api.DeviceKey is null, "a pairing without a device key is refused with a message"); }
+        }
+        // A client without a device key (a pairing from before device keys) has nothing to sign in with: the pairing ends
+        // at once, without a request, and a request it makes is not renewed.
+        var oldToken = new Stub((_, _) => Answer(HttpStatusCode.Unauthorized, """{"status":401,"message":"The request requires valid record authorization token."}"""));
+        using (var api = new PartyApi("https://party.example", "old-token", null, oldToken))
+        {
+            try { await api.GetRoomsAsync(); throw new Exception("Connection check failed: a 401 was taken as an answer."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.Unauthorized, oldToken.Requests.Count == 1, "without a device key a 401 is not renewed"); }
+            try { await api.SignInAsync(); throw new Exception("Connection check failed: a client without a device key signed in."); }
+            catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.Unauthorized, api.PairingEnded, oldToken.Requests.Count == 1, "a sign-in without a device key ends the pairing without asking the server"); }
+        }
+        // The dashboard version a server names (1.0.0 and newer) in the pair, sign-in, session and heartbeat answers: the
+        // latest answer that names one wins, and an answer without it keeps what an earlier one said.
+        var versions = new Stub((route, _) => route switch
+        {
+            "/api/odyle/pair" => Answer(HttpStatusCode.OK, """{"token":"t","record":{"id":"u","displayName":"Lumina"},"deviceKey":"k","serverVersion":"1.0.0"}"""),
+            "/api/odyle/desktop-sign-in" => Answer(HttpStatusCode.OK, """{"token":"t2","record":{"id":"u","displayName":"Lumina"},"serverVersion":"1.0.1"}"""),
+            "/api/odyle/session" => Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0,"serverVersion":"1.1.0"}"""),
+            "/api/odyle/heartbeat" => Answer(HttpStatusCode.OK, """{"serverNow":"x","serverVersion":"1.2.0"}"""),
+            _ => Answer(HttpStatusCode.OK, """{"rooms":[]}"""),
+        });
+        using (var api = new PartyApi("https://party.example", null, null, versions))
+        {
+            var seen = new List<string?> { api.ServerVersion };
+            await api.PairAsync("ABCDEFGH23456789"); seen.Add(api.ServerVersion);
+            await api.SignInAsync(); seen.Add(api.ServerVersion);
+            await api.StartSessionAsync(); seen.Add(api.ServerVersion);
+            await api.HeartbeatAsync("s", null); seen.Add(api.ServerVersion);
+            await api.GetRoomsAsync(); seen.Add(api.ServerVersion);
+            Check(seen.SequenceEqual([null, "1.0.0", "1.0.1", "1.1.0", "1.2.0", "1.2.0"]), "the pair, sign-in, session and heartbeat answers name the server's version: " + string.Join(", ", seen));
+        }
+        var unnamed = new Stub((route, _) => Answer(HttpStatusCode.OK, route == "/api/odyle/session" ? """{"sessionId":"s","sequence":0}""" : """{"serverNow":"x","serverVersion":" "}"""));
+        using (var api = new PartyApi("https://party.example", "t", "k", unnamed))
+        {
+            await api.StartSessionAsync(); await api.HeartbeatAsync("s", null);
+            Check(api.ServerVersion is null, "a server before dashboard 1.0.0 names no version");
+        }
+        Check(ServerVersions.Parse("1.0.0") == new Version(1, 0, 0), ServerVersions.Parse("v1.2.3") == new Version(1, 2, 3), ServerVersions.Parse("1.2") == new Version(1, 2, 0), ServerVersions.Parse(" 2.0.1-rc.1+abc ") == new Version(2, 0, 1), "server versions are read");
+        Check(new[] { null, "", "1", "1.0.0.0", "1..0", "x.y.z", "1.0.-1", "+1.0.0", "١.0.0", "99999999999.0.0", new string('1', 65) }.All(text => ServerVersions.Parse(text) is null), "anything else is no version");
+        Check(ServerVersions.Outdated(null) && ServerVersions.Outdated("0.67.1") && ServerVersions.Outdated("0.99.9") && ServerVersions.Outdated("garbage"), !ServerVersions.Outdated("1.0.0") && !ServerVersions.Outdated("1.0") && !ServerVersions.Outdated("1.4.2") && !ServerVersions.Outdated("2.0.0"), "a server below dashboard 1.0.0, or naming none, is older than this app needs");
         // The app names its version with each session; the rooms answer carries the server's announcement.
         var versioned = new Stub((route, _) => route == "/api/odyle/rooms" ? Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":{"text":"Maintenance at 10:00 UTC","level":"warning"}}""") : Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0}"""));
         using (var api = new PartyApi("https://party.example", "token", null, versioned) { AppVersion = "0.6.0.12" })

@@ -78,6 +78,10 @@ public sealed class ConnectionState
     // and whether that answer was read.
     public DateTimeOffset ServersAskedAt = DateTimeOffset.MinValue;
     public bool ServersKnown;
+    // The dashboard version the server named (PartyApi.ServerVersion) as last noted for this connection, and whether
+    // it was noted yet (logged once, and again when it changes).
+    public string? ServerVersion;
+    public bool ServerVersionNoted;
     // The Discord application the server signs in with (the Discord status), or none.
     public string? DiscordApp;
     public bool DiscordMissing;

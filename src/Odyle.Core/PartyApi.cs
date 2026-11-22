@@ -6,9 +6,10 @@ using System.Text.Json;
 
 namespace Odyle.Core;
 public sealed record User(string Id, string DisplayName);
-// Pairing also answers with the app's device key; backends from before device keys omit it.
-public sealed record AuthResponse(string Token, User Record, string? DeviceKey = null);
-public sealed record DeviceKeyResponse(string DeviceKey);
+// Pairing also answers with the app's device key, the pairing's lasting credential (a server without device keys
+// cannot be paired with). ServerVersion: the dashboard version the server runs (ServerVersions), named by
+// dashboard 1.0.0 and newer in the pair, sign-in, session and heartbeat answers; null from older ones.
+public sealed record AuthResponse(string Token, User Record, string? DeviceKey = null, string? ServerVersion = null);
 public sealed record Room(string Id, string Name, int Cost, string Role, bool Sharing, string[]? SharedCharacters = null)
 {
     public bool Shares(string characterId) => SharedCharacters?.Contains(characterId) == true;
@@ -67,8 +68,8 @@ public sealed record RoomSnapshot(Room Room, RoomMember[] Members, string Server
 // sends its characters' kills, assists and deaths; left out by backends from before them: no.
 // ShareTeammates: the account lets the app send its party and force members' names (an account switch on
 // the dashboard, on by default, #81); backends from before the switch leave it out, which means yes.
-public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null);
-public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null);
+public sealed record PublisherSession(string SessionId, long Sequence, bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null, string? ServerVersion = null);
+public sealed record HeartbeatResponse(bool? ReaderPaused = null, bool? ShareLocation = null, bool? PvpStats = null, bool? ShareTeammates = null, string? ServerVersion = null);
 // Shared is false when the account turned the names off: the server queued none. Older backends leave it
 // out, which means the names were taken.
 public sealed record TeammatesResponse(bool? Shared = null, int Queued = 0)
@@ -108,7 +109,7 @@ public sealed class PartyApi : IDisposable
     // 429 pause as ticks through Interlocked, since a DateTimeOffset is two words).
     private readonly object signInLock = new();
     private Task<AuthResponse>? signingIn;
-    private volatile string? token, deviceKey;
+    private volatile string? token, deviceKey, serverVersion;
     private volatile bool pairingEnded;
     private long busyUntilTicks;
     public string Endpoint { get; }
@@ -116,6 +117,10 @@ public sealed class PartyApi : IDisposable
     // The pairing's lasting credential. Account tokens run out after seven days; the key
     // signs in again for a fresh one, so the app stays paired until it disconnects.
     public string? DeviceKey { get => deviceKey; private set => deviceKey = value; }
+    // The dashboard version the server named in its latest pair, sign-in, session or heartbeat answer that named
+    // one; null while none did (dashboards before 1.0.0 name none). The window shows ServerVersions' notice by it.
+    public string? ServerVersion { get => serverVersion; private set => serverVersion = value; }
+    private T Named<T>(T answer, string? version) { if (!string.IsNullOrWhiteSpace(version)) ServerVersion = version; return answer; }
     // Set once the server refused the pairing itself (a sign-in answered 401): every later
     // request fails at once with 401 instead of signing in again and again.
     public bool PairingEnded { get => pairingEnded; private set => pairingEnded = value; }
@@ -171,33 +176,22 @@ public sealed class PartyApi : IDisposable
     public async Task<AuthResponse> PairAsync(string code)
     {
         var result = await PostAsync<AuthResponse>("api/odyle/pair", new { code, name = DeviceName }, renew: false);
+        Named(result, result.ServerVersion);
+        // Without a device key the pairing would end with its token, a week later: such a server is too old to pair with.
+        if (string.IsNullOrWhiteSpace(result.DeviceKey)) throw new HttpRequestException(Localizer.T("This server runs an Odyle too old to pair with. Ask its operator to update."), null, HttpStatusCode.UpgradeRequired);
         Token = result.Token; DeviceKey = result.DeviceKey; SignedIn?.Invoke(result); return result;
     }
-    public async Task<AuthResponse> RefreshAsync()
-    {
-        try { var result = await PostAsync<AuthResponse>("api/collections/users/auth-refresh", new { }, renew: false); Token = result.Token; SignedIn?.Invoke(result); return result; }
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
-    }
-    // A fresh account token: from the device key, or by refreshing the token of an app
-    // paired before device keys existed. Requests running at once share one sign-in.
-    // A 401 here means the server no longer knows this PC: the pairing is over.
+    // A fresh account token from the device key; requests running at once share one sign-in.
+    // A 401 here means the server no longer knows this PC: the pairing is over. Without a key
+    // (a pairing from before device keys, or one disconnected) there is nothing to sign in with.
     public async Task<AuthResponse> SignInAsync()
     {
-        if (DeviceKey is null) return await RefreshAsync();
+        if (DeviceKey is null) { PairingEnded = true; throw new HttpRequestException(Localizer.T("This PC is no longer paired with an account."), null, HttpStatusCode.Unauthorized); }
         Task<AuthResponse> pending;
         lock (signInLock) pending = signingIn ??= PostAsync<AuthResponse>("api/odyle/desktop-sign-in", new { deviceKey = DeviceKey, name = DeviceName }, renew: false);
-        try { var result = await pending; Token = result.Token; SignedIn?.Invoke(result); return result; }
+        try { var result = await pending; Named(result, result.ServerVersion); Token = result.Token; SignedIn?.Invoke(result); return result; }
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized) { PairingEnded = true; throw; }
         finally { lock (signInLock) if (signingIn == pending) signingIn = null; }
-    }
-    // Gives an app paired before device keys existed its key, using the still-valid token.
-    // A backend without device keys answers 404; the app then keeps refreshing its token.
-    public async Task<string?> EnsureDeviceKeyAsync()
-    {
-        if (DeviceKey is not null) return DeviceKey;
-        try { DeviceKey = (await PostAsync<DeviceKeyResponse>("api/odyle/desktop-device", new { name = DeviceName })).DeviceKey; }
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound) { }
-        return DeviceKey;
     }
     // Disconnecting forgets the key on the server too, so it can never sign in again.
     public async Task UnpairAsync()
@@ -222,13 +216,14 @@ public sealed class PartyApi : IDisposable
     // A paired app names its device key, so a PC removed on the dashboard gets 401 here
     // and ends its pairing like an unknown key at sign-in. Absent fields are left out;
     // backends from before app versions ignore the version.
-    public Task<PublisherSession> StartSessionAsync(string? previousSessionId = null)
+    public async Task<PublisherSession> StartSessionAsync(string? previousSessionId = null)
     {
         var body = new Dictionary<string, string>();
         if (!string.IsNullOrEmpty(previousSessionId)) body["previousSessionId"] = previousSessionId;
         if (DeviceKey is { } key) body["deviceKey"] = key;
         if (!string.IsNullOrEmpty(AppVersion)) body["appVersion"] = AppVersion;
-        return PostAsync<PublisherSession>("api/odyle/session", body);
+        var session = await PostAsync<PublisherSession>("api/odyle/session", body);
+        return Named(session, session.ServerVersion);
     }
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));
     // Subscribes a realtime connection (RealtimeClient) to its topics; the server answers 204.
@@ -248,7 +243,11 @@ public sealed class PartyApi : IDisposable
     // reader is what the packet reader is doing (waiting, listening, midstream, reading, problem, npcap,
     // two-clients, paused, stopped) and game the Steam build it reads; the backend's reader health
     // keeps both in memory to warn its operator when a game patch breaks reading. Older backends ignore them.
-    public Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId, string? reader = null, string? game = null) => PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId, reader, game });
+    public async Task<HeartbeatResponse> HeartbeatAsync(string sessionId, string? characterId, string? reader = null, string? game = null)
+    {
+        var answer = await PostAsync<HeartbeatResponse>("api/odyle/heartbeat", new { sessionId, characterId, reader, game });
+        return Named(answer, answer.ServerVersion);
+    }
     // Saves the account's notification settings as a whole (the app does it once, to move its
     // old local "remind me of planned runs" switch to the account).
     public async Task<NotificationSettings> SaveNotificationsAsync(NotificationSettings settings) =>
