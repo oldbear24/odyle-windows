@@ -22,7 +22,7 @@ static class UpdaterChecks
         try
         {
             Updater.Staging = Path.Combine(root, "updates"); Updater.UseHandler(github);
-            // This checks executable is stamped 1.0.0.0: a package holding it as Odyle.exe is Odyle 1.0.0.
+            // This checks executable is stamped 90.0.0.0: a package holding it as Odyle.exe is Odyle 90.0.0.
             var zip = Path.Combine(root, "package.zip");
             using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
             {
@@ -32,12 +32,12 @@ static class UpdaterChecks
             var package = File.ReadAllBytes(zip); var hash = Convert.ToHexString(SHA256.HashData(package)).ToLowerInvariant();
 
             // A verified package is extracted under its version, and the download is removed.
-            var name = PackageName("1.0.0"); var release = Release("1.0.0", name);
+            var name = PackageName("90.0.0"); var release = Release("90.0.0", name);
             github.Answer(name, () => Bytes(package)); github.Answer(name + ".sha256", () => Text($"{hash}  {name}\n"));
             var reported = new List<double>();
             var staged = await Updater.DownloadAsync(release, new Recorder(reported.Add), CancellationToken.None);
-            Check(staged.Version == release.Version && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0") && File.Exists(Path.Combine(staged.Directory, "Odyle.exe")) && File.ReadAllText(Path.Combine(staged.Directory, "THIRD-PARTY.md")) == "notices", "a verified package is staged under its version");
-            Check(Leftovers().SequenceEqual(["1.0.0.0"]) && reported.Count > 0 && reported[^1] == 1, "the download is removed once staged, and progress reaches 100 %: " + string.Join(", ", Leftovers()));
+            Check(staged.Version == release.Version && staged.Directory == Path.Combine(Updater.Staging, "90.0.0.0") && File.Exists(Path.Combine(staged.Directory, "Odyle.exe")) && File.ReadAllText(Path.Combine(staged.Directory, "THIRD-PARTY.md")) == "notices", "a verified package is staged under its version");
+            Check(Leftovers().SequenceEqual(["90.0.0.0"]) && reported.Count > 0 && reported[^1] == 1, "the download is removed once staged, and progress reaches 100 %: " + string.Join(", ", Leftovers()));
             Check(github.Requests.All(r => r.UserAgent.StartsWith("Odyle/", StringComparison.Ordinal)), "every request names Odyle as its user agent");
             Directory.Delete(staged.Directory, true);
 
@@ -45,7 +45,7 @@ static class UpdaterChecks
             github.Answer(name + ".sha256", () => Text($"{new string('0', 64)}  {name}\n"));
             await Fails(release, "does not match the release checksum", "a package that does not match its checksum");
             // A checksum file that names another file, or is far too large, stages nothing either.
-            github.Answer(name + ".sha256", () => Text($"{hash}  odyle-1.0.0-other.zip\n"));
+            github.Answer(name + ".sha256", () => Text($"{hash}  odyle-90.0.0-other.zip\n"));
             await Fails(release, "does not name", "a checksum file for another package");
             github.Answer(name + ".sha256", () => Text($"{hash}  {name}\n" + new string(' ', 5000)));
             await Fails(release, "checksum file is unexpectedly large", "a checksum file above 4 KB");
@@ -67,9 +67,9 @@ static class UpdaterChecks
 
             // A release without this PC's package, or without its checksum, is never downloaded.
             var requests = github.Requests.Count;
-            try { await Updater.DownloadAsync(Release("1.0.0", "odyle-1.0.0-win-x86.zip"), null, CancellationToken.None); throw new Exception("Updater check failed: a release without this PC's package was downloaded."); }
+            try { await Updater.DownloadAsync(Release("90.0.0", "odyle-90.0.0-win-x86.zip"), null, CancellationToken.None); throw new Exception("Updater check failed: a release without this PC's package was downloaded."); }
             catch (InvalidOperationException error) { Check(error.Message.Contains("has no package for this PC") && github.Requests.Count == requests, "a release without this PC's package fetches nothing"); }
-            try { await Updater.DownloadAsync(new AppRelease(release.Version, release.Tag, release.Url, null, [new ReleaseAsset(name, package.Length, Base + "v1.0.0/" + name)]), null, CancellationToken.None); throw new Exception("Updater check failed: a package without a checksum was downloaded."); }
+            try { await Updater.DownloadAsync(new AppRelease(release.Version, release.Tag, release.Url, null, [new ReleaseAsset(name, package.Length, Base + "v90.0.0/" + name)]), null, CancellationToken.None); throw new Exception("Updater check failed: a package without a checksum was downloaded."); }
             catch (InvalidOperationException error) { Check(error.Message.Contains("has no checksum") && github.Requests.Count == requests, "a package without a checksum fetches nothing"); }
             // GitHub's answer to the download is checked too.
             github.Answer(name, () => new HttpResponseMessage(HttpStatusCode.NotFound));

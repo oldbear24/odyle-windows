@@ -475,17 +475,17 @@ static partial class ReaderChecks
             File.WriteAllText(Path.Combine(source, "Odyle.exe"), "new"); File.WriteAllText(Path.Combine(source, "THIRD-PARTY.md"), "new notices");
             Updater.Apply(source, target);
             Check(File.ReadAllText(Path.Combine(target, "Odyle.exe")) == "new" && File.ReadAllText(Path.Combine(target, "Odyle.exe.old")) == "running" && File.ReadAllText(Path.Combine(target, "THIRD-PARTY.md")) == "new notices", "installing moves the executable aside and copies the new files in");
-            // This checks executable is stamped 1.0.0.0, newer than the unstamped app build.
+            // This checks executable is stamped 90.0.0.0 (its project sets it), newer than the app build.
             Updater.Staging = Path.Combine(root, "updates");
-            foreach (var (folder, stamped) in new[] { ("1.0.0.0", true), ("9.9.9.9", true), ("9.9.9.8", false), ("0.0.0.1", true), ("9.9.9.7.partial", true) })
+            foreach (var (folder, stamped) in new[] { ("90.0.0.0", true), ("9.9.9.9", true), ("9.9.9.8", false), ("0.0.0.1", true), ("9.9.9.7.partial", true) })
             {
                 var dir = Path.Combine(Updater.Staging, folder); Directory.CreateDirectory(dir);
                 if (stamped) File.Copy(Environment.ProcessPath!, Path.Combine(dir, "Odyle.exe")); else File.WriteAllText(Path.Combine(dir, "Odyle.exe"), "not an executable");
             }
             var staged = Updater.Staged();
-            Check(staged is { Version: { Major: 1, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
+            Check(staged is { Version: { Major: 90, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "90.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
             Updater.CleanUp();
-            Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "1.0.0.0", "9.9.9.8", "9.9.9.9" }), "cleanup removes partial downloads and versions that are not newer");
+            Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "9.9.9.8", "9.9.9.9", "90.0.0.0" }), "cleanup removes partial downloads and versions that are not newer");
             RollbackChecks(root);
             // A download reports its progress once per whole percent, not once per 64 KB read (#87).
             var reported = new List<double>(); var whole = new WholePercent(new Recorder(reported.Add));
@@ -531,9 +531,9 @@ static partial class ReaderChecks
         // A healthy start whose previous build could not be removed yet is not counted again.
         File.WriteAllText(starts, "0.36.0.0 -1");
         Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Settled && !File.Exists(old) && !File.Exists(starts), "a start already proved healthy is settled and removes the previous build");
-        // The version rolled back from is skipped until a newer one is out (this checks executable is stamped 1.0.0.0).
+        // The version rolled back from is skipped until a newer one is out (this checks executable is stamped 90.0.0.0).
         File.Copy(Environment.ProcessPath!, failed, overwrite: true);
-        Check(Updater.FailedVersion(exe, version) == new Version(1, 0, 0, 0) && Updater.FailedVersion(exe, new Version(1, 0, 0)) is null && Updater.FailedVersion(exe, new Version(2, 0, 0)) is null, "the failed version is skipped only while it is newer");
+        Check(Updater.FailedVersion(exe, version) == new Version(90, 0, 0, 0) && Updater.FailedVersion(exe, new Version(90, 0, 0)) is null && Updater.FailedVersion(exe, new Version(91, 0, 0)) is null, "the failed version is skipped only while it is newer");
         // Installing an update starts the new build's count from none and forgets the rollback.
         var source = Path.Combine(root, "rollback-source"); Directory.CreateDirectory(source); File.WriteAllText(Path.Combine(source, "Odyle.exe"), "newest");
         File.WriteAllText(old, "previous"); File.WriteAllText(starts, "0.36.0.0 1");
