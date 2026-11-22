@@ -1495,12 +1495,13 @@ public partial class MainWindow : Window
         box.IsEnabled = false;
         try { await ToggleTaskAsync(item, box.IsChecked == true); } finally { box.IsEnabled = true; }
     });
+    private static readonly string[] Cadences = ["daily", "weekly"];
     private void RenderTasks()
     {
         var now = DateTimeOffset.UtcNow + serverOffset; var connected = api is not null;
         renderedDaily = Checklist.PeriodStart("daily", now, resets); renderedWeekly = Checklist.PeriodStart("weekly", now, resets);
         renderedTasksCharacter = CurrentCharacter?.Id; var shown = Checklist.Shown(tasks, renderedTasksCharacter);
-        TaskGroups.ItemsSource = !connected ? Array.Empty<TaskGroup>() : new[] { "daily", "weekly" }.Select(cadence =>
+        TaskGroups.ItemsSource = !connected ? Array.Empty<TaskGroup>() : Cadences.Select(cadence =>
         {
             var items = shown.Where(t => t.Cadence == cadence).Select(t =>
             {

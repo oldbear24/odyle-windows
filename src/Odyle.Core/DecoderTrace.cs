@@ -65,6 +65,7 @@ public sealed class DecoderTrace
         var list = Opcodes();
         return list.Length == 0 ? "no frames yet" : string.Join(", ", list.Take(top).Select(c => $"{c.Opcode}×{c.Frames} ({c.MinBytes}–{c.MaxBytes} B)")) + (list.Length > top ? $", {list.Length - top} more opcodes" : "");
     }
+    private static readonly JsonSerializerOptions TraceJson = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     public string ToJson(string appVersion, string adapter)
     {
         lock (gate)
@@ -73,6 +74,6 @@ public sealed class DecoderTrace
                 app = appVersion, adapter, game = GameVersion, startedAt = StartedAt, writtenAt = DateTimeOffset.UtcNow,
                 opcodes = opcodes.Values.OrderByDescending(c => c.Frames).ThenBy(c => c.Opcode),
                 snapshots = new { total = snapshotCount, kept = snapshots }, updates = new { total = updateCount, kept = updates }, layouts, identities, locations, pvp,
-            }, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+            }, TraceJson);
     }
 }
