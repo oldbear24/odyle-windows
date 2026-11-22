@@ -142,7 +142,7 @@ static class ConnectionChecks
             await api.PairAsync("ABCDEFGH23456789"); await api.StartSessionAsync(); await api.EnsureDeviceKeyAsync(); await api.StartSessionAsync();
             using var pair = JsonDocument.Parse(pairing.Requests[0].Body);
             Check(pair.RootElement.GetProperty("code").GetString() == "ABCDEFGH23456789", pair.RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, "pairing sends the code and this PC's name");
-            Check(pairing.Requests[1].Body == "{}", JsonDocument.Parse(pairing.Requests[2].Body).RootElement.GetProperty("name").GetString() == PartyApi.DeviceName, pairing.Requests[3].Body == """{"deviceKey":"k"}""", "absent session fields are left out; the device request names this PC");
+            Check(pairing.Requests[1].Body == "{}", JsonElement.Parse(pairing.Requests[2].Body).GetProperty("name").GetString() == PartyApi.DeviceName, pairing.Requests[3].Body == """{"deviceKey":"k"}""", "absent session fields are left out; the device request names this PC");
         }
         // The app names its version with each session; the rooms answer carries the server's announcement.
         var versioned = new Stub((route, _) => route == "/api/odyle/rooms" ? Answer(HttpStatusCode.OK, """{"rooms":[],"odylePerCube":40,"announcement":{"text":"Maintenance at 10:00 UTC","level":"warning"}}""") : Answer(HttpStatusCode.OK, """{"sessionId":"s","sequence":0}"""));
@@ -273,7 +273,7 @@ static class ConnectionChecks
         {
             var renewed = new List<string>(); api.SignedIn += auth => { lock (renewed) renewed.Add(auth.Token); };
             var both = Task.WhenAll(api.GetRoomsAsync(), api.GetCharactersAsync());
-            if (await Task.WhenAny(both, Task.Delay(10_000)) != both) throw new Exception("Connection check failed: two requests waiting for one sign-in never finished.");
+            if (!await Within(both, TimeSpan.FromSeconds(10))) throw new Exception("Connection check failed: two requests waiting for one sign-in never finished.");
             await both;
             Check(signIns == 1, shared.Requests.Count(r => r.Token == "fresh") == 2, api.Token == "fresh", "two requests refused at once share one sign-in and are both repeated with its token");
             Check(renewed.Count == 2 && renewed.All(t => t == "fresh"), "both callers hear the shared sign-in's answer");

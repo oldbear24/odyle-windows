@@ -8,6 +8,12 @@ using K4os.Compression.LZ4;
 // needs another shape (a different Identity, its own Check) declares its own, which then wins.
 static class Helpers
 {
+    // Whether the task ends within the time, without a timer left running (CA2027); a fault is thrown.
+    public static async Task<bool> Within(Task task, TimeSpan time)
+    {
+        try { await task.WaitAsync(time); return true; }
+        catch (TimeoutException) { return false; }
+    }
     // A failed check names its file and line, its message and the condition that was false. The
     // overloads with two to four conditions say which of them failed (all are evaluated, in order).
     public static void Check(bool condition, string message, [CallerArgumentExpression(nameof(condition))] string condition1 = "", [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)

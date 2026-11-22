@@ -6,7 +6,7 @@ using Odyle.Core;
 // app listens to and the reconnect schedule. RunLive checks a real connection to a backend.
 static class RealtimeChecks
 {
-    static JsonElement Json(string text) => JsonDocument.Parse(text).RootElement.Clone();
+    static JsonElement Json(string text) => JsonElement.Parse(text);
     const string Lumina = """{"id":"c","user":"l","characterName":"Lumina","server":"Lumiel","region":"GLOBAL_EU","value":180,"confirmed":true,"valid":true,"source":"packet","lastReadingAt":"2026-10-12 11:00:00.000Z","lastSeenAt":"2026-10-12 11:59:50.000Z"}""";
     static RoomSnapshot Snapshot() => JsonSerializer.Deserialize<RoomSnapshot>("""{"room":{"id":"r","name":"Evening","cost":40,"role":"reporter","sharing":true},"serverNow":"2026-10-12T12:00:00.000Z","members":[{"id":"m","user":"l","role":"reporter","displayName":"Lumina","characters":[""" + Lumina + """]}]}""", new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
     public static void Run()
@@ -92,7 +92,7 @@ static class RealtimeChecks
         realtime.Connected += again => connected.TrySetResult(again);
         realtime.Message += (topic, data) => news.Writer.TryWrite((topic, RealtimeNews.Parse(data)));
         realtime.Start(RealtimeTopics.For(accountId, []));
-        Check(await Task.WhenAny(connected.Task, Task.Delay(10000)) == connected.Task, !connected.Task.Result, realtime.IsConnected, "the realtime connection subscribes (" + realtime.LastProblem + ")");
+        Check(await Within(connected.Task, TimeSpan.FromSeconds(10)), !connected.Task.Result, realtime.IsConnected, "the realtime connection subscribes (" + realtime.LastProblem + ")");
         async Task<RealtimeNews> Next(Func<RealtimeNews, bool> wanted, string what)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));

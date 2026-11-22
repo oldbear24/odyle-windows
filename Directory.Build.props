@@ -4,7 +4,10 @@
        checks), each with its reason; single ones sit beside the code they excuse. -->
   <PropertyGroup>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
-    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Pinned to .NET 10's rule set: "latest" would turn on every rule of whatever newer SDK builds
+         the app (the dashboard's companion checks build it outside global.json), failing builds
+         without a code change. Raise it together with the target framework. -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- A new NuGet advisory (NuGet audit) stays a warning: it must not fail every build, a hotfix's
          included, before the package has a fixed version. Dependabot raises those updates. -->
