@@ -7,10 +7,10 @@ namespace Odyle.Core;
 // markers, which the dashboard reads back (the same format as odyle-dashboard's src/changelog.js).
 public sealed record ChangeGroup(string Title, string[] Items);
 public sealed record ChangeEntry(string Version, string Date, ChangeGroup[] Groups);
-public static class Changelog
+public static partial class Changelog
 {
     public static readonly string[] Titles = ["New", "Changed", "Fixed"];
-    private static readonly Regex Heading = new(@"^## (\d+\.\d+\.\d+)(?:\s*·\s*(\d{4}-\d{2}-\d{2}))?\s*$", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"^## (\d+\.\d+\.\d+)(?:\s*·\s*(\d{4}-\d{2}-\d{2}))?\s*$", RegexOptions.CultureInvariant)] private static partial Regex Heading();
 
     // The versions, newest first as written.
     public static ChangeEntry[] Parse(string text)
@@ -19,7 +19,7 @@ public static class Changelog
         foreach (var raw in text.Split('\n'))
         {
             var line = raw.TrimEnd('\r', ' ', '\t');
-            if (Heading.Match(line) is { Success: true } heading) { entries.Add((heading.Groups[1].Value, heading.Groups[2].Value, [])); continue; }
+            if (Heading().Match(line) is { Success: true } heading) { entries.Add((heading.Groups[1].Value, heading.Groups[2].Value, [])); continue; }
             if (entries.Count == 0) continue;
             var groups = entries[^1].Groups;
             if (line.StartsWith("### ", StringComparison.Ordinal)) groups.Add((line[4..].Trim(), []));

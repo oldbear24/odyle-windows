@@ -39,12 +39,15 @@ public static class GameConnection
 // Settings → Copy diagnostics: a short plain-text report for a bug report, put on the clipboard
 // and nowhere else. The log never holds tokens, device keys or pairing codes (RotatingLog.Redact);
 // the report also masks the account id, this PC's name and the Windows user folder.
-public static class Diagnostics
+public static partial class Diagnostics
 {
+    [GeneratedRegex(@"\baccount [a-z0-9]{15}\b", RegexOptions.CultureInvariant)] private static partial Regex AccountId();
+    [GeneratedRegex(@"\bdevice ""[^""\r\n]*""", RegexOptions.CultureInvariant)] private static partial Regex DeviceName();
+    [GeneratedRegex(@"(?i)\b([a-z]:\\users\\)[^\\\r\n""']+(?=\\)", RegexOptions.CultureInvariant)] private static partial Regex UserFolder();
     private static readonly (Regex Pattern, string Mask)[] Personal = [
-        (new(@"\baccount [a-z0-9]{15}\b", RegexOptions.CultureInvariant), "account [account]"),
-        (new(@"\bdevice ""[^""\r\n]*""", RegexOptions.CultureInvariant), "device \"[this PC]\""),
-        (new(@"(?i)\b([a-z]:\\users\\)[^\\\r\n""']+(?=\\)", RegexOptions.CultureInvariant), "$1[user]")];
+        (AccountId(), "account [account]"),
+        (DeviceName(), "device \"[this PC]\""),
+        (UserFolder(), "$1[user]")];
     public static string Redact(string text)
     {
         text = RotatingLog.Redact(text);

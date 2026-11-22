@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Odyle.Core;
 
-public sealed record ConnectionDetails(string Endpoint, string Code)
+public sealed partial record ConnectionDetails(string Endpoint, string Code)
 {
     public static string NormalizeEndpoint(string endpoint)
     {
@@ -42,10 +42,12 @@ public sealed record ConnectionDetails(string Endpoint, string Code)
         return Parse(links[0], "https://invalid.invalid");
     }
 
+    [GeneratedRegex("[\\s-]")] private static partial Regex Separators();
+    [GeneratedRegex("^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$")] private static partial Regex PairingCode();
     private static string NormalizeCode(string value)
     {
-        var code = Regex.Replace(value, "[\\s-]", "").ToUpperInvariant();
-        if (!Regex.IsMatch(code, "^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$"))
+        var code = Separators().Replace(value, "").ToUpperInvariant();
+        if (!PairingCode().IsMatch(code))
             throw new ArgumentException(Localizer.T("Paste the connection link or 16-character Windows pairing code. Room invites use a different code."));
         return code;
     }
