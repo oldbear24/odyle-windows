@@ -22,6 +22,7 @@ using Odyle.Reader;
 //   --only <a,b>           only the scenarios whose names contain one of these (with any of the above)
 //   --list                 the scenarios' names
 //   --screenshots <dir>    previews of the window (writes PNGs; see Screenshots)
+//   --server-screenshots <dir>  previews of the old-server notice and of a pairing from before device keys (ServerScreenshots)
 //   --update-probe, --compact-probe: opt-in probes on a desktop
 static partial class ReaderChecks
 {
@@ -45,6 +46,7 @@ static partial class ReaderChecks
             try
             {
                 if (args is ["--screenshots", var directory]) { probe = NewWindow(); Screenshots(probe, directory); return; }
+                if (args is ["--server-screenshots", var previews]) { await ServerScreenshots(previews); return; }
                 if (args is ["--update-probe"]) { await UpdateProbe(); return; }
                 if (args is ["--compact-probe"]) { probe = NewWindow(); CompactProbe(probe); return; }
                 await RunAsync(only, scratch);

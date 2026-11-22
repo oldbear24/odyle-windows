@@ -69,6 +69,73 @@ static partial class ReaderChecks
         }
     }
 
+    // Previews of what 1.0.0 shows about the server, for the owner's look ("--server-screenshots <dir>"): the main window
+    // and Settings on a server before dashboard 1.0.0 (with the notice) and on a current one (without), in English and
+    // Czech, and a pairing saved before device keys, in English.
+    static async Task ServerScreenshots(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        foreach (var language in new[] { "en", "cs" })
+        {
+            Localizer.Use(language);
+            try
+            {
+                foreach (var (version, name) in new[] { ((string?)null, "old-server"), ("1.0.0", "current-server") })
+                {
+                    var window = NewWindow();
+                    try
+                    {
+                        await ConnectedPreview(window, version);
+                        Snapshot(window, Path.Combine(directory, $"{name}-window-{language}.png"));
+                        Snapshot(Settings(window), Path.Combine(directory, $"{name}-settings-{language}.png"), 320);
+                    }
+                    finally { await Retire(window); }
+                }
+            }
+            finally { Localizer.Use("en"); }
+        }
+        // A pairing saved before device keys: the window asks to pair again, and Settings offers pairing with the address kept.
+        var keyless = NewWindow(); var probeNpcap = Npcap.Probe; Npcap.Probe = () => false;
+        try
+        {
+            Field("newApi").SetValue(keyless, (Func<string, string?, string?, PartyApi>)((endpoint, token, key) => new PartyApi(endpoint, token, key, new PairingServer())));
+            SessionStore.Save(new SavedSession("https://odyle.example", "token-from-before-device-keys"));
+            await (Task)Call(keyless, "RestoreAsync")!;
+            ((DispatcherTimer)Field("npcapTimer").GetValue(keyless)!).Stop();
+            ((Expander)Settings(keyless).FindName("ServerOptions")).IsExpanded = true;
+            Snapshot(keyless, Path.Combine(directory, "keyless-window-en.png"));
+            Snapshot(Settings(keyless), Path.Combine(directory, "keyless-settings-en.png"), 320);
+        }
+        finally { Npcap.Probe = probeNpcap; await Retire(keyless); }
+        Console.WriteLine("Rendered the server previews to " + directory);
+    }
+    // A connected window reading a live character, as the screenshots show it, on a server that names version (null:
+    // a dashboard before 1.0.0): the session answer says it, and the window notes it as after connecting.
+    static async Task ConnectedPreview(MainWindow window, string? version)
+    {
+        var settings = Settings(window);
+        var api = new PartyApi("https://odyle.example", "token", "key", new PairingServer { Version = version });
+        Call(window, "UseApi", api); await api.StartSessionAsync();
+        Field("accountName").SetValue(window, "Sample account");
+        var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, stamp), new Character("c2", "u", "TestAlt", "Lumiel", "GLOBAL_EU", 120, true, false, stamp) });
+        Field("rooms").SetValue(window, new[] { new Room("r1", "The evening expedition", 40, "owner", true, ["c1"]), new Room("r2", "Weekend raid", 30, "reporter", true, ["c1", "c2"]) });
+        Field("currentCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("snapshots").SetValue(window, new[] { PartySnapshot() });
+        ((TextBlock)settings.FindName("AccountDetail")).Text = Localizer.T("Signed in as {0} via Discord · {1}", "Sample account", "odyle.example");
+        ((TextBlock)settings.FindName("UpdateLabel")).Text = Localizer.T("{0} · installs new releases at every start and looks for them once a day.", Localizer.T("Odyle {0}", "1.0.0"));
+        ((Button)settings.FindName("CheckUpdateButton")).Visibility = Visibility.Visible;
+        Call(window, "ShowConnected", true); Call(window, "RenderRooms");
+        var inert = new PacketCapture(); Field("capture").SetValue(window, inert); Call(window, "RenderReaderButton");
+        window.Attribution.DetectedKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
+        window.Attribution.OwnerKey = "TestHero|2304"; Field("activeCharacterId").SetValue(window, "c1");
+        var state = typeof(MainWindow).GetNestedType("ReaderState", System.Reflection.BindingFlags.NonPublic)!;
+        Call(window, "SetReaderState", Enum.Parse(state, "Live"), Localizer.T("Live"));
+        ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Call(window, "NoteServerVersion"); Call(window, "Status", "");
+        Call(window, "RenderHero"); Call(window, "RenderParty");
+    }
+
     // A pairing saved before device keys (Oct 2026) cannot sign in once its token ends, and dashboard 1.0.0 refuses it:
     // the app treats this PC as unpaired, asks nothing of the server, keeps its address and asks to pair again.
     static async Task KeylessSessionScenario(MainWindow window)
