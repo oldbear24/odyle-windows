@@ -10,8 +10,8 @@ static class ChangelogChecks
     {
         var entries = Changelog.Parse(Sample);
         Check(entries.Select(e => (e.Version, e.Date)).SequenceEqual([("0.10.0", "2026-10-16"), ("0.9.0", ""), ("0.8.0", "2026-10-15")]), "versions newest first, with their dates");
-        Check(entries[0].Groups is [{ Title: "New", Items: ["**Bold** first continued here", "Second with `code`"] }, { Title: "Fixed", Items: ["A fix"] }] && entries[2].Groups.Length == 0, "groups and entries; empty groups left out");
-        Check(Changelog.Problem(Sample, "0.10.0") == "" && Changelog.Problem(Sample, "0.11.0").StartsWith("CHANGELOG.md has no section for 0.11.0.") && Changelog.Problem(Sample, "0.8.0").Contains("lists nothing") && Changelog.Problem(Sample, "0.9.0").Contains("group \"Odd\""), "a version must describe what it changed");
+        Check(entries[0].Groups is [{ Title: "New", Items: ["**Bold** first continued here", "Second with `code`"] }, { Title: "Fixed", Items: ["A fix"] }], entries[2].Groups.Length == 0, "groups and entries; empty groups left out");
+        Check(Changelog.Problem(Sample, "0.10.0") == "", Changelog.Problem(Sample, "0.11.0").StartsWith("CHANGELOG.md has no section for 0.11.0."), Changelog.Problem(Sample, "0.8.0").Contains("lists nothing"), Changelog.Problem(Sample, "0.9.0").Contains("group \"Odd\""), "a version must describe what it changed");
         Check(Changelog.Notes(entries[0]) == "<!-- changes -->\n### New\n- **Bold** first continued here\n- Second with `code`\n\n### Fixed\n- A fix\n\n<!-- /changes -->", "release notes between the markers the dashboard reads back");
         Check(Changelog.Runs("**Compact mode** is the `same` window").SequenceEqual([("Compact mode", true), (" is the same window", false)]), "an entry splits into plain and bold runs");
         // The repository's own changelog describes the project's version, newest first.

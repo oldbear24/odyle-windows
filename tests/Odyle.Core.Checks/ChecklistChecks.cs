@@ -19,42 +19,42 @@ static class ChecklistChecks
         Check(Checklist.NextReset("weekly", At("2026-10-20T23:00:00Z")) == At("2026-10-21T07:00:00Z"), "next weekly reset");
         // Server settings move both resets; unusable values fall back to the defaults.
         var resets = new TaskResets(0, "monday");
-        Check(Checklist.PeriodStart("daily", At("2026-10-13T23:30:00Z"), resets) == At("2026-10-13T00:00:00Z") && Checklist.NextReset("daily", At("2026-10-13T23:30:00Z"), resets) == At("2026-10-14T00:00:00Z"), "midnight daily reset");
+        Check(Checklist.PeriodStart("daily", At("2026-10-13T23:30:00Z"), resets) == At("2026-10-13T00:00:00Z"), Checklist.NextReset("daily", At("2026-10-13T23:30:00Z"), resets) == At("2026-10-14T00:00:00Z"), "midnight daily reset");
         Check(Checklist.PeriodStart("weekly", At("2026-10-18T23:30:00Z"), resets) == At("2026-10-12T00:00:00Z"), "Monday weekly reset");
         Check(Checklist.PeriodStart("weekly", At("2026-10-14T07:00:00Z"), new TaskResets(99, "someday")) == At("2026-10-14T07:00:00Z"), "unusable settings fall back to the defaults");
         Check(Checklist.PeriodStart("daily", At("2026-10-14T06:00:00Z"), null) == At("2026-10-13T07:00:00Z"), "missing settings use the defaults");
-        Check(Checklist.DayName(resets) == "Monday" && Checklist.DayName(null) == "Wednesday" && Checklist.ResetHour(null) == 7, "reset names");
+        Check(Checklist.DayName(resets) == "Monday", Checklist.DayName(null) == "Wednesday", Checklist.ResetHour(null) == 7, "reset names");
         // Done means checked after the current period began; the server never unchecks.
         var ticked = new UserTask("t", "u", "Daily dungeon", "daily", "2026-10-13 18:00:00.000Z");
-        Check(Checklist.IsDone(ticked, At("2026-10-14T06:59:00Z")) && !Checklist.IsDone(ticked, At("2026-10-14T07:00:00Z")), "a daily task unchecks itself at the daily reset");
+        Check(Checklist.IsDone(ticked, At("2026-10-14T06:59:00Z")), !Checklist.IsDone(ticked, At("2026-10-14T07:00:00Z")), "a daily task unchecks itself at the daily reset");
         var weekly = ticked with { Cadence = "weekly" };
-        Check(Checklist.IsDone(weekly, At("2026-10-14T06:59:00Z")) && !Checklist.IsDone(weekly, At("2026-10-14T07:00:00Z")), "a weekly task unchecks itself at the weekly reset");
+        Check(Checklist.IsDone(weekly, At("2026-10-14T06:59:00Z")), !Checklist.IsDone(weekly, At("2026-10-14T07:00:00Z")), "a weekly task unchecks itself at the weekly reset");
         Check(Checklist.IsDone(weekly with { DoneAt = "2026-10-14 07:00:00.000Z" }, At("2026-10-20T23:00:00Z")), "checked at the reset counts for the whole week");
         Check(!Checklist.IsDone(ticked with { DoneAt = "" }, At("2026-10-13T10:00:00Z")), "an unchecked task is not done");
-        Check(Checklist.Remaining(TimeSpan.FromSeconds(30)) == "under a minute" && Checklist.Remaining(TimeSpan.FromMinutes(4)) == "4m" && Checklist.Remaining(TimeSpan.FromMinutes(5 * 60 + 12)) == "5h 12m" && Checklist.Remaining(TimeSpan.FromHours(2 * 24 + 3)) == "2d 3h", "remaining time wording");
+        Check(Checklist.Remaining(TimeSpan.FromSeconds(30)) == "under a minute", Checklist.Remaining(TimeSpan.FromMinutes(4)) == "4m", Checklist.Remaining(TimeSpan.FromMinutes(5 * 60 + 12)) == "5h 12m", Checklist.Remaining(TimeSpan.FromHours(2 * 24 + 3)) == "2d 3h", "remaining time wording");
         // The checklist as the backend sends it: PocketBase record dates, extra fields and an ISO server time.
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var listed = JsonSerializer.Deserialize<TasksResponse>("""{"tasks":[{"id":"t1","user":"u","title":"Daily dungeon","cadence":"daily","doneAt":"2026-10-13 18:00:00.000Z","created":"2026-10-13 09:00:00.000Z","updated":"2026-10-13 18:00:00.000Z","collectionName":"user_tasks"},{"id":"t2","user":"u","title":"Weekly raid","cadence":"weekly","doneAt":"","created":"2026-10-13 09:00:00.000Z","updated":"2026-10-13 09:00:00.000Z"}],"resets":{"dailyResetHour":7,"weeklyResetDay":"wednesday"},"serverNow":"2026-10-13T18:00:01.000Z"}""", options)!;
         var serverNow = Readiness.Parse(listed.ServerNow)!.Value;
-        Check(listed.Tasks.Length == 2 && listed.Resets is { DailyResetHour: 7, WeeklyResetDay: "wednesday" }, "checklist contract");
-        Check(Checklist.IsDone(listed.Tasks[0], serverNow, listed.Resets) && !Checklist.IsDone(listed.Tasks[1], serverNow, listed.Resets), "done follows doneAt and the server time");
+        Check(listed.Tasks.Length == 2, listed.Resets is { DailyResetHour: 7, WeeklyResetDay: "wednesday" }, "checklist contract");
+        Check(Checklist.IsDone(listed.Tasks[0], serverNow, listed.Resets), !Checklist.IsDone(listed.Tasks[1], serverNow, listed.Resets), "done follows doneAt and the server time");
         // A list per character (#38): the app shows the account's own list and the card's character's.
         var scoped = JsonSerializer.Deserialize<TasksResponse>("""{"tasks":[{"id":"a","user":"u","title":"Arena","cadence":"daily","character":""},{"id":"b","user":"u","title":"Nightmare","cadence":"weekly","character":"alt","characterName":"Altie"},{"id":"c","user":"u","title":"Main only","cadence":"daily","character":"main","characterName":"Mainy"}],"characters":[],"templates":[],"limit":40}""", options)!;
-        Check(scoped.Tasks[1] is { Character: "alt", CharacterName: "Altie" } && listed.Tasks[0].Character is null, "a task carries its character's list, and older backends send none");
-        Check(Checklist.Shown(scoped.Tasks, "alt").Select(t => t.Id).SequenceEqual(["a", "b"]) && Checklist.Shown(scoped.Tasks, null).Select(t => t.Id).SequenceEqual(["a"]) && Checklist.Shown(listed.Tasks, "alt").Length == 2, "the account's list and the card's character's, never the other characters'");
+        Check(scoped.Tasks[1] is { Character: "alt", CharacterName: "Altie" }, listed.Tasks[0].Character is null, "a task carries its character's list, and older backends send none");
+        Check(Checklist.Shown(scoped.Tasks, "alt").Select(t => t.Id).SequenceEqual(["a", "b"]), Checklist.Shown(scoped.Tasks, null).Select(t => t.Id).SequenceEqual(["a"]), Checklist.Shown(listed.Tasks, "alt").Length == 2, "the account's list and the card's character's, never the other characters'");
         // Two hours before a reset, the tasks of that cadence still open (odyle-dashboard#48): once per reset, never ticked ones.
         var open = new[] { new UserTask("d1", "u", "Sanctuary", "daily"), new UserTask("d2", "u", "sanctuary ", "daily", Character: "alt"), new UserTask("d3", "u", "Arena", "daily", DoneAt: "2026-10-13T08:00:00Z"), new UserTask("w1", "u", "Field boss", "weekly") };
         var none = new HashSet<string>();
-        Check(ResetReminders.Due(open, null, At("2026-10-13T04:59:00Z"), none).Length == 0 && !ResetReminders.Near(At("2026-10-13T04:00:00Z"), null), "more than two hours before the reset: nothing, and the checklist is not fetched");
+        Check(ResetReminders.Due(open, null, At("2026-10-13T04:59:00Z"), none).Length == 0, !ResetReminders.Near(At("2026-10-13T04:00:00Z"), null), "more than two hours before the reset: nothing, and the checklist is not fetched");
         var daily = ResetReminders.Due(open, null, At("2026-10-13T05:00:00Z"), none);
-        Check(daily is [{ Cadence: "daily", Open.Length: 2 }] && daily[0].ResetAt == At("2026-10-13T07:00:00Z") && ResetReminders.Near(At("2026-10-13T04:51:00Z"), null), "two hours before the daily reset: the two daily tasks still open");
-        Check(ResetReminders.Summary(daily[0].Open) == "Sanctuary ×2" && ResetReminders.Summary(open[2..]) == "Arena, Field boss", "the same title once with a count");
+        Check(daily is [{ Cadence: "daily", Open.Length: 2 }], daily[0].ResetAt == At("2026-10-13T07:00:00Z"), ResetReminders.Near(At("2026-10-13T04:51:00Z"), null), "two hours before the daily reset: the two daily tasks still open");
+        Check(ResetReminders.Summary(daily[0].Open) == "Sanctuary ×2", ResetReminders.Summary(open[2..]) == "Arena, Field boss", "the same title once with a count");
         Check(ResetReminders.Due(open, null, At("2026-10-13T06:30:00Z"), new HashSet<string>([daily[0].Key])).Length == 0, "one notice per reset");
-        Check(Reminders.Prune([daily[0].Key], At("2026-10-13T06:30:00Z")).Length == 1 && Reminders.Prune([daily[0].Key], At("2026-10-15T06:30:00Z")).Length == 0, "reminded resets are forgotten a day later");
+        Check(Reminders.Prune([daily[0].Key], At("2026-10-13T06:30:00Z")).Length == 1, Reminders.Prune([daily[0].Key], At("2026-10-15T06:30:00Z")).Length == 0, "reminded resets are forgotten a day later");
         var both = ResetReminders.Due(open, null, At("2026-10-14T05:30:00Z"), none);
-        Check(both.Select(n => n.Cadence).SequenceEqual(["daily", "weekly"]) && both[1].Open is [{ Id: "w1" }], "on the weekly reset day both resets come, each with its own tasks");
+        Check(both.Select(n => n.Cadence).SequenceEqual(["daily", "weekly"]), both[1].Open is [{ Id: "w1" }], "on the weekly reset day both resets come, each with its own tasks");
         Check(ResetReminders.Due(open.Where(t => t.Cadence == "weekly"), null, At("2026-10-13T05:00:00Z"), none).Length == 0, "nothing open: no notice");
-        Check(NotificationSettings.Default.TasksInTray && !new NotificationSettings(Kinds: new(Tasks: false)).TasksInTray && !new NotificationSettings(Channels: new(Tray: false)).TasksInTray, "on until turned off, and only with the tray on");
+        Check(NotificationSettings.Default.TasksInTray, !new NotificationSettings(Kinds: new(Tasks: false)).TasksInTray, !new NotificationSettings(Channels: new(Tray: false)).TasksInTray, "on until turned off, and only with the tray on");
         Console.WriteLine("Daily and weekly checklist periods, reset settings, done state and wire contract passed.");
     }
 }

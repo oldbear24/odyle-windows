@@ -29,8 +29,8 @@ static class PacketChecks
     {
         var tcp = new TcpReceiveStream();
         Check(tcp.Feed(100, new byte[] { 1, 2 }).Single().SequenceEqual(new byte[] { 1, 2 }), "initial segment");
-        Check(!tcp.Feed(104, new byte[] { 5, 6 }).Any() && tcp.GapSince is not null, "hold gap");
-        Check(tcp.Feed(102, new byte[] { 3, 4 }).SelectMany(x => x).SequenceEqual(new byte[] { 3, 4, 5, 6 }) && tcp.GapSince is null, "reorder");
+        Check(!tcp.Feed(104, new byte[] { 5, 6 }).Any(), tcp.GapSince is not null, "hold gap");
+        Check(tcp.Feed(102, new byte[] { 3, 4 }).SelectMany(x => x).SequenceEqual(new byte[] { 3, 4, 5, 6 }), tcp.GapSince is null, "reorder");
         Check(!tcp.Feed(100, new byte[] { 1, 2 }).Any(), "duplicate ignored");
         Reject(() => tcp.Feed(101, new byte[] { 9, 3 }), "conflicting retransmission");
         Reject(() => tcp.Feed(700000, new byte[] { 1 }), "bounded gap");
@@ -40,14 +40,14 @@ static class PacketChecks
         Reject(() => tcp.Feed(103, new byte[] { 4, 9 }), "pending overlap");
         // The SYN's sequence number: the first data byte follows it, so a later segment is a gap.
         var started = new TcpReceiveStream(); started.Start(uint.MaxValue);
-        Check(!started.Feed(2, new byte[] { 3, 4 }).Any() && started.GapSince is not null, "data after a lost first segment waits");
-        Check(started.Feed(0, new byte[] { 1, 2 }).SelectMany(x => x).SequenceEqual(new byte[] { 1, 2, 3, 4 }) && started.GapSince is null, "the first segment after the SYN fills the gap, across the sequence rollover");
+        Check(!started.Feed(2, new byte[] { 3, 4 }).Any(), started.GapSince is not null, "data after a lost first segment waits");
+        Check(started.Feed(0, new byte[] { 1, 2 }).SelectMany(x => x).SequenceEqual(new byte[] { 1, 2, 3, 4 }), started.GapSince is null, "the first segment after the SYN fills the gap, across the sequence rollover");
         // After a reset, segments ending at or before the last delivered byte are old retransmissions.
         started.Reset();
-        Check(!started.Feed(0, new byte[] { 1, 2 }).Any() && !started.Feed(2, new byte[] { 3, 4 }).Any(), "old retransmissions after a reset are ignored");
+        Check(!started.Feed(0, new byte[] { 1, 2 }).Any(), !started.Feed(2, new byte[] { 3, 4 }).Any(), "old retransmissions after a reset are ignored");
         Check(started.Feed(3, new byte[] { 4, 5, 6 }).SelectMany(x => x).SequenceEqual(new byte[] { 5, 6 }), "a segment reaching past the last delivered byte resumes right after it");
         started.Reset(); started.Reset();
-        Check(!started.Feed(5, new byte[] { 6 }).Any() && started.Feed(20, new byte[] { 9 }).Single()[0] == 9, "a second reset keeps the mark, and newer data resumes at once");
+        Check(!started.Feed(5, new byte[] { 6 }).Any(), started.Feed(20, new byte[] { 9 }).Single()[0] == 9, "a second reset keeps the mark, and newer data resumes at once");
         // Pending segments are bounded by bytes: a thousand small held segments are no overflow.
         var small = new TcpReceiveStream(); small.Feed(0, new byte[] { 0 });
         for (uint i = 2; i <= 1000; i++) small.Feed(i, new byte[] { (byte)i });
@@ -61,17 +61,17 @@ static class PacketChecks
     {
         // 60000001 is 01 87 93 03 on the wire. The adapter before v2 matched "0c 01" and read the
         // varint 87 93 03 as owner 51591, and 80000001 (01 B4 C4 04) as owner 74292.
-        Check(Stat(0x0c, Odyle, 1, 2)[1..5].SequenceEqual(new byte[] { 0x01, 0x87, 0x93, 0x03 }) && Stat(0x0c, Counter, 3, 1)[1..5].SequenceEqual(new byte[] { 0x01, 0xb4, 0xc4, 0x04 }), "resource ids on the wire");
+        Check(Stat(0x0c, Odyle, 1, 2)[1..5].SequenceEqual(new byte[] { 0x01, 0x87, 0x93, 0x03 }), Stat(0x0c, Counter, 3, 1)[1..5].SequenceEqual(new byte[] { 0x01, 0xb4, 0xc4, 0x04 }), "resource ids on the wire");
         foreach (var (tag, value, bonus) in new (byte, uint, uint)[] { (0x0c, 15, 940), (0x08, 0, 390), (0x04, 120, 0), (0x00, 0, 0) })
         {
             var bytes = Stat(tag, Odyle, value, bonus); var offset = 0;
-            Check(StatRecord.TryRead(bytes, ref offset, out var record) && record == new StatRecord(tag, Odyle, value, bonus) && offset == bytes.Length, $"tag {tag:X2} record");
+            Check(StatRecord.TryRead(bytes, ref offset, out var record), record == new StatRecord(tag, Odyle, value, bonus), offset == bytes.Length, $"tag {tag:X2} record");
         }
         var at = 0;
-        Check(!StatRecord.TryRead(new byte[] { 0x10, 1, 0x87, 0x93, 3, 5 }, ref at, out _) && at == 0, "an unknown tag is not a record");
-        Check(!StatRecord.TryRead(new byte[] { 0x0c, 1, 0x87, 0x93, 3, 0x85 }, ref at, out _) && at == 0, "a truncated value is not a record");
-        Check(!StatRecord.TryRead(new byte[] { 0x04, 1, 0x87, 0x93, 3, 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _) && at == 0, "an oversized value is not a record");
-        Check(!ExperimentalOdyleDecoder.TryVarint(new byte[] { 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _) && at == 0, "an oversized varint answers false instead of throwing");
+        Check(!StatRecord.TryRead(new byte[] { 0x10, 1, 0x87, 0x93, 3, 5 }, ref at, out _), at == 0, "an unknown tag is not a record");
+        Check(!StatRecord.TryRead(new byte[] { 0x0c, 1, 0x87, 0x93, 3, 0x85 }, ref at, out _), at == 0, "a truncated value is not a record");
+        Check(!StatRecord.TryRead(new byte[] { 0x04, 1, 0x87, 0x93, 3, 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _), at == 0, "an oversized value is not a record");
+        Check(!ExperimentalOdyleDecoder.TryVarint(new byte[] { 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _), at == 0, "an oversized varint answers false instead of throwing");
     }
     static void Snapshots()
     {
@@ -79,7 +79,7 @@ static class PacketChecks
         decoder.Candidate += seen.Add; decoder.SnapshotObserved += observed.Add; decoder.SnapshotWithoutOdyle += () => missing++;
         // The snapshot after a teleport: Odyle 15 + 940 and the second counter 3 + 1 among other stats.
         decoder.Feed(Frame(Snapshot(Filler(0), Stat(0x0c, Odyle, 15, 940), Filler(1), Stat(0x0c, Counter, 3, 1), Filler(2))));
-        Check(seen.Single() is { Total: 955, Base: 15, Bonus: 940, Source: CandidateSource.Snapshot, ParserVersion: ExperimentalOdyleDecoder.Version } && observed.Single() is { Records: 5, Read: true, Fields: [{ Tag: 0x0c, Base: 15, Bonus: 940 }] } && missing == 0, "a two-field snapshot reads resource 60000001 only");
+        Check(seen.Single() is { Total: 955, Base: 15, Bonus: 940, Source: CandidateSource.Snapshot, ParserVersion: ExperimentalOdyleDecoder.Version }, observed.Single() is { Records: 5, Read: true, Fields: [{ Tag: 0x0c, Base: 15, Bonus: 940 }] }, missing == 0, "a two-field snapshot reads resource 60000001 only");
         // The login snapshot with no base: tag 08, whatever byte comes before it.
         decoder.Feed(Frame(Snapshot(Stat(0x04, 10000001, 7), Stat(0x08, Odyle, 0, 390))));
         Check(seen.Last() is { Total: 390, Base: 0, Bonus: 390 }, "0 + 390 (bonus only)");
@@ -89,28 +89,28 @@ static class PacketChecks
         decoder.Feed(Frame(Snapshot(Stat(0x04, Odyle, 120), Filler(4))));
         Check(seen.Last() is { Total: 120, Base: 120, Bonus: 0 }, "base only (tag 04)");
         decoder.Feed(Frame(Snapshot(Filler(5), Stat(0x00, Odyle))));
-        Check(seen.Last() is { Total: 0, Base: 0, Bonus: 0 } && seen.Count == 5 && missing == 0, "0 / 0 (tag 00)");
+        Check(seen.Last() is { Total: 0, Base: 0, Bonus: 0 }, seen.Count == 5, missing == 0, "0 / 0 (tag 00)");
         // A full snapshot understood whole without the record: the character has no Odyle yet. A lone
         // record of the second counter is never taken for it.
         decoder.Feed(Frame(Snapshot([.. Enumerable.Range(6, 36).Select(Filler), Stat(0x0c, Counter, 3, 1)])));
-        Check(seen.Count == 5 && missing == 1 && observed.Last() is { Records: 37, Read: false, Fields.Length: 0 }, "a lone 80000001 snapshot is not Odyle; the full snapshot says Odyle is missing");
+        Check(seen.Count == 5, missing == 1, observed.Last() is { Records: 37, Read: false, Fields.Length: 0 }, "a lone 80000001 snapshot is not Odyle; the full snapshot says Odyle is missing");
         // A short snapshot (a partial refresh, or a count of 0) says nothing about Odyle.
         decoder.Feed(Frame(Snapshot(Filler(6), Stat(0x0c, Counter, 3, 1), Filler(7)))); decoder.Feed(Frame([0x0b, 0x61, 0]));
-        Check(seen.Count == 5 && missing == 1 && observed.Last() is { Records: 0, Read: false }, "a short snapshot without the record is no proof that Odyle is missing");
+        Check(seen.Count == 5, missing == 1, observed.Last() is { Records: 0, Read: false }, "a short snapshot without the record is no proof that Odyle is missing");
         // A layout with an unknown tag is not walked; the Odyle record is then found by its id.
         decoder.Feed(Frame(Snapshot(Filler(8), [0x10, 1, 2, 3, 4, 5], Stat(0x0c, Odyle, 105, 1110))));
-        Check(seen.Last() is { Total: 1215 } && observed.Last() is { Records: null, Read: true }, "the id search reads an unwalked layout");
+        Check(seen.Last() is { Total: 1215 }, observed.Last() is { Records: null, Read: true }, "the id search reads an unwalked layout");
         decoder.Feed(Frame(Snapshot([0x10, 1, 2, 3, 4, 5], Stat(0x0c, Counter, 2, 1))));
-        Check(seen.Count == 6 && missing == 1, "an unwalked layout without the record says nothing about Odyle");
+        Check(seen.Count == 6, missing == 1, "an unwalked layout without the record says nothing about Odyle");
         // A count that does not match the records is not walked either.
         decoder.Feed(Frame([0x0b, 0x61, 9, .. Stat(0x0c, Counter, 3, 1)]));
-        Check(seen.Count == 6 && missing == 1 && observed.Last().Records is null, "a wrong record count is no proof of a missing record");
+        Check(seen.Count == 6, missing == 1, observed.Last().Records is null, "a wrong record count is no proof of a missing record");
         // Two disagreeing records, a total above 1,000,000 and the id after a byte that is no tag are not read.
         decoder.Feed(Frame([0x0b, 0x61, 9, .. Stat(0x0c, Odyle, 1, 2), 0x77, .. Stat(0x0c, Odyle, 3, 4)]));
         decoder.Feed(Frame(Snapshot(Stat(0x0c, Odyle, 900000, 200000))));
         decoder.Feed(Frame([0x0b, 0x61, 0x99, 0x01, 0x87, 0x93, 0x03, 5, 5]));
         decoder.Feed(Frame([0x0b, 0x61]));
-        Check(seen.Count == 6 && missing == 1, "ambiguous, oversized, untagged and empty snapshots are not read");
+        Check(seen.Count == 6, missing == 1, "ambiguous, oversized, untagged and empty snapshots are not read");
     }
     static void Updates()
     {
@@ -119,7 +119,7 @@ static class PacketChecks
         // No snapshot needed (a reader started after login): the regeneration tick, +15 to base
         // every three hours, repeats base and bonus.
         decoder.Feed(Frame(Update(0, Stat(0x0c, Odyle, 15, 895))));
-        Check(seen.Single() is { Total: 910, Base: 15, Bonus: 895, Source: CandidateSource.Update } && updates.Single() is { Resource: Odyle, Tag: 0x0c, Base: 15, Bonus: 895, TrailerBytes: 1, Direction: 0 }, "a regeneration tick is a complete reading");
+        Check(seen.Single() is { Total: 910, Base: 15, Bonus: 895, Source: CandidateSource.Update }, updates.Single() is { Resource: Odyle, Tag: 0x0c, Base: 15, Bonus: 895, TrailerBytes: 1, Direction: 0 }, "a regeneration tick is a complete reading");
         // A spend drains base before bonus: 15 + 895 less 40 leaves 0 + 870, a bonus-only record.
         decoder.Feed(Frame(Update(0, Stat(0x08, Odyle, 0, 870))));
         Check(seen.Last() is { Total: 870, Base: 0, Bonus: 870 }, "a spend update");
@@ -130,7 +130,7 @@ static class PacketChecks
         Check(seen.Select(c => c.Total).SequenceEqual([910, 870, 990, 1090, 105]), "increases and a base-only update");
         // The second counter's updates (logged as 3 + 1, then 2 + 1) are never Odyle, and are logged with their id.
         decoder.Feed(Frame(Update(0, Stat(0x0c, Counter, 3, 1)))); decoder.Feed(Frame(Update(0, Stat(0x0c, Counter, 2, 1))));
-        Check(seen.Count == 5 && updates.TakeLast(2).All(u => u is { Resource: Counter, Base: > 0 }), "updates of 80000001 are not read");
+        Check(seen.Count == 5, updates.TakeLast(2).All(u => u is { Resource: Counter, Base: > 0 }), "updates of 80000001 are not read");
         // Unknown trailers and directions, totals above 1,000,000 and other stats' records are not readings.
         decoder.Feed(Frame(Update(1, Stat(0x08, Odyle, 0, 20), [0])));
         decoder.Feed(Frame([0x0c, 0x61, 2, .. Stat(0x08, Odyle, 0, 20), 0]));
@@ -147,27 +147,27 @@ static class PacketChecks
         decoder.CharacterChanged += changes.Add; decoder.IdentityObserved += named.Add; decoder.Candidate += seen.Add;
         decoder.Feed(Frame(Snapshot(Stat(0x08, Odyle, 0, 390))));
         decoder.Feed(Frame(Identity(42, "TestHero"))); decoder.Feed(Frame(Identity(42, "TestHero")));
-        Check(changes.Count == 0 && named.Count == 2 && named[0] is { Id: 42, CharacterName: "TestHero", Server: "Lumiel", Class: 25 }, "the first and a repeated own identity are no switch");
+        Check(changes.Count == 0, named.Count == 2, named[0] is { Id: 42, CharacterName: "TestHero", Server: "Lumiel", Class: 25 }, "the first and a repeated own identity are no switch");
         // A short 3336, one without a readable id and an unreadable one of the same character are no
         // identity: they neither switch nor stop the reading.
         decoder.Feed(Frame([0x33, 0x36])); decoder.Feed(Frame([0x33, 0x36, 43, 0, 0, 0, 0])); decoder.Feed(Frame([0x33, 0x36, 0, 0, 0, 0, 0, 1, 1, 65]));
         decoder.Feed(Frame([0x33, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0])); decoder.Feed(Frame(Identity(42, "$tutorial"))); decoder.Feed(Frame(Identity(42, "TestHero", job: 99)));
         decoder.Feed(Frame(Update(0, Stat(0x08, Odyle, 0, 380))));
-        Check(changes.Count == 0 && named.Count == 2 && seen.Last().Total == 380, "short, id-less and unreadable 3336 frames of the same character change nothing");
+        Check(changes.Count == 0, named.Count == 2, seen.Last().Total == 380, "short, id-less and unreadable 3336 frames of the same character change nothing");
         decoder.Feed(Frame(Identity(43, "Switched")));
-        Check(changes.SequenceEqual([43UL]) && named.Last().CharacterName == "Switched", "a valid identity with another id is a switch");
+        Check(changes.SequenceEqual([43UL]), named.Last().CharacterName == "Switched", "a valid identity with another id is a switch");
         decoder.Feed(Frame(Identity(43, "Switched"))); Check(changes.Count == 1, "its repeat is not another switch");
         // A character whose message this build cannot read (an unknown class, a mask without the
         // name, an unknown server) is still a switch, without a name: its Odyle never goes to the previous one.
         decoder.Feed(Frame(Identity(45, "Other", job: 99)));
-        Check(changes.SequenceEqual([43UL, 45UL]) && named.Count == 4, "an unreadable identity with another id is a switch that names nobody");
+        Check(changes.SequenceEqual([43UL, 45UL]), named.Count == 4, "an unreadable identity with another id is a switch that names nobody");
         decoder.Feed(Frame(Identity(45, "Other", server: 999))); decoder.Feed(Frame(Identity(45, "$tutorial")));
-        Check(changes.Count == 2 && named.Count == 4, "its repeats are no further switch");
+        Check(changes.Count == 2, named.Count == 4, "its repeats are no further switch");
         decoder.Feed(Frame(Identity(44, "Brawler", job: 46)));
-        Check(named.Last() is { CharacterName: "Brawler", Class: 46 } && changes.Last() == 44, "a Brawler is named");
+        Check(named.Last() is { CharacterName: "Brawler", Class: 46 }, changes.Last() == 44, "a Brawler is named");
         // A resync keeps the character the decoder knew.
         decoder.Resync(); decoder.Feed([0x06, 0x00, 0x36, .. Frame(Identity(44, "Brawler", job: 46))]);
-        Check(decoder.Synchronized && changes.Count == 3, "the same character after a resync is no switch");
+        Check(decoder.Synchronized, changes.Count == 3, "the same character after a resync is no switch");
     }
     static void Framing()
     {
@@ -175,7 +175,7 @@ static class PacketChecks
         var snapshot = Frame(Snapshot(Stat(0x0c, Odyle, 100, 50)));
         decoder.Feed(snapshot.AsSpan(0, 3)); Check(seen.Count == 0, "fragment incomplete");
         decoder.Feed(snapshot.AsSpan(3)); Check(seen.Single().Total == 150, "fragments join");
-        decoder.Feed(Frame(Bundle(snapshot))); Check(seen.Count == 2 && seen.Last().Total == 150, "LZ4 frame");
+        decoder.Feed(Frame(Bundle(snapshot))); Check(seen.Count == 2, seen.Last().Total == 150, "LZ4 frame");
         // A bundle restoring more than 8 MB is skipped whole; the frames after it are read.
         var big = new byte[6 + 40000]; big[0] = big[1] = 0xff; BinaryPrimitives.WriteInt32LittleEndian(big.AsSpan(2), 9 * 1048576);
         decoder.Feed([.. Frame(big), .. snapshot]); Check(seen.Count == 3, "an oversized bundle is skipped, not fatal");
@@ -183,35 +183,35 @@ static class PacketChecks
         Reject(() => new ExperimentalOdyleDecoder().Feed(Frame(new byte[] { 255, 255, 255, 255, 127, 0 })), "a size no LZ4 block can restore");
         // Midstream: a heartbeat is trusted once the frame after it starts with a valid length.
         var midstream = new ExperimentalOdyleDecoder(startsAligned: false); var midSeen = new List<PacketCandidate>(); midstream.Candidate += midSeen.Add;
-        midstream.Feed(snapshot); Check(midSeen.Count == 0 && !midstream.Synchronized, "no reading before a frame boundary");
+        midstream.Feed(snapshot); Check(midSeen.Count == 0, !midstream.Synchronized, "no reading before a frame boundary");
         midstream.Feed(new byte[] { 0x06, 0x00 }); midstream.Feed(new byte[] { 0x36 });
         Check(!midstream.Synchronized, "a heartbeat waits for the next frame's length");
         midstream.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 390))]));
-        Check(midSeen.Single() is { Base: 0, Bonus: 390, Total: 390 } && midstream.Synchronized, "flagged 0 plus 390 after a heartbeat");
+        Check(midSeen.Single() is { Base: 0, Bonus: 390, Total: 390 }, midstream.Synchronized, "flagged 0 plus 390 after a heartbeat");
         // A byte from F0 to FE is a transport flag only before a frame the decoder reads; another opcode starting with one stays whole.
         var opcodes = new List<int>(); var flagged = new ExperimentalOdyleDecoder(); flagged.FrameObserved += (opcode, _) => opcodes.Add(opcode);
         flagged.Feed(Frame([0xf4, 0x12, 0x34, 0x56])); flagged.Feed(Frame([0xf2, 0x33])); flagged.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 5))]));
         Check(opcodes.SequenceEqual(new[] { 0xf412, 0xf233, 0x0b61 }), "a flag byte is stripped only before a readable frame: " + string.Join(",", opcodes.Select(o => o.ToString("X4"))));
         // One owner per game connection: the first interface to deliver it, until it goes quiet or stops.
         var owners = new FlowOwners(TimeSpan.FromSeconds(10)); var flowA = new TcpFlow("10.0.0.2", 50000, "1.2.3.4", 13328); var at = DateTimeOffset.UnixEpoch;
-        Check(owners.Claim(flowA, "eth", at) && !owners.Claim(flowA, "vswitch", at.AddSeconds(1)) && owners.Claim(flowA, "eth", at.AddSeconds(5)), "the first interface keeps the connection");
-        Check(owners.Claim(flowA, "vswitch", at.AddSeconds(16)) && owners.OwnerOf(flowA) == "vswitch" && !owners.Claim(flowA, "eth", at.AddSeconds(17)), "a quiet owner hands it over");
-        owners.Release("vswitch"); Check(owners.OwnerOf(flowA) is null && owners.Claim(flowA, "eth", at.AddSeconds(18)), "a stopped interface gives it up");
+        Check(owners.Claim(flowA, "eth", at), !owners.Claim(flowA, "vswitch", at.AddSeconds(1)), owners.Claim(flowA, "eth", at.AddSeconds(5)), "the first interface keeps the connection");
+        Check(owners.Claim(flowA, "vswitch", at.AddSeconds(16)), owners.OwnerOf(flowA) == "vswitch", !owners.Claim(flowA, "eth", at.AddSeconds(17)), "a quiet owner hands it over");
+        owners.Release("vswitch"); Check(owners.OwnerOf(flowA) is null, owners.Claim(flowA, "eth", at.AddSeconds(18)), "a stopped interface gives it up");
         owners.Keep(Array.Empty<TcpFlow>()); Check(owners.OwnerOf(flowA) is null, "connections the game closed are forgotten");
         var falseMatch = new ExperimentalOdyleDecoder(startsAligned: false); var falseSeen = new List<PacketCandidate>(); falseMatch.Candidate += falseSeen.Add;
         falseMatch.Feed(new byte[] { 0x06, 0x00, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 });
         Check(!falseMatch.Synchronized, "heartbeat bytes before an impossible length are not trusted");
         falseMatch.Feed([0x0e, 0x00, 0x36, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 70)))]);
-        Check(falseMatch.Synchronized && falseSeen.Single().Total == 70, "the long heartbeat and zero padding synchronise");
+        Check(falseMatch.Synchronized, falseSeen.Single().Total == 70, "the long heartbeat and zero padding synchronise");
         // Heartbeat bytes inside a payload before a length near 1 MB: the scan goes on at once
         // instead of waiting for a megabyte of stream.
         var swallow = new ExperimentalOdyleDecoder(startsAligned: false); var swallowSeen = new List<PacketCandidate>(); swallow.Candidate += swallowSeen.Add;
         swallow.Feed([0x06, 0x00, 0x36, 0xff, 0xff, 0x3f, 1, 2, 3, 0x06, 0x00, 0x36, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 80)))]);
-        Check(swallow.Synchronized && swallowSeen.Single().Total == 80, "a scanned boundary before a frame above 64 KB is not trusted");
+        Check(swallow.Synchronized, swallowSeen.Single().Total == 80, "a scanned boundary before a frame above 64 KB is not trusted");
         // Once the next heartbeat confirms the boundary, large frames are read as usual.
         var large = new byte[70000]; large[0] = 0x7a; large[1] = 0x01;
         swallow.Feed([0x06, 0x00, 0x36, .. Frame(large), .. Frame(Snapshot(Stat(0x08, Odyle, 0, 85)))]);
-        Check(swallowSeen.Last().Total == 85 && swallowSeen.Count == 2, "a confirmed boundary reads frames above 64 KB");
+        Check(swallowSeen.Last().Total == 85, swallowSeen.Count == 2, "a confirmed boundary reads frames above 64 KB");
     }
     // Random input never makes the stat, identity or framing code throw anything but the
     // framing error a connection resyncs on; random layouts read exactly their Odyle record.
@@ -230,7 +230,7 @@ static class PacketChecks
             var decoder = new ExperimentalOdyleDecoder(); int? read = null; var missing = false;
             decoder.Candidate += c => read = c.Total; decoder.SnapshotWithoutOdyle += () => missing = true;
             decoder.Feed(Frame(Snapshot([.. records])));
-            Check(read == expected && missing == (expected is null && count >= 32), "random stat layout " + round);
+            Check(read == expected, missing == (expected is null && count >= 32), "random stat layout " + round);
         }
         byte[][] opcodes = [[0x0b, 0x61], [0x0c, 0x61], [0x33, 0x36]];
         var framed = new ExperimentalOdyleDecoder();
@@ -263,8 +263,8 @@ static class PacketChecks
         var statuses = new List<(CaptureStatus Kind, string Message)>(); var candidates = new List<PacketCandidate>(); var changes = new List<ulong>();
         var streams = new GameStreams(decoder => { decoder.Candidate += candidates.Add; decoder.CharacterChanged += changes.Add; }, (kind, message) => statuses.Add((kind, message)));
         var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328); var snapshot = Frame(Snapshot(Stat(0x0c, Odyle, 100, 50))); var identity = Frame(Identity(42, "TestHero"));
-        Check(streams.Feed(game, 1000, 0x02, []) == 0 && statuses.Last().Kind == CaptureStatus.Listening, "a new connection waits for the snapshot");
-        Check(streams.Feed(game, 1001, 0x18, snapshot) == snapshot.Length && candidates.Single().Total == 150, "decoded bytes count as game traffic");
+        Check(streams.Feed(game, 1000, 0x02, []) == 0, statuses.Last().Kind == CaptureStatus.Listening, "a new connection waits for the snapshot");
+        Check(streams.Feed(game, 1001, 0x18, snapshot) == snapshot.Length, candidates.Single().Total == 150, "decoded bytes count as game traffic");
         Check(streams.Feed(game, 1001, 0x18, snapshot) == 0, "a retransmission adds nothing");
         var next = 1001u + (uint)snapshot.Length; streams.Feed(game, next, 0x18, identity); next += (uint)identity.Length;
         Check(streams.Feed(game, next + 10, 0x18, snapshot) == 0, "data after a lost segment waits and does not count");
@@ -274,9 +274,9 @@ static class PacketChecks
         // Reading picks up at the next heartbeat, and the character the decoder knew is still known.
         byte[] resumed = [0x06, 0x00, 0x36, .. Frame(Update(0, Stat(0x08, Odyle, 0, 140))), .. identity];
         var later = next + 5000;
-        Check(streams.Feed(game, later, 0x18, resumed) == resumed.Length && candidates.Last().Total == 140 && changes.Count == 0 && statuses.Last().Kind == CaptureStatus.Resumed, "after a resync the next heartbeat resumes reading without a switch");
+        Check(streams.Feed(game, later, 0x18, resumed) == resumed.Length, candidates.Last().Total == 140, changes.Count == 0, statuses.Last().Kind == CaptureStatus.Resumed, "after a resync the next heartbeat resumes reading without a switch");
         later += (uint)resumed.Length;
-        Check(streams.Feed(game, later - 3, 0x18, new byte[] { 9, 9, 9 }) == 0 && !streams.IsBlocked(game) && statuses.Last().Kind == CaptureStatus.Resyncing, "a conflicting retransmission resyncs");
+        Check(streams.Feed(game, later - 3, 0x18, new byte[] { 9, 9, 9 }) == 0, !streams.IsBlocked(game), statuses.Last().Kind == CaptureStatus.Resyncing, "a conflicting retransmission resyncs");
         // Two heartbeats, then a length no frame can have.
         var unframed = new byte[] { 0x06, 0x00, 0x36, 0x06, 0x00, 0x36, 0x01, 0x00 };
         int Unframed() { var decoded = streams.Feed(game, later, 0x18, unframed); later += (uint)unframed.Length; return decoded; }
@@ -288,15 +288,15 @@ static class PacketChecks
         Check(!streams.IsBlocked(game), "five resyncs in a minute are tolerated");
         Unframed();
         Check(streams.IsBlocked(game) && statuses.Last() is { Kind: CaptureStatus.Problem, Message: var damaged } && damaged.StartsWith("Unsupported"), "a sixth resync within a minute blocks the connection and says so");
-        Check(streams.Feed(game, 1, 0x18, snapshot) == 0 && candidates.Last().Total == 140, "a blocked connection is not decoded and counts no bytes");
+        Check(streams.Feed(game, 1, 0x18, snapshot) == 0, candidates.Last().Total == 140, "a blocked connection is not decoded and counts no bytes");
         streams.Feed(game, 1, 0x11, []); Check(streams.Count == 0, "FIN ends the connection");
         var relog = game with { LocalPort = 50001 };
         streams.Feed(relog, 5000, 0x02, []);
-        Check(streams.Feed(relog, 5001, 0x18, snapshot) == snapshot.Length && candidates.Last().Total == 150 && statuses.Last().Kind == CaptureStatus.Listening, "a new connection is read again");
+        Check(streams.Feed(relog, 5001, 0x18, snapshot) == snapshot.Length, candidates.Last().Total == 150, statuses.Last().Kind == CaptureStatus.Listening, "a new connection is read again");
         var midstream = game with { LocalPort = 50002 };
         Check(streams.Feed(midstream, 9000, 0x18, new byte[] { 1, 2, 3 }) == 3 && statuses.Last() is { Kind: CaptureStatus.Midstream, Message: var late } && late.Contains("within a few minutes"), "a connection joined after login waits for a heartbeat and the game's identity");
-        streams.Maintain([midstream], DateTimeOffset.UtcNow); Check(streams.Count == 1 && !streams.IsBlocked(midstream), "connections the game closed are forgotten");
-        Check(streams.Feed(game with { LocalPort = 50003 }, 1, 0x10, []) == 0 && streams.Count == 1, "an empty ACK opens no connection");
+        streams.Maintain([midstream], DateTimeOffset.UtcNow); Check(streams.Count == 1, !streams.IsBlocked(midstream), "connections the game closed are forgotten");
+        Check(streams.Feed(game with { LocalPort = 50003 }, 1, 0x10, []) == 0, streams.Count == 1, "an empty ACK opens no connection");
     }
     // A connection seen from its SYN-ACK whose first data segment arrives after the second, or
     // never (a segment the capture dropped): the login snapshot is read when its segment arrives,
@@ -311,10 +311,10 @@ static class PacketChecks
             var statuses = new List<CaptureStatus>(); var candidates = new List<int>(); var named = new List<GameIdentity>();
             var streams = new GameStreams(decoder => { decoder.Candidate += c => candidates.Add(c.Total); decoder.IdentityObserved += named.Add; }, (kind, _) => statuses.Add(kind));
             streams.Feed(game, isn, 0x12, []);
-            Check(streams.Feed(game, isn + 1 + (uint)cut, 0x18, login.AsSpan(cut)) == 0 && candidates.Count == 0, $"a second segment before the first waits (cut {cut})");
-            Check(streams.Feed(game, isn + 1, 0x18, login.AsSpan(0, cut)) == login.Length && candidates.SequenceEqual([150]) && named.Single().CharacterName == "TestHero", $"the login snapshot is read when the first segment arrives late (cut {cut})");
+            Check(streams.Feed(game, isn + 1 + (uint)cut, 0x18, login.AsSpan(cut)) == 0, candidates.Count == 0, $"a second segment before the first waits (cut {cut})");
+            Check(streams.Feed(game, isn + 1, 0x18, login.AsSpan(0, cut)) == login.Length, candidates.SequenceEqual([150]), named.Single().CharacterName == "TestHero", $"the login snapshot is read when the first segment arrives late (cut {cut})");
             streams.Feed(game, isn + 1 + (uint)login.Length, 0x18, after);
-            Check(candidates.SequenceEqual([150, 140, 130]) && statuses.SequenceEqual([CaptureStatus.Listening]), $"the connection reads on without a resync (cut {cut})");
+            Check(candidates.SequenceEqual([150, 140, 130]), statuses.SequenceEqual([CaptureStatus.Listening]), $"the connection reads on without a resync (cut {cut})");
         }
         // Random login traffic in 1400-byte segments: the first arrives up to five segments late,
         // or never. Late, everything is read; lost, the connection resyncs and reads only what
@@ -333,7 +333,7 @@ static class PacketChecks
             {
                 var order = segments.Skip(1).ToList(); order.Insert(Math.Min(order.Count, random.Next(1, 6)), segments[0]);
                 foreach (var (sequence, bytes) in order) streams.Feed(game, sequence, 0x18, bytes);
-                Check(candidates.SequenceEqual([150, .. updates]) && statuses.SequenceEqual([CaptureStatus.Listening]), $"a late first segment loses nothing (run {run})");
+                Check(candidates.SequenceEqual([150, .. updates]), statuses.SequenceEqual([CaptureStatus.Listening]), $"a late first segment loses nothing (run {run})");
                 continue;
             }
             var half = segments.Count / 2;
@@ -341,7 +341,7 @@ static class PacketChecks
             Check(candidates.Count == 0, $"nothing is read while the first segment is missing (run {run})");
             streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
             foreach (var (sequence, bytes) in segments.Skip(half)) streams.Feed(game, sequence, 0x18, bytes);
-            Check(candidates.Count > 0 && candidates.All(updates.Contains) && candidates.SequenceEqual(candidates.Order()) && statuses.SequenceEqual([CaptureStatus.Listening, CaptureStatus.Resyncing, CaptureStatus.Resumed]), $"a lost first segment resyncs and reads only later updates (run {run})");
+            Check(candidates.Count > 0, candidates.All(updates.Contains), candidates.SequenceEqual(candidates.Order()), statuses.SequenceEqual([CaptureStatus.Listening, CaptureStatus.Resyncing, CaptureStatus.Resumed]), $"a lost first segment resyncs and reads only later updates (run {run})");
         }
     }
     // A connection's first 400 frames: random opcodes and payloads, a heartbeat every 15 frames,
@@ -387,7 +387,7 @@ static class PacketChecks
             var order = Enumerable.Range(0, count).Where(i => i != 20).ToList(); order.Insert(20 + lateBy, 20);
             foreach (var i in order) streams.Feed(game, sequences[i], 0x18, segments[i]);
             streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
-            Check(candidates.SequenceEqual(Enumerable.Range(2000, count)) && statuses.SequenceEqual([CaptureStatus.Listening]), $"a segment {lateBy} segments late is waited for ({count} segments)");
+            Check(candidates.SequenceEqual(Enumerable.Range(2000, count)), statuses.SequenceEqual([CaptureStatus.Listening]), $"a segment {lateBy} segments late is waited for ({count} segments)");
         }
     }
     // After a resync the first segment may be an old retransmission: it is ignored, so newer data
@@ -409,16 +409,16 @@ static class PacketChecks
             // The segment after the first goes missing for longer than three seconds.
             streams.Feed(game, end + (uint)lost.Length, 0x18, after);
             streams.Maintain([game], DateTimeOffset.UtcNow.AddSeconds(4));
-            Check(candidates.SequenceEqual([150, 140]) && statuses.Last() == CaptureStatus.Resyncing, "a lost segment resyncs");
+            Check(candidates.SequenceEqual([150, 140]), statuses.Last() == CaptureStatus.Resyncing, "a lost segment resyncs");
             if (!straddles)
             {
-                Check(streams.Feed(game, isn + 1, 0x18, first) == 0 && candidates.Count == 2, "an old retransmission after a resync is not read again");
-                Check(streams.Feed(game, end + (uint)lost.Length, 0x18, after) == after.Length && candidates.SequenceEqual([150, 140, 110]) && statuses.Last() == CaptureStatus.Resumed, "newer data after it is read at once");
+                Check(streams.Feed(game, isn + 1, 0x18, first) == 0, candidates.Count == 2, "an old retransmission after a resync is not read again");
+                Check(streams.Feed(game, end + (uint)lost.Length, 0x18, after) == after.Length, candidates.SequenceEqual([150, 140, 110]), statuses.Last() == CaptureStatus.Resumed, "newer data after it is read at once");
             }
             else
             {
                 // A retransmission that repeats the end of the bytes read and carries the lost ones.
-                Check(streams.Feed(game, end - (uint)tail.Length, 0x18, [.. tail, .. lost]) == lost.Length && candidates.SequenceEqual([150, 140, 120]) && statuses.Last() == CaptureStatus.Resumed, "a retransmission reaching past the bytes read resumes after them without repeating a reading");
+                Check(streams.Feed(game, end - (uint)tail.Length, 0x18, [.. tail, .. lost]) == lost.Length, candidates.SequenceEqual([150, 140, 120]), statuses.Last() == CaptureStatus.Resumed, "a retransmission reaching past the bytes read resumes after them without repeating a reading");
                 streams.Feed(game, end + (uint)lost.Length, 0x18, after);
                 Check(candidates.SequenceEqual([150, 140, 120, 110]), "the stream reads on after it");
             }

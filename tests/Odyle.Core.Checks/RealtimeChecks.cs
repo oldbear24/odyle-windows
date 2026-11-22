@@ -14,16 +14,16 @@ static class RealtimeChecks
         var refresh = RealtimeNews.Parse(Json("""{"refresh":true}"""));
         // Wishlist invites (odyle-dashboard#45): who invites to which run, worded for the tray.
         var invites = RealtimeNews.Parse(Json("""{"invites":[{"runId":"r1","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","by":"Lumina"},{"runId":"","dungeon":"x"}]}""")).Invites;
-        Check(invites is [{ RunId: "r1", By: "Lumina", Now: false }] && invites[0].Notice().Title == "Lumina invites you to Fire Temple" && invites[0].Notice().Text.StartsWith("Raid night · ") && refresh.Invites.Length == 0, "invite news");
+        Check(invites is [{ RunId: "r1", By: "Lumina", Now: false }], invites[0].Notice().Title == "Lumina invites you to Fire Temple", invites[0].Notice().Text.StartsWith("Raid night · "), refresh.Invites.Length == 0, "invite news");
         // A call to a run now (odyle-dashboard 0.41.0) says so, with the start time.
         var call = RealtimeNews.Parse(Json("""{"invites":[{"runId":"r2","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","by":"Lumina","now":true}]}""")).Invites;
-        Check(call is [{ RunId: "r2", Now: true }] && call[0].Notice().Title == "Lumina calls the party to Fire Temple" && call[0].Notice().Text.StartsWith("Raid night · starts "), "call news");
+        Check(call is [{ RunId: "r2", Now: true }], call[0].Notice().Title == "Lumina calls the party to Fire Temple", call[0].Notice().Text.StartsWith("Raid night · starts "), "call news");
         // Party ready (odyle-dashboard#48): the runs whose attendees can all claim a cube, worded for the tray.
         var party = RealtimeNews.Parse(Json("""{"partyReady":[{"runId":"r1","roomId":"room","room":"Raid night","dungeon":"Fire Temple","startsAt":"2026-10-17 20:00:00.000Z","of":5},{"runId":"","dungeon":"x","of":1}]}""")).PartyReady;
-        Check(party is [{ RunId: "r1", Of: 5 }] && party[0].Notice() == ("Fire Temple: the party is ready", "All 5 going can claim a cube · Raid night") && refresh.PartyReady.Length == 0, "party-ready news");
-        Check(NotificationSettings.Default.ReadyInTray && !new NotificationSettings(Kinds: new(Ready: false)).ReadyInTray && !new NotificationSettings(Channels: new(Tray: false)).ReadyInTray, "party ready shows in the tray until turned off");
+        Check(party is [{ RunId: "r1", Of: 5 }], party[0].Notice() == ("Fire Temple: the party is ready", "All 5 going can claim a cube · Raid night"), refresh.PartyReady.Length == 0, "party-ready news");
+        Check(NotificationSettings.Default.ReadyInTray, !new NotificationSettings(Kinds: new(Ready: false)).ReadyInTray, !new NotificationSettings(Channels: new(Tray: false)).ReadyInTray, "party ready shows in the tray until turned off");
         // Held-back Windows versions (#19) come as their own news; other news leaves them unknown.
-        Check(RealtimeNews.Parse(Json("""{"windowsBlocked":["0.18.0","bad"]}""")).HeldBack is [{ Major: 0, Minor: 18, Build: 0 }] && RealtimeNews.Parse(Json("""{"windowsBlocked":[]}""")).HeldBack is [] && refresh.HeldBack is null, "held-back versions news");
+        Check(RealtimeNews.Parse(Json("""{"windowsBlocked":["0.18.0","bad"]}""")).HeldBack is [{ Major: 0, Minor: 18, Build: 0 }], RealtimeNews.Parse(Json("""{"windowsBlocked":[]}""")).HeldBack is [], refresh.HeldBack is null, "held-back versions news");
         Check(refresh is { Refresh: true, Removed: false, Characters.Length: 0, Seen.Count: 0 }, "a room refresh");
         // Update all apps now (the dashboard's admin pages): the latest version the server knows, if any.
         var update = RealtimeNews.Parse(Json("""{"windowsUpdate":{"version":"0.30.0","at":"2026-10-28T18:00:00Z"}}""")).UpdateNow;
@@ -35,7 +35,7 @@ static class RealtimeChecks
         var split = RealtimeNews.Parse(Json("""{"characters":[""" + Lumina.Replace("}", ",\"parts\":{\"base\":90,\"bonus\":990}}") + """]}"""));
         Check(split.Characters.Single().Parts == new OdyleParts(90, 990), "a character carries the game's two numbers when its last reading sent them");
         var seen = RealtimeNews.Parse(Json("""{"seen":{"c":"2026-10-12T12:00:10.000Z","x":5}}"""));
-        Check(seen is { Refresh: false } && seen.Seen.Count == 1 && seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
+        Check(seen is { Refresh: false }, seen.Seen.Count == 1, seen.Seen["c"] == "2026-10-12T12:00:10.000Z", "heartbeats, ignoring what is not a time");
         Check(RealtimeNews.Parse(Json("[]")).Refresh, "an unreadable message fetches again");
         var saved = RealtimeNews.Parse(Json("""{"notifications":{"channels":{"tray":true,"browser":false,"push":false},"leadMinutes":[30],"kinds":{"runs":false,"cap":true},"capTicks":2,"quiet":{"from":"23:00","to":"06:00","timeZone":"Europe/Prague"},"saved":true}}"""));
         var capped = RealtimeNews.Parse(Json("""{"capAlerts":[{"characterId":"c","characterName":"Lumina","state":"soon","base":545,"cap":560,"settled":false,"tick":15,"at":"2026-10-15T19:00:00.000Z"},{"characterId":"x","characterName":"","state":"soon"},{"characterId":"y","characterName":"Odd","state":"later"}]}"""));
@@ -44,24 +44,24 @@ static class RealtimeChecks
         Check(saved is { Refresh: false, Notifications: { RunsInTray: false, Saved: true } } && saved.Notifications.Leads.SequenceEqual([30]) && saved.Notifications.Quiet!.From == "23:00" && saved.Notifications is { CapInTray: true, CapTicks: 2 }, "notification settings saved on the dashboard");
         // News for everyone on the account's topic: a new release and a changed announcement.
         var release = RealtimeNews.Parse(Json("""{"release":{"version":"0.6.0.16","publishedAt":"2026-10-16T15:19:32Z","url":"https://github.com/oldbear24/odyle-windows/releases/tag/v0.6.0.16"}}"""));
-        Check(release is { Refresh: false, AnnouncementChanged: false } && release.Release == new Version(0, 6, 0, 16), "a new release names its version and fetches nothing");
-        Check(RealtimeNews.Parse(Json("""{"release":{"version":"latest"}}""")).Release is null && RealtimeNews.Parse(Json("""{"refresh":true}""")).Release is null, "a release without a version is no release");
+        Check(release is { Refresh: false, AnnouncementChanged: false }, release.Release == new Version(0, 6, 0, 16), "a new release names its version and fetches nothing");
+        Check(RealtimeNews.Parse(Json("""{"release":{"version":"latest"}}""")).Release is null, RealtimeNews.Parse(Json("""{"refresh":true}""")).Release is null, "a release without a version is no release");
         var warning = RealtimeNews.Parse(Json("""{"announcement":{"text":"Maintenance at 08:00 UTC","level":"warning"}}"""));
         Check(warning is { AnnouncementChanged: true, Refresh: false, Announcement: { IsWarning: true, Text: "Maintenance at 08:00 UTC" } }, "a changed announcement with its level");
-        Check(RealtimeNews.Parse(Json("""{"announcement":null}""")) is { AnnouncementChanged: true, Announcement: null } && RealtimeNews.Parse(Json("""{"seen":{}}""")) is { AnnouncementChanged: false }, "a cleared announcement, and news without one");
+        Check(RealtimeNews.Parse(Json("""{"announcement":null}""")) is { AnnouncementChanged: true, Announcement: null }, RealtimeNews.Parse(Json("""{"seen":{}}""")) is { AnnouncementChanged: false }, "a cleared announcement, and news without one");
 
         var snapshots = new[] { Snapshot(), Snapshot() with { Room = Snapshot().Room with { Id = "other" } } };
         var applied = PartyNews.WithCharacters(snapshots, "r", changed.Characters, out var complete);
-        Check(complete && applied[0].Members[0].Characters[0].Value == 220 && applied[1].Members[0].Characters[0].Value == 180, "a changed character replaces its card in its room only");
+        Check(complete, applied[0].Members[0].Characters[0].Value == 220, applied[1].Members[0].Characters[0].Value == 180, "a changed character replaces its card in its room only");
         PartyNews.WithCharacters(snapshots, "r", [changed.Characters[0] with { Id = "new" }], out complete);
         Check(!complete, "a character the room does not list yet asks for a fetch");
         var later = PartyNews.WithSeen(snapshots, "r", seen.Seen);
         var earlier = PartyNews.WithSeen(snapshots, "r", new Dictionary<string, string> { ["c"] = "2026-10-12T11:00:00.000Z" });
-        Check(later[0].Members[0].Characters[0].LastSeenAt == "2026-10-12T12:00:10.000Z" && earlier[0].Members[0].Characters[0].LastSeenAt == "2026-10-12 11:59:50.000Z", "a heartbeat moves lastSeenAt forward, never back");
+        Check(later[0].Members[0].Characters[0].LastSeenAt == "2026-10-12T12:00:10.000Z", earlier[0].Members[0].Characters[0].LastSeenAt == "2026-10-12 11:59:50.000Z", "a heartbeat moves lastSeenAt forward, never back");
         var now = Readiness.Parse("2026-10-12T12:00:40.000Z")!.Value;
-        Check(Readiness.Of(snapshots[0].Members[0].Characters[0], now) == Presence.Stale && Readiness.Of(later[0].Members[0].Characters[0], now) == Presence.Live, "a heartbeat keeps a mate live without fetching the room");
+        Check(Readiness.Of(snapshots[0].Members[0].Characters[0], now) == Presence.Stale, Readiness.Of(later[0].Members[0].Characters[0], now) == Presence.Live, "a heartbeat keeps a mate live without fetching the room");
         var own = PartyNews.WithCharacters(snapshots[0].Members[0].Characters, changed.Characters, out complete);
-        Check(complete && own.Single().Value == 220, "the account's own characters follow their readings");
+        Check(complete, own.Single().Value == 220, "the account's own characters follow their readings");
 
         var rooms = new[] { snapshots[0].Room, snapshots[1].Room };
         Check(RealtimeTopics.For("u", rooms).SequenceEqual(new[] { "odyle.user.u", "odyle.room.r", "odyle.presence.r", "odyle.room.other", "odyle.presence.other" }), "the account's topic and each room's two");
@@ -73,11 +73,11 @@ static class RealtimeChecks
         var shown = new[] { In("r"), In("other"), In("left") };
         var fresh = In("r", "2026-10-12T12:05:00.000Z") with { Members = [] };
         var merged = PartySnapshots.Merge([Listed("other"), Listed("r"), Listed("new")], shown, [new("r", fresh, at), new("other", null, at), new("new", null, at), new("left", In("left"), at)]);
-        Check(merged.Length == 2 && merged[0] == shown[1] && merged[1] == fresh, "one failing room keeps its snapshot and the others take theirs; a room no longer listed is dropped");
+        Check(merged.Length == 2, merged[0] == shown[1], merged[1] == fresh, "one failing room keeps its snapshot and the others take theirs; a room no longer listed is dropped");
         Check(PartySnapshots.Merge([Listed("r"), Listed("other")], shown, [new("other", null, at, Gone: true)]) is [var only] && only == shown[0], "a room the server no longer shows is dropped; rooms not fetched keep theirs");
         Check(PartySnapshots.Merge([Listed("r")], [], [new("r", null, at)]).Length == 0, "a room never fetched shows nothing until it is");
         // The server's clock comes from a snapshot just fetched, against the moment it arrived; never from one kept.
-        Check(PartySnapshots.ClockOffset([new("other", null, at), new("r", fresh, at)]) == TimeSpan.FromSeconds(270) && PartySnapshots.ClockOffset([new("other", null, at)]) is null, "the server's clock from a fresh snapshot only");
+        Check(PartySnapshots.ClockOffset([new("other", null, at), new("r", fresh, at)]) == TimeSpan.FromSeconds(270), PartySnapshots.ClockOffset([new("other", null, at)]) is null, "the server's clock from a fresh snapshot only");
         Check(new[] { 0, 1, 2, 3, 4, 9 }.Select(RealtimeClient.Backoff).SequenceEqual(new[] { 1, 2, 5, 10, 30, 30 }.Select(s => TimeSpan.FromSeconds(s))), "reconnects after 1, 2, 5, 10 s, then every 30 s");
         Console.WriteLine("Realtime news, applied snapshots, presence, topics and reconnect schedule passed.");
     }
@@ -92,7 +92,7 @@ static class RealtimeChecks
         realtime.Connected += again => connected.TrySetResult(again);
         realtime.Message += (topic, data) => news.Writer.TryWrite((topic, RealtimeNews.Parse(data)));
         realtime.Start(RealtimeTopics.For(accountId, []));
-        Check(await Task.WhenAny(connected.Task, Task.Delay(10000)) == connected.Task && !connected.Task.Result && realtime.IsConnected, "the realtime connection subscribes (" + realtime.LastProblem + ")");
+        Check(await Task.WhenAny(connected.Task, Task.Delay(10000)) == connected.Task, !connected.Task.Result, realtime.IsConnected, "the realtime connection subscribes (" + realtime.LastProblem + ")");
         async Task<RealtimeNews> Next(Func<RealtimeNews, bool> wanted, string what)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));

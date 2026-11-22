@@ -8,7 +8,7 @@ static class SetupChecks
     {
         Check(GameConnection.IsGameProcess("AION2") && GameConnection.IsGameProcess("aion2-win64-shipping") && GameConnection.IsGameProcess("AION-2") && !GameConnection.IsGameProcess("Aion") && !GameConnection.IsGameProcess("Discord"), "the game's process names");
         TcpConnection Game(ushort port, bool ipv6 = false) => new(true, "AION2", port, ipv6);
-        Check(GameConnection.Explain([]) is null && GameConnection.Explain([Game(443), Game(80)]) is null, "web connections alone say nothing");
+        Check(GameConnection.Explain([]) is null, GameConnection.Explain([Game(443), Game(80)]) is null, "web connections alone say nothing");
         Check(GameConnection.Explain([Game(443), Game(GameConnection.Port, ipv6: true)]) == "AION2 connects to the game server over IPv6, which the reader cannot read yet.", "an IPv6 game connection is named");
         Check(GameConnection.Explain([Game(443), new(false, "ExitLag", GameConnection.Port, false)]) == "The game connection runs through ExitLag, not AION2 · an accelerator or proxy hides it from the reader.", "another program on the game port is named");
         Check(GameConnection.Explain([Game(443), Game(7001), Game(7000), Game(7001), Game(9000), Game(9100)]) == "AION2 is connected, but not on the game port 13328 (ports 7000, 7001, 9000) · the reader only reads 13328.", "other game ports are listed, at most three");
@@ -19,7 +19,7 @@ static class SetupChecks
         const string jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InUiLCJ0eXBlIjoiYXV0aCJ9.c2lnbmF0dXJlLXNpZ25hdHVyZQ";
         var report = Diagnostics.Report(new DateTimeOffset(2026, 10, 15, 20, 0, 0, TimeSpan.Zero), [("App", "Odyle 0.6.0.12"), ("Npcap", "installed 1.79")], ["20:01:02 Waiting · Waiting for the AION2 game connection…"],
             ["Connected to https://party.example as account abcdefghij12345 on device \"DESKTOP-PLAYER\".", @"Odyle 0.6.0.13 is waiting in C:\Users\Player Name\AppData\Local\Odyle\updates\0.6.0.13.", "Decoder: own character TestHero, server 2304.", "token " + jwt]);
-        Check(report.StartsWith("Odyle diagnostics · 2026-10-15 20:00:00 +00:00") && report.Contains("App: Odyle 0.6.0.12") && report.Contains("Npcap: installed 1.79") && report.ReplaceLineEndings("\n").Contains("Last reader states:\n  20:01:02 Waiting"), "the report lists the facts and the reader's last states");
+        Check(report.StartsWith("Odyle diagnostics · 2026-10-15 20:00:00 +00:00"), report.Contains("App: Odyle 0.6.0.12"), report.Contains("Npcap: installed 1.79"), report.ReplaceLineEndings("\n").Contains("Last reader states:\n  20:01:02 Waiting"), "the report lists the facts and the reader's last states");
         Check(report.Contains("Log, last 4 lines:") && report.Contains("account [account]") && report.Contains("device \"[this PC]\"") && report.Contains(@"C:\Users\[user]\AppData") && report.Contains("[token]"), "the account, the PC's name, the user folder and tokens are masked");
         Check(!report.Contains("abcdefghij12345") && !report.Contains("DESKTOP-PLAYER") && !report.Contains("Player Name") && !report.Contains("eyJ") && report.Contains("TestHero") && report.Contains("https://party.example"), "nothing personal is left, the game's facts are kept");
         Check(Diagnostics.Report(DateTimeOffset.UnixEpoch, [], [], []).Contains("none this run"), "a report without reader states says so");
@@ -31,15 +31,15 @@ static class SetupChecks
             var log = new RotatingLog(Path.Combine(folder, "odyle.log"), limit: 600);
             for (var i = 0; i < 12; i++) log.Write("INFO", $"line {i:00} " + new string('x', 40));
             var tail = log.Tail(5);
-            Check(tail.Length == 5 && tail[^1].EndsWith("line 11 " + new string('x', 40)) && tail.Select(l => l[^43..^41]).SequenceEqual(["07", "08", "09", "10", "11"]), "the tail is the newest lines in order, across the rotation");
-            Check(log.Tail(1000).Length <= 12 && new RotatingLog(Path.Combine(folder, "missing.log")).Tail(10).Length == 0, "a short or missing log gives what there is");
+            Check(tail.Length == 5, tail[^1].EndsWith("line 11 " + new string('x', 40)), tail.Select(l => l[^43..^41]).SequenceEqual(["07", "08", "09", "10", "11"]), "the tail is the newest lines in order, across the rotation");
+            Check(log.Tail(1000).Length <= 12, new RotatingLog(Path.Combine(folder, "missing.log")).Tail(10).Length == 0, "a short or missing log gives what there is");
         }
         finally { Directory.Delete(folder, true); }
 
-        Check(StartupCommand.Unpairs(["--unpair"]) && StartupCommand.Unpairs(["--UNPAIR"]) && !StartupCommand.Unpairs(["--tray"]) && !StartupCommand.InTray(["--unpair"]), "the uninstaller's --unpair argument");
+        Check(StartupCommand.Unpairs(["--unpair"]), StartupCommand.Unpairs(["--UNPAIR"]), !StartupCommand.Unpairs(["--tray"]), !StartupCommand.InTray(["--unpair"]), "the uninstaller's --unpair argument");
 
         // The patch-day trace counts opcodes and keeps plain numbers, never a character's name.
-        Check(StartupCommand.Traces(["--tray", "--decoder-trace"]) && StartupCommand.Traces(["--DECODER-TRACE"]) && !StartupCommand.Traces(["--tray"]), "the --decoder-trace argument");
+        Check(StartupCommand.Traces(["--tray", "--decoder-trace"]), StartupCommand.Traces(["--DECODER-TRACE"]), !StartupCommand.Traces(["--tray"]), "the --decoder-trace argument");
         var trace = new DecoderTrace { GameVersion = "0.0.4387.0" };
         Check(trace.Summary() == "no frames yet", "an empty trace says so");
         foreach (var (opcode, bytes) in new (ushort, int)[] { (0x0B61, 495), (0x0C61, 8), (0x0C61, 12), (0x0036, 4), (0x0C61, 8) }) trace.Frame(opcode, bytes);
@@ -49,28 +49,28 @@ static class SetupChecks
         trace.Layout(new(0x0C61, 0, 0x0C, 1, 12)); trace.Layout(new(0x0C61, 0, 0x0C, 1, 12));
         trace.Identity(new GameIdentity(42, "SecretHero", 2304, "Lumiel", "GLOBAL_EU", 12));
         var opcodes = trace.Opcodes();
-        Check(opcodes[0] == new OpcodeCount("0C61", 3, 8, 12, 28) && opcodes.Length == 3 && trace.Summary(1) == "0C61×3 (8–12 B), 2 more opcodes", "opcodes are counted with their frame sizes, the busiest first");
+        Check(opcodes[0] == new OpcodeCount("0C61", 3, 8, 12, 28), opcodes.Length == 3, trace.Summary(1) == "0C61×3 (8–12 B), 2 more opcodes", "opcodes are counted with their frame sizes, the busiest first");
         var json = trace.ToJson("0.6.0.16", ExperimentalOdyleDecoder.Version);
         using (var parsed = System.Text.Json.JsonDocument.Parse(json))
         {
             var root = parsed.RootElement;
-            Check(root.GetProperty("game").GetString() == "0.0.4387.0" && root.GetProperty("adapter").GetString() == ExperimentalOdyleDecoder.Version && root.GetProperty("opcodes").GetArrayLength() == 3, "the trace names the game and app versions and lists every opcode");
-            Check(root.GetProperty("updates").GetProperty("total").GetInt64() == 2 && root.GetProperty("updates").GetProperty("kept")[1].GetProperty("resource").GetUInt32() == 80000001 && root.GetProperty("snapshots").GetProperty("kept")[0].GetProperty("odyle")[0].GetProperty("bonus").GetInt64() == 990, "stat updates of every resource and the snapshot's Odyle record are kept as numbers");
-            Check(root.GetProperty("layouts").GetArrayLength() == 1 && root.GetProperty("identities")[0].GetProperty("server").GetInt32() == 2304 && root.GetProperty("identities")[0].GetProperty("class").GetUInt32() == 12, "layouts once each; identities by server and class");
+            Check(root.GetProperty("game").GetString() == "0.0.4387.0", root.GetProperty("adapter").GetString() == ExperimentalOdyleDecoder.Version, root.GetProperty("opcodes").GetArrayLength() == 3, "the trace names the game and app versions and lists every opcode");
+            Check(root.GetProperty("updates").GetProperty("total").GetInt64() == 2, root.GetProperty("updates").GetProperty("kept")[1].GetProperty("resource").GetUInt32() == 80000001, root.GetProperty("snapshots").GetProperty("kept")[0].GetProperty("odyle")[0].GetProperty("bonus").GetInt64() == 990, "stat updates of every resource and the snapshot's Odyle record are kept as numbers");
+            Check(root.GetProperty("layouts").GetArrayLength() == 1, root.GetProperty("identities")[0].GetProperty("server").GetInt32() == 2304, root.GetProperty("identities")[0].GetProperty("class").GetUInt32() == 12, "layouts once each; identities by server and class");
         }
-        Check(!json.Contains("SecretHero") && !json.Contains("Lumiel\""), "the trace keeps no character name");
+        Check(!json.Contains("SecretHero"), !json.Contains("Lumiel\""), "the trace keeps no character name");
         var busy = new DecoderTrace();
         for (var i = 0; i < DecoderTrace.Kept + 50; i++) busy.Update(new(80000001, 0x0C, i, 0, 1, 0));
         using (var parsed = System.Text.Json.JsonDocument.Parse(busy.ToJson("x", "y")))
-            Check(parsed.RootElement.GetProperty("updates").GetProperty("total").GetInt64() == DecoderTrace.Kept + 50 && parsed.RootElement.GetProperty("updates").GetProperty("kept").GetArrayLength() == DecoderTrace.Kept, "the trace keeps its first entries and counts the rest");
+            Check(parsed.RootElement.GetProperty("updates").GetProperty("total").GetInt64() == DecoderTrace.Kept + 50, parsed.RootElement.GetProperty("updates").GetProperty("kept").GetArrayLength() == DecoderTrace.Kept, "the trace keeps its first entries and counts the rest");
         // What a reading changed, from the one saved before it.
-        Check(OdyleChange.Of(CandidateSource.Snapshot, 390, 0, 400, 10) == (OdyleChange.Snapshot, null) && OdyleChange.Of(CandidateSource.Update, 390, 0, null, null) == (OdyleChange.Update, null), "a snapshot, and an update with nothing before it");
-        Check(OdyleChange.Of(CandidateSource.Update, 830, 0, 910, 15) == (OdyleChange.Spend, -80) && OdyleChange.Of(CandidateSource.Update, 910, 15, 895, 0) == (OdyleChange.Regen, 15), "a spend, and a tick of the natural pool");
-        Check(OdyleChange.Of(CandidateSource.Update, 935, 15, 895, 15) == (OdyleChange.Item, 40) && OdyleChange.Of(CandidateSource.Update, 935, null, 895, 15) == (OdyleChange.Item, 40) && OdyleChange.Of(CandidateSource.Update, 895, 15, 895, 15) == (OdyleChange.Update, 0), "items raise the bonus; an unchanged total is no change");
+        Check(OdyleChange.Of(CandidateSource.Snapshot, 390, 0, 400, 10) == (OdyleChange.Snapshot, null), OdyleChange.Of(CandidateSource.Update, 390, 0, null, null) == (OdyleChange.Update, null), "a snapshot, and an update with nothing before it");
+        Check(OdyleChange.Of(CandidateSource.Update, 830, 0, 910, 15) == (OdyleChange.Spend, -80), OdyleChange.Of(CandidateSource.Update, 910, 15, 895, 0) == (OdyleChange.Regen, 15), "a spend, and a tick of the natural pool");
+        Check(OdyleChange.Of(CandidateSource.Update, 935, 15, 895, 15) == (OdyleChange.Item, 40), OdyleChange.Of(CandidateSource.Update, 935, null, 895, 15) == (OdyleChange.Item, 40), OdyleChange.Of(CandidateSource.Update, 895, 15, 895, 15) == (OdyleChange.Update, 0), "items raise the bonus; an unchanged total is no change");
         // The game build comes from Steam's files: its library list and AION 2's app manifest.
         const string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"apps\" { \"228980\" \"1\" }\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\" { \"3393110\" \"2\" }\n\t}\n}\n";
-        Check(SteamManifest.Libraries(vdf).SequenceEqual([@"C:\Program Files (x86)\Steam", @"D:\SteamLibrary"]) && SteamManifest.Libraries("").Length == 0, "Steam's library folders, with escaped backslashes undone");
-        Check(SteamManifest.BuildId("\"AppState\"\n{\n\t\"appid\"\t\t\"3393110\"\n\t\"buildid\"\t\t\"25800038\"\n}") == "25800038" && SteamManifest.BuildId("\"AppState\" { \"buildid\" \"x1\" }") is null && SteamManifest.ManifestName == "appmanifest_3393110.acf" && SteamManifest.Label("25800038") == "Steam build 25800038", "the build id from AION 2's app manifest");
+        Check(SteamManifest.Libraries(vdf).SequenceEqual([@"C:\Program Files (x86)\Steam", @"D:\SteamLibrary"]), SteamManifest.Libraries("").Length == 0, "Steam's library folders, with escaped backslashes undone");
+        Check(SteamManifest.BuildId("\"AppState\"\n{\n\t\"appid\"\t\t\"3393110\"\n\t\"buildid\"\t\t\"25800038\"\n}") == "25800038", SteamManifest.BuildId("\"AppState\" { \"buildid\" \"x1\" }") is null, SteamManifest.ManifestName == "appmanifest_3393110.acf", SteamManifest.Label("25800038") == "Steam build 25800038", "the build id from AION 2's app manifest");
         Console.WriteLine("Missing game connection reasons, diagnostics report and redaction, log tail, --unpair, the decoder trace and the Steam build passed.");
     }
 }

@@ -30,22 +30,22 @@ static class RealtimeClientChecks
             Check(server.Thrown == 1, "the unlisted exception happened and the loop went on");
             // SSE: the connection's start subscribes every topic; a message split over two data lines is one event.
             first.Write("event: PB_CONNECT\ndata: {\"clientId\":\"one\"}\n\n");
-            Check(!await Next(connected.Reader, "the first connection") && realtime.IsConnected && realtime.Subscribed.SequenceEqual(Topics) && server.Subscriptions.Last().SequenceEqual(Topics), "the first connection subscribes every topic");
+            Check(!await Next(connected.Reader, "the first connection"), realtime.IsConnected, realtime.Subscribed.SequenceEqual(Topics), server.Subscriptions.Last().SequenceEqual(Topics), "the first connection subscribes every topic");
             first.Write(": a comment\nevent: " + Own + "\ndata: {\"refresh\":\ndata: true}\n\n");
             var (topic, news) = await Next(messages.Reader, "a message");
-            Check(topic == Own && news.Refresh, "a message split over data lines is read as one event");
+            Check(topic == Own, news.Refresh, "a message split over data lines is read as one event");
             // Silence: no line for longer than the limit drops the connection; the next one is a reconnect.
             var silent = await Next(dropped.Reader, "a drop after the silence");
-            Check(silent.Contains("silent") && !realtime.IsConnected, "a silent connection counts as dropped: " + silent);
+            Check(silent.Contains("silent"), !realtime.IsConnected, "a silent connection counts as dropped: " + silent);
             var second = await Next(server.Connections, "a connection after the silence");
             // A room the server refuses (403): the account's own topic is subscribed, and remembered as all it took.
             server.Refuse = true;
             second.Write("event: PB_CONNECT\ndata: {\"clientId\":\"two\"}\n\n");
-            Check(await Next(connected.Reader, "the second connection") && realtime.Subscribed.SequenceEqual([Own]), "after a 403 only the account's own topic is subscribed");
+            Check(await Next(connected.Reader, "the second connection"), realtime.Subscribed.SequenceEqual([Own]), "after a 403 only the account's own topic is subscribed");
             // The same topics again subscribe again once the server takes them, and only then stop asking.
             server.Refuse = false; var asked = server.Subscriptions.Count;
             await realtime.ListenAsync(Topics);
-            Check(server.Subscriptions.Count == asked + 1 && realtime.Subscribed.SequenceEqual(Topics), "listening to the same topics after a 403 subscribes them again");
+            Check(server.Subscriptions.Count == asked + 1, realtime.Subscribed.SequenceEqual(Topics), "listening to the same topics after a 403 subscribes them again");
             await realtime.ListenAsync(Topics);
             Check(server.Subscriptions.Count == asked + 1, "topics already subscribed are not asked for again");
             // A server that accepts and never answers: the request gives up after the connect limit.
