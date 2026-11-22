@@ -16,9 +16,9 @@ internal static class NativeWindows
         {
             var handle = new WindowInteropHelper(window).Handle;
             int dark = 1, caption = 0x0013160F, border = 0x00293024;
-            DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));
-            DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));
-            DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
+            _ = DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));
+            _ = DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));
+            _ = DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
         }
         catch { }
     }
@@ -28,7 +28,7 @@ internal static class NativeWindows
         processId = 0;
         var front = GetForegroundWindow();
         if (front == IntPtr.Zero) return false;
-        GetWindowThreadProcessId(front, out processId);
+        _ = GetWindowThreadProcessId(front, out processId);
         return true;
     }
     // The window's client area in device pixels.
@@ -69,8 +69,8 @@ internal static class NativeWindows
             setting = true;
             try
             {
-                if (!layered) { if ((style & WsExLayered) != 0) SetWindowLong(window, GwlExStyle, style & ~WsExLayered); return; }
-                if ((style & WsExLayered) == 0) SetWindowLong(window, GwlExStyle, style | WsExLayered);
+                if (!layered) { if ((style & WsExLayered) != 0) _ = SetWindowLong(window, GwlExStyle, style & ~WsExLayered); return; }
+                if ((style & WsExLayered) == 0) _ = SetWindowLong(window, GwlExStyle, style | WsExLayered);
             }
             finally { setting = false; }
             SetLayeredWindowAttributes(window, 0, alpha, LwaAlpha);

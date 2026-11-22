@@ -275,7 +275,7 @@ public sealed class PacketCapture : IAsyncDisposable
     // address family at a time: IPv4 (2) with 24-byte rows or IPv6 (23) with 56-byte rows.
     private static void ReadTcpTable(int family, int rowSize, Action<IntPtr> each)
     {
-        var size = 0; GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, 4, 0);
+        var size = 0; _ = GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, 4, 0);
         if (size < 4 || size > 4194304) return;
         var table = Marshal.AllocHGlobal(size);
         try
