@@ -35,7 +35,7 @@ jobs:
       - run: ./scripts/publish.ps1
       - run: ./scripts/publish.ps1 -SelfContained -Installer
       - run: ./scripts/publish.ps1 -Runtime win-arm64
-      - run: ./scripts/publish.ps1 -Runtime win-arm64 -SelfContained
+      - run: ./scripts/publish.ps1 -Runtime win-arm64 -SelfContained -Installer
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: odyle-windows

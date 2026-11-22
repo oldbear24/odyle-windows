@@ -1,20 +1,27 @@
-﻿; Per-user installer for the self-contained win-x64 build. It needs no administrator
-; rights and installs into %LOCALAPPDATA%\Programs\Odyle, a folder the app's own updater
-; can write to, so an installed Odyle keeps updating itself from GitHub releases.
-; scripts/publish.ps1 -SelfContained -Installer compiles it with Inno Setup 6:
-;   iscc /DAppVersion=<version> /DPublishDir=<published files> /DOutputDir=<folder> /DOutputName=<file name> installer\odyle.iss
+﻿; Per-user installer for the self-contained build of one CPU architecture (win-x64 or win-arm64).
+; It needs no administrator rights and installs into %LOCALAPPDATA%\Programs\Odyle, a folder the
+; app's own updater can write to, so an installed Odyle keeps updating itself from GitHub releases,
+; with the package of the architecture it runs as (an ARM64 install stays ARM64).
+; scripts/publish.ps1 -SelfContained -Installer [-Runtime win-arm64] compiles it with Inno Setup 6:
+;   iscc /DAppVersion=<version> /DRuntime=<win-x64|win-arm64> /DPublishDir=<published files> /DOutputDir=<folder> /DOutputName=<file name> installer\odyle.iss
 ; Saved as UTF-8 with a byte order mark, so the Czech texts compile as written.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef Runtime
+  #define Runtime "win-x64"
+#endif
+#if Runtime != "win-x64" && Runtime != "win-arm64"
+  #error Runtime must be win-x64 or win-arm64.
+#endif
 #ifndef PublishDir
-  #error PublishDir must name the folder with the published self-contained win-x64 files.
+  #error PublishDir must name the folder with the published self-contained files of Runtime.
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts"
 #endif
 #ifndef OutputName
-  #define OutputName "odyle-" + AppVersion + "-win-x64-setup"
+  #define OutputName "odyle-" + AppVersion + "-" + Runtime + "-setup"
 #endif
 
 [Setup]
@@ -31,8 +38,14 @@ DefaultDirName={localappdata}\Programs\Odyle
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+; Both installers share the AppId, so either one replaces an install of the other.
+#if Runtime == "win-arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
 SetupIconFile=..\src\Odyle.Reader\Assets\odyle.ico
@@ -55,7 +68,7 @@ Name: "cs"; MessagesFile: "compiler:Languages\Czech.isl"
 [Messages]
 ; What Odyle is and is not: the same notice as Settings -> Packet reader and the dashboard.
 en.WelcomeLabel2=This will install [name/ver] on your computer.%n%nOdyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic or automates play, and it reads no damage numbers, HP or skills. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard, and it reads your character's PvP kills, assists and deaths, with the names of the players in them, only after you turn on PvP stats there. It also sends the names of the other players in your party and force to Odyle's armory, which looks up their public PLAYNC profiles, until you turn that off on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk.
-cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení vaší vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nečte čísla poškození, HP ani dovednosti. Mapu a polohu vaší vlastní postavy posílá vašim místnostem, jen když na dashboardu zapnete sdílení polohy, a PvP zabití, asistence a smrti vaší postavy se jmény hráčů, kterých se týkají, čte, jen když tam zapnete PvP statistiky. Jména ostatních hráčů ve vaší partě a force posílá také do zbrojnice Odyle, která vyhledá jejich veřejné profily PLAYNC, dokud to na dashboardu nevypnete. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáte na vlastní riziko.
+cs.WelcomeLabel2=Průvodce nainstaluje [name/ver] do tohoto počítače.%n%nOdyle je neoficiální fanouškovský projekt, který není spojen se společností NCSOFT ani jí schválen. Čtečka pro Windows jen naslouchá spojení tvé vlastní hry: nikdy nečte paměť hry, nemění ani neposílá herní provoz, neautomatizuje hraní a nečte čísla poškození, HP ani dovednosti. Mapu a polohu tvé vlastní postavy posílá tvým místnostem, jen když na dashboardu zapneš sdílení polohy, a PvP zabití, asistence a smrti tvé postavy se jmény hráčů, kterých se týkají, čte, jen když tam zapneš PvP statistiky. Jména ostatních hráčů ve tvé partě a force posílá také do zbrojnice Odyle, která vyhledá jejich veřejné profily PLAYNC, dokud to na dashboardu nevypneš. Pravidla NCSOFT zakazují neautorizované programy, Odyle proto používáš na vlastní riziko.
 
 [CustomMessages]
 en.AutostartTask=Start Odyle with Windows (it waits in the tray)
@@ -163,6 +176,12 @@ end;
 // asks whether to disconnect it too: "Odyle.exe --unpair" then closes a running Odyle,
 // forgets the device key on the server and deletes the saved pairing. A silent uninstall
 // keeps the pairing.
+// Then, on every uninstall (silent, after No, unpaired), "Odyle.exe --quit" closes a running
+// Odyle before the files are removed: it signals the app's Local\Odyle-Quit-<SID> event, waits
+// for it to end and ends it if it does not, so [UninstallDelete] never meets a locked Odyle.exe.
+// (An AppMutex would only detect a running Odyle: it asks the user to close it, and a silent
+// uninstall would stop there. The app's own mutex carries the user's SID, which Inno Setup
+// cannot name, while the installed Odyle.exe knows it.)
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
@@ -172,6 +191,8 @@ begin
     if not UninstallSilent and FileExists(ExpandConstant('{localappdata}\Odyle\session.bin')) then
       if MsgBox(CustomMessage('UnpairPrompt'), mbConfirmation, MB_YESNO) = IDYES then
         Exec(ExpandConstant('{app}\Odyle.exe'), '--unpair', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if FileExists(ExpandConstant('{app}\Odyle.exe')) then
+      Exec(ExpandConstant('{app}\Odyle.exe'), '--quit', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Odyle');
   end;
 end;
