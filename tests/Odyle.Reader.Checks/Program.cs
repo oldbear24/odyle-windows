@@ -105,6 +105,14 @@ static partial class ReaderChecks
         Add("run-chip-and-places", RunChipAndPlacesScenario);
         Add("party-refresh", PartyRefreshChecks);
         if (online is { } live) Add("online", window => OnlineScenario(window, live.Url, live.Code));
+        Add("heartbeat-unpaired", HeartbeatUnpairedScenario);
+        Add("server-busy", ServerBusyScenario);
+        Add("held-back", HeldBackScenario);
+        Add("update-now", UpdateNowScenario);
+        Add("quit-cap", QuitCapScenario);
+        Add("quit-restart", QuitRestartScenario);
+        Add("quit-after-install", QuitAfterInstallScenario);
+        AddStatic("discord-status", DiscordStatusScenario);
         AddStatic("open-in-odyle", OpenInOdyleScenario);
     }
     static readonly TimeSpan ScenarioLimit = TimeSpan.FromMinutes(2);

@@ -178,7 +178,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Forms.NotifyIcon tray;
     // The last tray notification, kept for the checks (the tray icon is off there).
-    private (string Title, string Text)? LastNotice { get; set; }
+    internal (string Title, string Text)? LastNotice { get; set; }
     private int hiddenTicks;
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
