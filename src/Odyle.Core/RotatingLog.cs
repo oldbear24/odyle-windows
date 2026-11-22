@@ -10,6 +10,7 @@ namespace Odyle.Core;
 public sealed class RotatingLog(string path, long limit = 1024 * 1024)
 {
     private readonly object sync = new();
+    private DateTimeOffset rotateAfter = DateTimeOffset.MinValue;
     public string FilePath => path;
     public string PreviousPath => Path.ChangeExtension(path, null) + ".previous.log";
     public void Write(string level, string message)
@@ -21,7 +22,13 @@ public sealed class RotatingLog(string path, long limit = 1024 * 1024)
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-                if (File.Exists(path) && new FileInfo(path).Length + bytes.Length > limit) File.Move(path, PreviousPath, overwrite: true);
+                if (File.Exists(path) && new FileInfo(path).Length + bytes.Length > limit && DateTimeOffset.UtcNow >= rotateAfter)
+                {
+                    // Another program holding the previous file (an editor, a sync client) blocks the rotation:
+                    // the line is written anyway, and the rotation is tried again a minute later, not on every line.
+                    try { File.Move(path, PreviousPath, overwrite: true); }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException) { rotateAfter = DateTimeOffset.UtcNow.AddMinutes(1); }
+                }
                 using var file = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
                 file.Write(bytes);
             }
