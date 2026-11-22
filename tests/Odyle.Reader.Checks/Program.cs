@@ -81,6 +81,7 @@ static partial class ReaderChecks
         Add("pairing", PairingChecks);
         Add("early-reading", EarlyReadingChecks);
         AddStatic("capture-looks", CaptureLooks);
+        AddStatic("attribution-state", AttributionStateScenario);
         Add("attribution", AttributionScenario);
         Add("publishing", PublishingScenario);
         Add("party-list", PartyListScenario);
@@ -193,7 +194,7 @@ static partial class ReaderChecks
             Check(Field("api").GetValue(window) is PartyApi && (string)Field("sessionId").GetValue(window)! == "s1" && ((DispatcherTimer)Field("heartbeat").GetValue(window)!).IsEnabled && !restore.IsEnabled && Field("retryAt").GetValue(window) is null, "the next try connects the saved pairing");
             // Party and force members' names: an answer { shared: false } turns them off until the server says otherwise.
             var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-            Field("currentCharacterId").SetValue(window, "c1"); Field("gameCharacterId").SetValue(window, 7UL); Field("detectedCharacterKey").SetValue(window, "Hero|2304"); Field("gameCharacterKey").SetValue(window, "Hero|2304");
+            Field("currentCharacterId").SetValue(window, "c1"); window.Attribution.GameId = 7UL; window.Attribution.DetectedKey = "Hero|2304"; window.Attribution.GameKey = "Hero|2304";
             List<string> Waiting() => Conn(window).TeammatesWaiting;
             bool Off() => Conn(window).TeammatesOff;
             server.Teammates = """{"shared":false}""";
@@ -232,7 +233,7 @@ static partial class ReaderChecks
             Check(await Reconnect(HttpStatusCode.ServiceUnavailable) == 1 && await Reconnect(HttpStatusCode.BadGateway) == 1 && await Reconnect(null, unreachable: true) == 1, "a server error or no connection is not asked twice");
             Check(Conn(window).Group.Refused && Conn(window).AdapterOutdated, "a new session on the same connection keeps what the server refused");
             server.Heartbeat = """{"serverNow":"2026-11-21 12:01:00.000Z","shareTeammates":false}"""; await (Task)Call(window, "PulseAsync")!;
-            Field("capture").SetValue(window, null); Call(window, "ResetAttribution");
+            Field("capture").SetValue(window, null); window.Attribution.Reset();
             await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             Check(!Off() && !File.Exists(SessionStore.FilePath), "signing out resets the switch to the default");
             // Pairing with another server in the same run starts from nothing the first one refused or was sent (#92).
@@ -243,14 +244,14 @@ static partial class ReaderChecks
             var fresh = Conn(window);
             Check(Field("api").GetValue(window) is PartyApi { Endpoint: "https://other.example" } && !fresh.Group.Refused && fresh.TeammatesSent.Count == 0 && !fresh.AdapterOutdated && fresh.NoOdyleSent == "" && !fresh.TeammatesOff, "pairing with another server forgets what the first one refused and was sent");
             Field("capture").SetValue(window, inert);
-            Field("currentCharacterId").SetValue(window, "c1"); Field("gameCharacterId").SetValue(window, 7UL); Field("detectedCharacterKey").SetValue(window, "Hero|2304"); Field("gameCharacterKey").SetValue(window, "Hero|2304");
+            Field("currentCharacterId").SetValue(window, "c1"); window.Attribution.GameId = 7UL; window.Attribution.DetectedKey = "Hero|2304"; window.Attribution.GameKey = "Hero|2304";
             await (Task)Call(window, "SendGroupAsync")!;
             Check(other.GroupRequests == 1 && server.GroupRequests == 1, "and the new server gets the party and force");
-            Field("capture").SetValue(window, null); Call(window, "ResetAttribution");
+            Field("capture").SetValue(window, null); window.Attribution.Reset();
         }
         finally
         {
-            Field("capture").SetValue(window, null); Call(window, "ResetAttribution");
+            Field("capture").SetValue(window, null); window.Attribution.Reset();
             if (Field("api").GetValue(window) is not null || restore.IsEnabled) await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
             ((DispatcherTimer)Field("npcapTimer").GetValue(window)!).Stop(); Npcap.Probe = probeNpcap;
             Field("newApi").SetValue(window, makeApi); Field("sessionId").SetValue(window, ""); Field("currentCharacterId").SetValue(window, "");
@@ -278,7 +279,7 @@ static partial class ReaderChecks
             Check(!naming.IsCompleted && server.Saved == 0 && server.Reports == 0 && Control<TextBlock>(window, "ValueLabel").Text == "512", "what it reads is shown and waits for the connection");
             server.SignInGate!.SetResult(); await restoring; await naming;
             ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
-            Check(server.Saved == 1 && server.Reports == 1 && server.LastReport.Contains("\"characterId\":\"c7\"") && server.LastReport.Contains("\"value\":512") && (string)Field("readingOwnerKey").GetValue(window)! == "EarlyHero|2304" && (string)Field("activeCharacterId").GetValue(window)! == "c7",
+            Check(server.Saved == 1 && server.Reports == 1 && server.LastReport.Contains("\"characterId\":\"c7\"") && server.LastReport.Contains("\"value\":512") && window.Attribution.OwnerKey == "EarlyHero|2304" && (string)Field("activeCharacterId").GetValue(window)! == "c7",
                 "the login snapshot read before the connection is saved to the character the game named and sent once: " + server.LastReport);
             // Pairing with another server while the reader reads: the game's character is saved there again and its reading
             // goes to that character, never to the new account's character read last (#92).
@@ -591,9 +592,9 @@ static partial class ReaderChecks
         Call(window, "SetDiscordStatus", true, false); Snapshot(settings, Path.Combine(directory, "settings-discord-preview.png"), 320); Call(window, "SetDiscordStatus", false, false);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
-        Field("detectedCharacterKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
+        window.Attribution.DetectedKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";
         Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
-        Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("activeCharacterId").SetValue(window, "c1");
+        window.Attribution.OwnerKey = "TestHero|2304"; Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live");
         Call(window, "RenderHero"); Call(window, "RenderParty");
@@ -633,7 +634,7 @@ static partial class ReaderChecks
         Field("tasksLoaded").SetValue(window, true); Call(window, "RenderTasks");
         Snapshot(window, Path.Combine(directory, "tasks-preview.png"), 520);
         Call(window, "SetTasksShown", false, false); Call(window, "SetStayOnTop", false, false);
-        Field("latest").SetValue(window, null); Call(window, "RenderHero");
+        window.Attribution.Latest = null; Call(window, "RenderHero");
         Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; the game names your character within a few minutes, or at once after a relog or channel change.");
         Snapshot(window, Path.Combine(directory, "midstream-preview.png"));
         Call(window, "ShowAnnouncement", new Announcement("Server maintenance on Thursday 10:00–11:00 UTC. Readings pause meanwhile.", "warning"));

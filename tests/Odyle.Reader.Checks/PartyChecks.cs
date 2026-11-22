@@ -33,7 +33,7 @@ static partial class ReaderChecks
             MateBand { Label: "In one party in game", Count: "2 players", Items: [PartyMate { Name: "Tor" }, PartyMate { Name: "Vex" }] }, PartyMate { Name: "KaelenAlt" }],
             "a party's frame sits in its force's, each labelled with how many players it holds, you included");
         Field("capture").SetValue(window, null); Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
-        Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("latest").SetValue(window, null);
+        Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); window.Attribution.Latest = null;
         Field("accountId").SetValue(window, ""); Field("rooms").SetValue(window, Array.Empty<Room>()); Field("snapshots").SetValue(window, Array.Empty<RoomSnapshot>()); Call(window, "RenderParty");
         Check(Control<StackPanel>(window, "PartyPanel").Visibility == Visibility.Collapsed, "no party list without a connection");
     }

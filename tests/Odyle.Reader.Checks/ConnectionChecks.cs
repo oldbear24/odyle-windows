@@ -30,12 +30,12 @@ static partial class ReaderChecks
         var offlineCapture = new PacketCapture(); Field("capture").SetValue(window, offlineCapture);
         Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineCapture, new GameIdentity(7, "OfflineHero", 2304, "Lumiel", "GLOBAL_EU"))!;
-        Check(Field("pendingIdentity").GetValue(window) is not null && (string)Field("readingOwnerKey").GetValue(window)! == "OfflineHero|2304", "the named character is followed and kept for the server");
+        Check(Field("pendingIdentity").GetValue(window) is not null && window.Attribution.OwnerKey == "OfflineHero|2304", "the named character is followed and kept for the server");
         Check(Control<TextBlock>(window, "HeroTitle").Text == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");
         // A switch while offline drops the reading of the character left, as online.
         await (Task)Call(window, "CharacterChangedAsync", offlineCapture, 99UL)!;
-        Check(Field("latest").GetValue(window) is null && (string)Field("readingOwnerKey").GetValue(window)! == "", "a switch offline never moves the reading to the next character");
-        Field("capture").SetValue(window, null); Field("pendingIdentity").SetValue(window, null); Call(window, "ResetAttribution");
+        Check(window.Attribution.Latest is null && window.Attribution.OwnerKey == "", "a switch offline never moves the reading to the next character");
+        Field("capture").SetValue(window, null); Field("pendingIdentity").SetValue(window, null); window.Attribution.Reset();
         await (Task)Call(window, "DisconnectAsync", "Disconnected.", true)!;
         Check(!((DispatcherTimer)Field("restoreTimer").GetValue(window)!).IsEnabled && Field("retryAt").GetValue(window) is null && !File.Exists(SessionStore.FilePath), "disconnecting stops the retries and forgets the pairing");
         Check(File.ReadAllText(Log.FilePath).Contains("next in 15 s") && File.ReadAllText(Log.FilePath).Contains("Status: ") && !File.ReadAllText(Log.FilePath).Contains("device-key"), "the log records retries and status lines but never the device key");
@@ -77,7 +77,7 @@ static partial class ReaderChecks
         // loading screen, 6 to 10 seconds later, when the publish delay has long run out.
         await (Task)Call(window, "SaveDetectedCharacterAsync", capture, new GameIdentity(45, "NoOdyleHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Call(window, "OnCandidate", capture, new PacketCandidate(120, "test-fixture-v1") { Base = 0, Bonus = 120 });
-        Call(window, "AttributePending"); await (Task)Call(window, "PublishLatestAsync")!;
+        window.Attribution.AttributePending(DateTimeOffset.UtcNow); await (Task)Call(window, "PublishLatestAsync")!;
         Check((long)Field("sequence").GetValue(window)! == sent + 1 && Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot is not sent before the game names its character, however long the loading screen takes");
         // Two capture interfaces see the same connection, and each reports the switch and the identity.
         for (var copy = 0; copy < 2; copy++)
@@ -142,7 +142,7 @@ static partial class ReaderChecks
         // The server unreachable (as at a start during an outage): the character the game names and its
         // reading wait on this PC, and both reach the server once it answers again.
         var offlineRun = new PacketCapture(); Field("api").SetValue(window, null); Field("retryAt").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(15));
-        Field("capture").SetValue(window, offlineRun); Call(window, "ResetAttribution");
+        Field("capture").SetValue(window, offlineRun); window.Attribution.Reset();
         Call(window, "OnCandidate", offlineRun, new PacketCandidate(512, "test-fixture-v1") { Base = 12, Bonus = 500 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineRun, new GameIdentity(46, "ReturnHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Check(!(await api.GetCharactersAsync()).Any(c => c.CharacterName == "ReturnHero"), "offline nothing reaches the server");

@@ -77,24 +77,11 @@ public partial class MainWindow : Window
     private PacketCapture? capture;
     private readonly SettingsWindow settings = new();
     private string sessionId = "", activeCharacterId = "", accountName = "", accountId = "";
-    // The character always comes from the game; the user cannot pick one.
-    // currentCharacterId: character shown in the card (last one the game named).
-    // gameCharacterKey: identity the game last named (UnknownOwner after a switch it
-    // has not named yet), gameCharacterId its id in the game, 0 when unknown.
-    // detectedCharacterKey: that identity once saved to the account.
-    // readingOwnerKey: identity that owns `latest`, "" while undecided.
-    // nameDue: a snapshot came and the game has not named the character since. The game sends
-    // one whenever it loads a character into the world (login, switch, teleport, channel change)
-    // and names the character only after the loading screen, 6 to 10 seconds later.
-    // namedHasReading: the named character's Odyle was read this run.
-    // identityDue: a game connection resynced, and the lost bytes may have held a character
-    // switch; the next reading waits, like a snapshot, for the game to name its character.
-    // odyleMissingDue: a snapshot without Odyle waits, like any snapshot, for the game to name its
-    // character; odyleMissingKey is then that character, until its Odyle is read.
-    private const string UnknownOwner = "?";
-    private string currentCharacterId = "", gameCharacterKey = "", gameCharacterName = "", detectedCharacterKey = "", readingOwnerKey = "", odyleMissingKey = "";
-    private ulong gameCharacterId;
-    private bool nameDue, namedHasReading, odyleMissingDue, identityDue;
+    // The character always comes from the game; the user cannot pick one. currentCharacterId: character shown in
+    // the card (last one the game named). Which character owns the reading is the attribution's (ReaderAttribution).
+    private string currentCharacterId = "";
+    private readonly ReaderAttribution attribution;
+    internal ReaderAttribution Attribution => attribution;
     // What the connected server answered and refused (ConnectionState): replaced as a whole when the
     // request client is set up or dropped (UseApi, DropApi), so nothing carries over to the next one (#92).
     private ConnectionState connection = new();
@@ -161,8 +148,7 @@ public partial class MainWindow : Window
     private static string VersionText => $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}";
     private int heroCost = 40;
     private long sequence, lastGameBytes;
-    private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, latestAt, pendingSince, tokenRenewedAt;
-    private PacketCandidate? latest;
+    private DateTimeOffset lastTick = DateTimeOffset.UtcNow, publishBlockedUntil = DateTimeOffset.MinValue, tokenRenewedAt;
     private int publishedTotal = -1;
     // The natural pool of the reading saved last, and the last change the game made (a spend, a
     // regeneration tick or an item), for the reading's kind (OdyleChange) and the card's split line.
@@ -208,6 +194,8 @@ public partial class MainWindow : Window
     public MainWindow() : this(true) { }
     public MainWindow(bool enableTray)
     {
+        // Starting over also forgets where the named character was and the party it was in.
+        attribution = new(publishDelay, () => { locations.Reset(); groups.Reset(); });
         InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
         tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
@@ -484,7 +472,7 @@ public partial class MainWindow : Window
     private void RenderAlts()
     {
         var listed = (api is not null || Offline) ? ListedCharacters() : [];
-        var open = listed.Length > 1 && (altsOpened || (capture is not null && gameCharacterKey == UnknownOwner));
+        var open = listed.Length > 1 && (altsOpened || (capture is not null && attribution.GameKey == ReaderAttribution.UnknownOwner));
         AltToggle.Visibility = listed.Length > 1 ? Visibility.Visible : Visibility.Collapsed;
         AltToggle.Content = T("Your characters ({0})", listed.Length) + (open ? " ▴" : " ▾");
         System.Windows.Automation.AutomationProperties.SetName(AltToggle, T("Your characters ({0})", listed.Length));
@@ -539,16 +527,16 @@ public partial class MainWindow : Window
         var connected = api is not null; var offline = Offline;
         var character = CurrentCharacter;
         var cost = HeroCost(character);
-        var reading = capture is not null ? latest : null;
+        var reading = capture is not null ? attribution.Latest : null;
         // A reading whose owner is not yet the shown character is displayed, but never under its name.
-        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        var owned = reading is not null && attribution.OwnerSaved;
         int? value = reading?.Total ?? (character is { Confirmed: true } ? character.Value : null);
         // The header keeps room for its buttons: it names a state, not the account (Settings does).
         AccountLabel.Text = offline ? T("OFFLINE") : !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? "" : T("CONNECTING…");
         AccountLabel.Visibility = AccountLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         HeroTitle.Text = !connected && !offline ? T("Not connected")
-            : offline && reading is not null ? (gameCharacterName.Length > 0 && readingOwnerKey == gameCharacterKey ? T("{0} · offline", gameCharacterName) : T("Detecting character…"))
-            : reading is not null && !owned ? (gameCharacterName.Length > 0 && gameCharacterKey != detectedCharacterKey && readingOwnerKey == gameCharacterKey ? T("{0} · not saved", gameCharacterName) : T("Detecting character…"))
+            : offline && reading is not null ? (attribution.GameName.Length > 0 && attribution.OwnerKey == attribution.GameKey ? T("{0} · offline", attribution.GameName) : T("Detecting character…"))
+            : reading is not null && !owned ? (attribution.GameName.Length > 0 && attribution.GameKey != attribution.DetectedKey && attribution.OwnerKey == attribution.GameKey ? T("{0} · not saved", attribution.GameName) : T("Detecting character…"))
             : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet");
         ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
@@ -570,11 +558,11 @@ public partial class MainWindow : Window
             : !connected ? T("Open settings to pair with the dashboard.")
             // The operators' announcement, when there is one, says why; it moves into the card meanwhile.
             : readerPaused ? (announcement is { } reason ? T("Paused by the server · {0}", reason.Text) : T("Paused by the server · reading resumes by itself when the operators allow it again."))
-            : reading is not null && !owned ? (gameCharacterKey.Length == 0 && !nameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
+            : reading is not null && !owned ? (attribution.GameKey.Length == 0 && !attribution.NameDue ? T("The game names the character within a few minutes, or at once after a relog or channel change.") : T("Waiting for the game to name the character."))
             : reading is not null ? (connection.AdapterOutdated ? OutdatedHint : publishFailure ?? "")
             // The game's snapshot of the named character has no Odyle record; it is thought to unlock at level 22.
             // Waiting for the snapshot needs no caption: the reader line says so.
-            : capture is not null ? (odyleMissingKey.Length > 0 && odyleMissingKey == gameCharacterKey ? T("No Odyle on {0} yet · it may unlock at level 22.", gameCharacterName)
+            : capture is not null ? (attribution.OdyleMissingKey.Length > 0 && attribution.OdyleMissingKey == attribution.GameKey ? T("No Odyle on {0} yet · it may unlock at level 22.", attribution.GameName)
                 : character is null ? T("Log into a character · it is detected automatically.") : "")
             : character is null ? T("Start the reader, then log into your character.")
             : character.Confirmed ? T("Last saved value · start the reader for live values.")
@@ -591,14 +579,14 @@ public partial class MainWindow : Window
     // The pill beside the value: what happens to the reading on the card. Sending turns Stale with the time.
     private void RenderPill()
     {
-        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
-        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        var character = CurrentCharacter; var reading = capture is not null ? attribution.Latest : null;
+        var owned = reading is not null && attribution.OwnerSaved;
         if (api is null) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
         else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
         else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
         else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
         // A snapshot waits for the loading screen to end before the game names its character.
-        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(nameDue ? 30 : 6) ? T("Sending") : T("Stale"));
+        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - attribution.LatestAt < TimeSpan.FromSeconds(attribution.NameDue ? 30 : 6) ? T("Sending") : T("Stale"));
         else if (capture is not null) SetPill("MintSoft", "MintSoft", "PillNeutral", T("Listening"));
         else if (character is null) SetPill("Muted", "Muted", "PillNeutral", T("No character"));
         else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
@@ -749,7 +737,7 @@ public partial class MainWindow : Window
     // one (an estimate then), with the operators' rules. Ticked every second with the age.
     private void RenderOdyleClock()
     {
-        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
+        var character = CurrentCharacter; var reading = capture is not null ? attribution.Latest : null;
         var state = CardClock();
         var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
         // Orange two days before the natural pool is full, red once it is or within the hour.
@@ -765,10 +753,10 @@ public partial class MainWindow : Window
     // from its last saved one; null without either.
     private ClockState? CardClock()
     {
-        var character = CurrentCharacter; var reading = capture is not null ? latest : null;
-        var owned = reading is not null && readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey;
+        var character = CurrentCharacter; var reading = capture is not null ? attribution.Latest : null;
+        var owned = reading is not null && attribution.OwnerSaved;
         if (api is not null && reading is { Base: { } natural, Bonus: { } items } && owned)
-            return OdyleClock.Of(natural, items, latestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
+            return OdyleClock.Of(natural, items, attribution.LatestAt, DateTimeOffset.UtcNow, clockRules, character?.RegenTick, character?.NaturalMax, character?.AnsweredCap);
         return api is not null && reading is null && character is not null ? SavedClock(character) : null;
     }
     // The taskbar button fills with the natural pool towards its cap: green, yellow two days before it
@@ -797,7 +785,7 @@ public partial class MainWindow : Window
     {
         var character = CurrentCharacter;
         // A live reading needs no age; a saved value says how old it is.
-        AgeLabel.Text = (capture is null || latest is null) && character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
+        AgeLabel.Text = (capture is null || attribution.Latest is null) && character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
         AgeLabel.Visibility = AgeLabel.Text.Length > 0 && (api is not null || Offline) ? Visibility.Visible : Visibility.Collapsed;
         if (capture is { } running)
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
@@ -983,14 +971,13 @@ public partial class MainWindow : Window
     }
     // The server the account was last connected on, and the identity the game last named on this capture.
     private string connectedEndpoint = "";
-    private (PacketCapture Capture, GameIdentity Identity)? namedIdentity;
     // The reading's character was saved to another server or account: nothing is sent until the game's character
     // is saved to this one (SaveDetectedCharacterAsync, after the operations lock this connection holds).
     private void ForgetSavedCharacter()
     {
-        detectedCharacterKey = ""; currentCharacterId = ""; activeCharacterId = ""; publishedTotal = -1;
+        attribution.DetectedKey = ""; currentCharacterId = ""; activeCharacterId = ""; publishedTotal = -1;
         Log.Info("Connected to another server or account; the character the game named is saved there again.");
-        if (namedIdentity is { } named && named.Capture == capture) _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the named character on the new server", () => SaveDetectedCharacterAsync(named.Capture, named.Identity)));
+        if (attribution.Named is { } named && named.Capture == capture) _ = Dispatcher.BeginInvoke(async () => await Guarded("Saving the named character on the new server", () => SaveDetectedCharacterAsync(named.Capture, named.Identity)));
     }
     // After sleep the realtime connection may be dead without the server having closed it: it connects
     // again at once instead of after the six-minute silence (#82). Called on a system thread.
@@ -1369,8 +1356,8 @@ public partial class MainWindow : Window
     private DiscordActivity? PresenceNow()
     {
         if (!preferences.DiscordStatus || api is null || capture is null || !gamePresent || CurrentCharacter is not { } character || heroValue is not { } value) return null;
-        var reading = latest;
-        if (reading is not null && !(readingOwnerKey.Length > 0 && readingOwnerKey == detectedCharacterKey)) return null;
+        var reading = attribution.Latest;
+        if (reading is not null && !attribution.OwnerSaved) return null;
         if (reading is null && !character.Confirmed) return null;
         return DiscordPresence.Dress(DiscordPresence.Activity(character.CharacterName, value, heroCost, CardClock(), chipRun, DateTimeOffset.UtcNow + serverOffset, gameSince), api.Endpoint, character, UsesPaths());
     }
@@ -1831,17 +1818,14 @@ public partial class MainWindow : Window
         var id = activeCharacterId; activeCharacterId = ""; publishedTotal = -1;
         try { await api.InvalidateAsync(id, sessionId); } catch { }
     }
-    private void ResetAttribution() { namedIdentity = null; gameCharacterKey = ""; gameCharacterName = ""; detectedCharacterKey = ""; readingOwnerKey = ""; gameCharacterId = 0; nameDue = false; namedHasReading = false; odyleMissingDue = false; odyleMissingKey = ""; identityDue = false; locations.Reset(); groups.Reset(); }
-    // `latest` belongs to the character the game named: its updates follow it from now on.
-    private void Attribute(string key) { readingOwnerKey = key; namedHasReading = true; if (odyleMissingKey == key) odyleMissingKey = ""; }
     private Task StopReaderAsync() => StopCaptureAsync(invalidate: true);
     // invalidate is false when a restart hands the live character over (QuitAsync).
     private async Task StopCaptureAsync(bool invalidate)
     {
-        var old = capture; capture = null; ResetAttribution(); publishDelay.Stop();
+        var old = capture; capture = null; attribution.Reset(); publishDelay.Stop();
         if (old is not null) await old.DisposeAsync();
         if (invalidate) await InvalidateActiveAsync();
-        latest = null; publishFailure = null;
+        attribution.Latest = null; publishFailure = null;
         RenderReaderButton(); ToolTipService.SetIsEnabled(ReaderRow, false);
         SetReaderState(ReaderState.Stopped, old is null ? T("Stopped · start the reader before logging in.") : T("Stopped · the last value stays saved on your account."));
         RenderHero();
@@ -1909,12 +1893,12 @@ public partial class MainWindow : Window
         {
             if (capture != next) return;
             if (kind == CaptureStatus.TwoClients) OnTwoClients();
-            if (kind is CaptureStatus.Listening or CaptureStatus.Waiting or CaptureStatus.TwoClients) connectionRead = false;
+            if (kind is CaptureStatus.Listening or CaptureStatus.Waiting or CaptureStatus.TwoClients) attribution.ConnectionRead = false;
             // One of two game clients closed: start over like a new connection, the next identity names the character.
-            else if (twoClients) { twoClients = false; latest = null; publishDelay.Stop(); ResetAttribution(); Log.Info("One game client is left; reading again."); RenderHero(); }
+            else if (attribution.OneClientLeft()) { Log.Info("One game client is left; reading again."); RenderHero(); }
             // A reading the game never attributed belongs to its connection; a new connection starts over.
-            if (kind == CaptureStatus.Listening && readingOwnerKey.Length == 0 && latest is { Source: CandidateSource.Update }) { latest = null; publishDelay.Stop(); RenderHero(); }
-            if (kind == CaptureStatus.Resyncing) OnResync();
+            if (kind == CaptureStatus.Listening && attribution.DropUnowned()) RenderHero();
+            if (kind == CaptureStatus.Resyncing) attribution.Resync();
             if (kind == CaptureStatus.Listening) _ = NoteGameVersionAsync();
             // A new game connection while a reading is live keeps the live line, and so do joining
             // one midstream while the character is known (taken over after a restart) and a resync.
@@ -1955,90 +1939,42 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException) { await next.DisposeAsync(); ShowNpcapProblem(error); RenderHero(); return; }
         catch { await next.DisposeAsync(); throw; }
         npcapTimer.Stop();
-        capture = next; lastGameBytes = 0; latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; ResetAttribution();
+        capture = next; lastGameBytes = 0; attribution.Latest = null; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue; attribution.Reset();
         RenderReaderButton(); CaptureStatsLabel.Text = T("Waiting for packets…"); ToolTipService.SetIsEnabled(ReaderRow, true);
         SetReaderState(ReaderState.Waiting, T("Waiting for the AION2 game connection…"));
         RenderHero();
     }
     private void OnCandidate(PacketCapture source, PacketCandidate observation)
     {
-        if (capture != source || twoClients) return;
-        connectionRead = true;
-        // The same frame can arrive on two capture interfaces within milliseconds.
-        var duplicate = latest is not null && latest.Total == observation.Total && DateTimeOffset.UtcNow - latestAt < TimeSpan.FromSeconds(2);
-        if (duplicate && readingOwnerKey.Length > 0) { latestAt = DateTimeOffset.UtcNow; return; }
-        latest = observation; latestAt = DateTimeOffset.UtcNow;
-        // A snapshot is sent at login, at a character switch and at every teleport or
-        // channel change, and the game names its character only after the loading
-        // screen. Hold every snapshot until the game names its owner so it can never be
-        // saved to the previous character. Updates keep the owner of their snapshot; one
-        // read without any snapshot waits for an owner the same way.
-        // After a resync the lost bytes may have held a switch, so the next reading waits the same way.
-        if ((observation.Source == CandidateSource.Snapshot || identityDue) && !duplicate) { identityDue = false; readingOwnerKey = ""; nameDue = true; odyleMissingDue = false; pendingSince = latestAt; publishDelay.Stop(); publishDelay.Start(); }
-        else if (readingOwnerKey.Length == 0 && !publishDelay.IsEnabled) { pendingSince = latestAt; publishDelay.Start(); }
+        if (capture != source || attribution.TwoClients || !attribution.Candidate(observation, DateTimeOffset.UtcNow)) return;
         if (readerState is ReaderState.Waiting or ReaderState.Listening or ReaderState.Midstream) SetReaderState(ReaderState.Listening, T("Saving…"));
         RenderHero();
-        if (readingOwnerKey.Length > 0) _ = PublishLatestAsync();
+        if (attribution.OwnerKey.Length > 0) _ = PublishLatestAsync();
     }
-    // A complete snapshot without an Odyle record: the character the game loads has no Odyle yet.
-    // Like any snapshot it waits for the game to name its character; a reading still waiting for
-    // a name belonged to the character the game left.
+    // A complete snapshot without an Odyle record: the character the game loads has no Odyle yet (ReaderAttribution).
     private void OnSnapshotWithoutOdyle(PacketCapture source)
     {
-        if (capture != source || twoClients) return;
-        connectionRead = true;
-        // The game sends a login's identity and snapshot either way round: one named a moment ago
-        // is the snapshot's character. Any other snapshot waits for the game to name its character.
-        if (latest is null && gameCharacterKey.Length > 0 && gameCharacterKey != UnknownOwner && DateTimeOffset.UtcNow - namedAt < TimeSpan.FromSeconds(10))
+        if (capture != source || attribution.TwoClients) return;
+        if (attribution.SnapshotWithoutOdyle(DateTimeOffset.UtcNow))
         {
-            odyleMissingDue = false; odyleMissingKey = gameCharacterKey;
             SetReaderState(ReaderState.Listening, T("Listening to AION2"));
             _ = MarkNoOdyleAsync(); RenderHero(); return;
         }
-        odyleMissingDue = true;
-        if (latest is not null && readingOwnerKey.Length == 0) { latest = null; publishDelay.Stop(); }
         RenderHero();
     }
-    // A game connection resynced: the bytes it lost may have held a switch to another character
-    // (its snapshot and identity), so the next reading waits for the game to name its character,
-    // and an unnamed snapshot no longer goes to the named one after 30 seconds. The reading on the
-    // card stays where it is.
-    private void OnResync() { identityDue = true; namedHasReading = false; }
-    // Two game clients run on this PC: their characters' messages would mix, so one character's
-    // Odyle could be saved under the other. Nothing is read or published until one closes, and
-    // the live reading turns stale meanwhile.
-    private bool twoClients;
-    // Whether this game connection gave an Odyle reading or a full snapshot without Odyle (a character
-    // under level 22): a reader that listens for long without either is what a game patch looks like.
-    private bool connectionRead;
     // What the heartbeat tells the backend's reader health about this PC's reader.
     private string ReaderStatus() =>
-        readerPaused ? "paused" : twoClients ? "two-clients" : capture is null ? (npcapTimer.IsEnabled ? "npcap" : "stopped")
-        : readerState switch { ReaderState.Waiting => "waiting", ReaderState.Midstream => "midstream", ReaderState.Problem => "problem", ReaderState.Live => "reading", _ => connectionRead ? "reading" : "listening" };
+        readerPaused ? "paused" : attribution.TwoClients ? "two-clients" : capture is null ? (npcapTimer.IsEnabled ? "npcap" : "stopped")
+        : readerState switch { ReaderState.Waiting => "waiting", ReaderState.Midstream => "midstream", ReaderState.Problem => "problem", ReaderState.Live => "reading", _ => attribution.ConnectionRead ? "reading" : "listening" };
+    // Two game clients run on this PC: nothing is read or published until one closes, and the live reading turns
+    // stale meanwhile.
     private void OnTwoClients()
     {
-        if (twoClients) return;
-        twoClients = true; latest = null; publishDelay.Stop(); ResetAttribution();
+        if (!attribution.TwoClientsStarted()) return;
         _ = InvalidateActiveAsync(); RenderHero();
     }
-    // Runs when a reading has had no owner for the publish delay. Without any named character
-    // the reading keeps waiting for the identity message.
-    private void AttributePending()
-    {
-        if (capture is null || latest is null || readingOwnerKey.Length > 0 || gameCharacterKey.Length == 0 || gameCharacterKey == UnknownOwner) return;
-        if (nameDue)
-        {
-            // After a snapshot the identity the game sends next names the owner, however long the
-            // loading screen takes: the character named before it may be the one just left. One still
-            // unnamed after 30 seconds came without a world load, and only goes to the named character
-            // if that character's Odyle was already read this run.
-            var waiting = DateTimeOffset.UtcNow - pendingSince < TimeSpan.FromSeconds(30);
-            if (waiting) publishDelay.Start();
-            if (waiting || !namedHasReading) return;
-            nameDue = false;
-        }
-        Attribute(gameCharacterKey);
-    }
+    // Runs when a reading has had no owner for the publish delay.
+    private void AttributePending() { if (capture is not null) attribution.AttributePending(DateTimeOffset.UtcNow); }
     private async Task PublishLatestAsync()
     {
         if (busy || !await operations.WaitAsync(0)) { publishDelay.Stop(); publishDelay.Start(); return; }
@@ -2049,15 +1985,15 @@ public partial class MainWindow : Window
     // keeps an unchanged value live.
     private async Task PublishCoreAsync()
     {
-        if (api is null || capture is null || latest is not { } reading) return;
-        if (readingOwnerKey.Length == 0)
+        if (api is null || capture is null || attribution.Latest is not { } reading) return;
+        if (attribution.OwnerKey.Length == 0)
         {
             // Without any identity this run (a start after login) the game names the character when it
             // repeats its identity every few minutes, or at once at a relog or channel change; after a
             // snapshot it names it by itself once the loading screen ends. The card's caption says which.
             SetReaderState(ReaderState.Listening, T("Listening to AION2")); RenderHero(); return;
         }
-        if (readingOwnerKey != detectedCharacterKey || CurrentCharacter is not Character character)
+        if (attribution.OwnerKey != attribution.DetectedKey || CurrentCharacter is not Character character)
         {
             SetReaderState(ReaderState.Listening, T("This character's server is not supported, so it is not saved.")); RenderHero(); return;
         }
@@ -2110,7 +2046,7 @@ public partial class MainWindow : Window
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused)
         {
             Log.Info($"The reading handed over from the adapter {reading.ParserVersion} was refused; the next Odyle change is read again.");
-            if (ReferenceEquals(latest, reading)) latest = null;
+            if (ReferenceEquals(attribution.Latest, reading)) attribution.Latest = null;
             publishFailure = null; SetReaderState(ReaderState.Listening, T("Updated · the value is read again at the next Odyle change."));
         }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
@@ -2125,17 +2061,16 @@ public partial class MainWindow : Window
     }
     private async Task CharacterChangedAsync(PacketCapture source, ulong character)
     {
-        if (capture != source || twoClients) return;
+        if (capture != source || attribution.TwoClients) return;
         await operations.WaitAsync();
         try
         {
             // Two capture interfaces can see the same connection, and each reports the switch.
             // Once the game named the new character the second report changes nothing.
-            if (capture != source || character == gameCharacterId) return;
-            // The game switched characters on this connection. Until it names the
-            // new one, no reading may be attributed to either character.
-            gameCharacterKey = UnknownOwner; gameCharacterName = ""; detectedCharacterKey = ""; gameCharacterId = 0; namedHasReading = false; odyleMissingKey = ""; namedIdentity = null; locations.Switched();
-            if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
+            // The game switched characters on this connection: until it names the new one, no reading may be
+            // attributed to either character. Once it named the new one, a second interface's report changes nothing.
+            if (capture != source || !attribution.Switched(character)) return;
+            locations.Switched();
             await InvalidateActiveAsync(); SetReaderState(ReaderState.Listening, T("Character changed · detecting the new character.")); RenderHero();
         }
         finally { operations.Release(); }
@@ -2145,34 +2080,23 @@ public partial class MainWindow : Window
         await operations.WaitAsync();
         try
         {
-            if (capture != next || twoClients || api is null && !Offline) return;
-            var key = identity.CharacterName + "|" + identity.ServerId;
-            if (key != gameCharacterKey)
-            {
-                // The game now plays a different character. A reading the previous
-                // one owns must not move over to it.
-                gameCharacterKey = key; gameCharacterName = identity.CharacterName; detectedCharacterKey = ""; namedHasReading = false; odyleMissingKey = ""; locations.Switched();
-                if (readingOwnerKey.Length > 0) { latest = null; readingOwnerKey = ""; }
-                await InvalidateActiveAsync();
-            }
-            gameCharacterId = identity.Id; nameDue = false; identityDue = false; namedAt = DateTimeOffset.UtcNow; groups.Named(identity.Id); namedIdentity = (next, identity);
-            // A snapshot without Odyle that waited for a name belongs to this character, unless its
-            // Odyle was read already (the reading is kept).
-            if (odyleMissingDue)
-            {
-                odyleMissingDue = false;
-                if (latest is null) { odyleMissingKey = key; SetReaderState(ReaderState.Listening, T("Listening to AION2")); }
-            }
+            if (capture != next || attribution.TwoClients || api is null && !Offline) return;
+            var key = ReaderAttribution.KeyOf(identity);
+            // The game now plays a different character: a reading the previous one owns does not move over to it.
+            if (attribution.Name(key, identity.CharacterName)) { locations.Switched(); await InvalidateActiveAsync(); }
+            groups.Named(identity.Id);
+            // A snapshot without Odyle that waited for a name belongs to this character, unless its Odyle was read already.
+            if (attribution.NoteIdentity(next, identity, key, DateTimeOffset.UtcNow)) SetReaderState(ReaderState.Listening, T("Listening to AION2"));
             // Offline the character is followed as online, so a reading never moves to another one; only
             // saving it and sending its reading wait for the server (after the next connection or heartbeat).
             if (api is null)
             {
                 pendingIdentity = (next, identity);
-                if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
+                attribution.Claim(key);
                 Log.Info($"Offline: {identity.CharacterName} is followed and saved once the server answers.");
                 RenderHero(); return;
             }
-            if (detectedCharacterKey != key)
+            if (attribution.DetectedKey != key)
             {
                 // Asked when a character is first named on a connection, and again at most once an hour for a server
                 // neither this build nor the server named yet (the server reads PLAYNC's list every night).
@@ -2193,12 +2117,12 @@ public partial class MainWindow : Window
                     RenderHero(); return;
                 }
                 var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.ServerFor(connection.GlobalServers == true)!, identity.RegionFor(connection.NaWest == true)!);
-                currentCharacterId = saved.Id; detectedCharacterKey = key; await ReloadAsync();
+                currentCharacterId = saved.Id; attribution.DetectedKey = key; await ReloadAsync();
                 Log.Info($"{identity.CharacterName} · {identity.Server} is saved to the account."); Status("");
             }
-            if (odyleMissingKey == key) _ = MarkNoOdyleAsync();
+            if (attribution.OdyleMissingKey == key) _ = MarkNoOdyleAsync();
             // A world load still waiting for its owner is where the character just named arrived.
-            if (detectedCharacterKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
+            if (attribution.DetectedKey == key && currentCharacterId.Length > 0 && locations.Named(currentCharacterId, DateTimeOffset.UtcNow) is { } arrived) _ = SendLocationAsync(arrived);
             // Its party and force, each time the game names it (every few minutes): a reading that ended cleared them on the server.
             _ = SendGroupAsync();
             // Party and force members' names read before the character was saved.
@@ -2206,8 +2130,8 @@ public partial class MainWindow : Window
             // PvP events read before the character was saved are its own.
             _ = SendPvpAsync();
             // A snapshot still waiting for its owner belongs to the character just named.
-            if (latest is not null && readingOwnerKey.Length == 0) { Attribute(key); publishDelay.Stop(); }
-            if (latest is not null) await PublishCoreAsync();
+            attribution.Claim(key);
+            if (attribution.Latest is not null) await PublishCoreAsync();
             RenderHero();
         }
         catch (Exception error)
@@ -2222,13 +2146,12 @@ public partial class MainWindow : Window
 
     // Rooms say a character has no Odyle yet once the server knows (POST /api/odyle/no-odyle). Once per
     // character and run; a server from before it, or a failed request, changes nothing here.
-    private DateTimeOffset namedAt;
     private async Task MarkNoOdyleAsync()
     {
-        if (api is null || currentCharacterId.Length == 0 || detectedCharacterKey != odyleMissingKey || connection.NoOdyleSent == currentCharacterId) return;
+        if (api is null || currentCharacterId.Length == 0 || attribution.DetectedKey != attribution.OdyleMissingKey || connection.NoOdyleSent == currentCharacterId) return;
         var id = currentCharacterId; connection.NoOdyleSent = id;
-        try { await api.NoOdyleAsync(id); Log.Info($"No Odyle yet on {gameCharacterName}: the rooms are told."); }
-        catch (Exception error) { Log.Info($"No Odyle yet on {gameCharacterName}, not told to the server: {Describe(error)}"); }
+        try { await api.NoOdyleAsync(id); Log.Info($"No Odyle yet on {attribution.GameName}: the rooms are told."); }
+        catch (Exception error) { Log.Info($"No Odyle yet on {attribution.GameName}, not told to the server: {Describe(error)}"); }
     }
 
     // ----- Location sharing -----
@@ -2257,7 +2180,7 @@ public partial class MainWindow : Window
     }
     private void OnLocation(PacketCapture source, GameLocation location)
     {
-        if (capture != source || twoClients) return;
+        if (capture != source || attribution.TwoClients) return;
         if (locations.Observe(location, DateTimeOffset.UtcNow) is { } report) _ = SendLocationAsync(report);
     }
     // Paused readers, an expired session, no connection: the position is dropped, and the next one is tried.
@@ -2281,7 +2204,7 @@ public partial class MainWindow : Window
     }
     // What the location, party and force, teammates' names and PvP wait for: a connected session and
     // the character the game named, saved to the account.
-    private bool NamedAndSaved => api is not null && sessionId.Length > 0 && currentCharacterId.Length > 0 && gameCharacterId != 0 && detectedCharacterKey == gameCharacterKey;
+    private bool NamedAndSaved => api is not null && sessionId.Length > 0 && currentCharacterId.Length > 0 && attribution.NamedSaved;
 
     // ----- Parties and forces -----
     // The party and force the named character is in (GroupTracker), sent when either changes and each
@@ -2292,11 +2215,11 @@ public partial class MainWindow : Window
     private readonly GroupTracker groups = new();
     private void OnGroup(PacketCapture source, GameGroupEvent change)
     {
-        if (capture != source || twoClients || !groups.Observe(change)) return;
+        if (capture != source || attribution.TwoClients || !groups.Observe(change)) return;
         Log.Info($"Decoder: {(groups.Party.Length > 0 ? "in a party" : "in no party")}, {(groups.Force.Length > 0 ? "in a force" : "in no force")} ({change.Change}).");
         _ = SendGroupAsync();
     }
-    private bool GroupReady => NamedAndSaved && (groups.Owner is 0 || groups.Owner == gameCharacterId);
+    private bool GroupReady => NamedAndSaved && (groups.Owner is 0 || groups.Owner == attribution.GameId);
     private Task SendGroupAsync()
     {
         var state = connection;
@@ -2326,7 +2249,7 @@ public partial class MainWindow : Window
     private void OnTeammates(PacketCapture source, IReadOnlyList<string> names)
     {
         var state = connection;
-        if (capture != source || twoClients || state.Teammates.Refused || state.TeammatesOff) return;
+        if (capture != source || attribution.TwoClients || state.Teammates.Refused || state.TeammatesOff) return;
         foreach (var name in names)
             if (!state.TeammatesSent.Contains(name) && !state.TeammatesWaiting.Contains(name, StringComparer.OrdinalIgnoreCase) && state.TeammatesWaiting.Count < GameGroups.TeammatesLimit) state.TeammatesWaiting.Add(name);
         _ = SendTeammatesAsync();
@@ -2369,7 +2292,7 @@ public partial class MainWindow : Window
     }
     private void OnPvp(PacketCapture source, PvpEvent e)
     {
-        if (capture != source || twoClients) return;
+        if (capture != source || attribution.TwoClients) return;
         var state = connection; var on = state.PvpStats && !state.Pvp.Refused;
         // Never who: the log says only what happened.
         Log.Info($"Decoder: PvP {e.Kind.ToString().ToLowerInvariant()}{(on ? "" : " (not sent: PvP stats are off)")}.");
@@ -2386,7 +2309,7 @@ public partial class MainWindow : Window
     private async Task SendPvpBatchesAsync(ConnectionState state, PartyApi current)
     {
         PvpReport[] batch;
-        while (state.PvpStats && currentCharacterId.Length > 0 && gameCharacterId != 0 && (batch = state.PvpOutbox.Next(gameCharacterId, DateTimeOffset.UtcNow)).Length > 0)
+        while (state.PvpStats && currentCharacterId.Length > 0 && attribution.GameId != 0 && (batch = state.PvpOutbox.Next(attribution.GameId, DateTimeOffset.UtcNow)).Length > 0)
         {
             try
             {
@@ -2402,9 +2325,9 @@ public partial class MainWindow : Window
     // The character the reader keeps live right now: named by the game, saved, its reading sent.
     private Handover? LiveHandover()
     {
-        if (api is null || capture is null || latest is not { } reading || activeCharacterId.Length == 0 || readingOwnerKey.Length == 0
-            || readingOwnerKey != detectedCharacterKey || readingOwnerKey != gameCharacterKey || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
-        return new Handover(api.Endpoint, accountId, character.Id, readingOwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
+        if (api is null || capture is null || attribution.Latest is not { } reading || activeCharacterId.Length == 0 || !attribution.OwnerSettled
+            || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
+        return new Handover(api.Endpoint, accountId, character.Id, attribution.OwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
     }
     // The first start after an update or language restart takes over the character the previous
     // build was reading, for the same server and account. Sending its reading again ties it to this
@@ -2418,12 +2341,9 @@ public partial class MainWindow : Window
         if (handed.Endpoint != api.Endpoint || handed.AccountId != accountId || Array.Find(characters, c => c.Id == handed.CharacterId) is not { } character) return;
         // The reader starts before the server is asked (#86): a snapshot it read meanwhile came with a world load and
         // waits for the game to name its character like any other, so the character is not taken over.
-        if (nameDue || identityDue || gameCharacterKey.Length > 0) { Log.Info($"Did not take over {handed.CharacterName}: the game loaded a character since the restart."); return; }
-        currentCharacterId = character.Id; gameCharacterKey = detectedCharacterKey = handed.CharacterKey; gameCharacterName = handed.CharacterName;
-        Attribute(handed.CharacterKey);
-        // A live update read meanwhile is newer than the handed-over value and keeps its place.
-        if (latest is null) { latest = new PacketCandidate(handed.Total, handed.ParserVersion, handed.Source); latestAt = DateTimeOffset.UtcNow; }
-        Log.Info($"Took over {handed.CharacterName} ({latest.Total} Odyle) from before the restart.");
+        if (!attribution.TakeOver(handed, DateTimeOffset.UtcNow)) { Log.Info($"Did not take over {handed.CharacterName}: the game loaded a character since the restart."); return; }
+        currentCharacterId = character.Id;
+        Log.Info($"Took over {handed.CharacterName} ({attribution.Latest!.Total} Odyle) from before the restart.");
         await PublishCoreAsync();
         RenderHero();
     }
@@ -2571,7 +2491,7 @@ public partial class MainWindow : Window
         sessionId = session.SessionId; sequence = session.Sequence; needsReconnect = false; activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
         Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         if (readerPaused) await FollowReaderPauseAsync();
-        if (capture is not null && latest is not null) await PublishCoreAsync();
+        if (capture is not null && attribution.Latest is not null) await PublishCoreAsync();
         RenderHero();
     }
     // Whether a failed session start with the previous session id is worth one more try without it: the server
@@ -2589,7 +2509,7 @@ public partial class MainWindow : Window
             if (now - tokenRenewedAt > TimeSpan.FromHours(24)) { await SavePairingAsync(await current.SignInAsync()); tokenRenewedAt = now; }
             if (needsReconnect || now - lastTick > TimeSpan.FromSeconds(45)) await ReconnectAsync();
             if (api is null) return;
-            if (capture is { } running && latest is not null)
+            if (capture is { } running && attribution.Latest is not null)
             {
                 var bytes = running.GameBytes; var alive = bytes > lastGameBytes; lastGameBytes = bytes;
                 // Re-sends only after the reading went stale; otherwise the heartbeat below keeps it live.
