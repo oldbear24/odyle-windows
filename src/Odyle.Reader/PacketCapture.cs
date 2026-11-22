@@ -203,7 +203,7 @@ public sealed class PacketCapture : IAsyncDisposable
             return;
         }
         // About a minute without the game's connection while AION2 runs: the connection table
-        // may say why (IPv6, an accelerator, other ports). Looking lists every process, so it is
+        // may say why (an accelerator, other ports). Looking lists every process, so it is
         // done again after 15 seconds, then less often while the answer stays the same: 30 s,
         // 1, 2 and at most 5 minutes. Another answer, or the connection coming or going, starts
         // over at 15 seconds.
@@ -303,15 +303,15 @@ public sealed class PacketCapture : IAsyncDisposable
             if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
             result.Add(new(FlowAddress.FromIPv4(Address(row, 4, 4)), PortAt(row, 8), FlowAddress.FromIPv4(Address(row, 12, 4)), PortAt(row, 16))); owners.Add(owner);
         });
-        // A dual-mode socket to an IPv4 server is listed in the IPv6 table with IPv4-mapped
-        // addresses; its packets are IPv4 and are read like the rows above.
+        // The IPv6 table: connections over IPv6, and dual-mode sockets to an IPv4 server, listed
+        // with IPv4-mapped addresses (::ffff:a.b.c.d). FlowAddress keeps IPv4 in that mapped form,
+        // so such a row matches the connection's IPv4 packets.
         ReadTcpTable(23, 56, row =>
         {
             if (result.Count >= 32 || PortAt(row, 44) != GameConnection.Port || Marshal.ReadInt32(row, 48) is not (3 or 4 or 5)) return;
             var owner = Marshal.ReadInt32(row, 52);
-            var local = Address(row, 0); var remote = Address(row, 24);
-            if (GameConnection.MappedIPv4(local) is null || GameConnection.MappedIPv4(remote) is null || !GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
-            result.Add(new(FlowAddress.FromIPv6(local), PortAt(row, 20), FlowAddress.FromIPv6(remote), PortAt(row, 44))); owners.Add(owner);
+            if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
+            result.Add(new(FlowAddress.FromIPv6(Address(row, 0)), PortAt(row, 20), FlowAddress.FromIPv6(Address(row, 24)), PortAt(row, 44))); owners.Add(owner);
         });
         clients = owners.Count;
         return result.ToArray();
@@ -342,6 +342,19 @@ public sealed class PacketCapture : IAsyncDisposable
         decoder.TeammatesObserved += value => TeammatesObserved?.Invoke(value);
         decoder.ReadPvp = () => readPvp; decoder.PvpObserved += value => PvpObserved?.Invoke(value); decoder.PvpFrameObserved += value => PvpFrameObserved?.Invoke(value);
     }
+    // The game server's packets, over IPv4 and IPv6. The port test of a BPF filter reads the TCP
+    // header right after the fixed IPv6 header, so IPv6 packets whose TCP header follows extension
+    // headers (hop-by-hop 0, routing 43, fragment 44, authentication 51, destination options 60) pass
+    // as well; TcpPacket and the port check in Receive sort them out, and such packets are rare.
+    private const string GamePortFilter = "tcp and src port 13328";
+    private const string GameFilter = "(" + GamePortFilter + ") or (ip6 and (ip6[6] == 0 or ip6[6] == 43 or ip6[6] == 44 or ip6[6] == 51 or ip6[6] == 60))";
+    private volatile bool filterRefused;
+    private static bool SetFilter(IntPtr handle, string expression)
+    {
+        if (pcap_compile(handle, out var filter, expression, 1, uint.MaxValue) != 0) return false;
+        try { return pcap_setfilter(handle, ref filter) == 0; }
+        finally { pcap_freecode(ref filter); }
+    }
     // Each game connection is decoded on one interface only, the first to deliver it (FlowOwners).
     private readonly FlowOwners owners = new(TimeSpan.FromSeconds(10));
     private void Receive(string name, Worker worker, CancellationToken token)
@@ -356,10 +369,13 @@ public sealed class PacketCapture : IAsyncDisposable
             var linkType = pcap_datalink(handle);
             if (!TcpPacket.IsSupportedLink(linkType)) { worker.Unsupported = true; return; }
             // Keep discovery open across reconnects. Every packet must still match a
-            // connection owned by AION2 before decoding.
-            if (pcap_compile(handle, out var filter, "tcp and src port 13328", 1, uint.MaxValue) != 0) throw new InvalidOperationException("Unable to configure game-only capture filter.");
-            try { if (pcap_setfilter(handle, ref filter) != 0) throw new InvalidOperationException("Unable to apply capture filter."); }
-            finally { pcap_freecode(ref filter); }
+            // connection owned by AION2 before decoding. Should Npcap refuse the filter with
+            // IPv6 extension headers, the game-port filter alone still reads IPv4 and plain IPv6.
+            if (!SetFilter(handle, GameFilter))
+            {
+                if (!SetFilter(handle, GamePortFilter)) throw new InvalidOperationException("Unable to configure game-only capture filter.");
+                if (!filterRefused) { filterRefused = true; Log.Warn("Npcap refused the capture filter for IPv6 extension headers; IPv6 packets that carry them are not read."); }
+            }
             worker.Capturing = true;
             if (worker.Announced) { worker.Announced = false; Log.Info($"Capture interface {name} works again."); }
             while (!token.IsCancellationRequested)
@@ -379,6 +395,8 @@ public sealed class PacketCapture : IAsyncDisposable
                 {
                     if (!TcpPacket.TryParse(packet.AsSpan(0, length), linkType, out var segment)) continue;
                     var flow = segment.Flow;
+                    // The filter cannot see the port of an IPv6 packet with extension headers.
+                    if (flow.RemotePort != GameConnection.Port) continue;
                     if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true, opening: (segment.Flags & 2) != 0); if (!flows.Contains(flow)) continue; }
                     if (!owners.Claim(flow, name, DateTimeOffset.UtcNow)) continue;
                     var decoded = streams.Feed(flow, segment.Sequence, segment.Flags, packet.AsSpan(segment.PayloadOffset, segment.PayloadLength));

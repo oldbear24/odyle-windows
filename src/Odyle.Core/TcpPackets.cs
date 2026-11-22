@@ -29,8 +29,8 @@ public readonly record struct TcpFlow(FlowAddress Local, ushort LocalPort, FlowA
 // One TCP segment of a captured packet: its connection seen from this PC (the packet's destination
 // is Local), sequence number, flag byte, and where its payload lies in the packet.
 public readonly record struct TcpSegment(TcpFlow Flow, uint Sequence, byte Flags, int PayloadOffset, int PayloadLength);
-// The Ethernet, VLAN, IP and TCP headers of one captured packet. Link types: Ethernet (1), BSD
-// loopback with its 4-byte family (0, 108) and raw IP (12, 101). Fragments are never read.
+// The Ethernet, VLAN, IPv4 or IPv6 and TCP headers of one captured packet. Link types: Ethernet
+// (1), BSD loopback with its 4-byte family (0, 108) and raw IP (12, 101). Fragments are never read.
 public static class TcpPacket
 {
     public static bool IsSupportedLink(int linkType) => linkType is 1 or 0 or 108 or 12 or 101;
@@ -45,9 +45,47 @@ public static class TcpPacket
             if (length < 14) return false;
             var type = BinaryPrimitives.ReadUInt16BigEndian(packet[12..]);
             if (type is 0x8100 or 0x88a8) { if (length < 18) return false; type = BinaryPrimitives.ReadUInt16BigEndian(packet[16..]); ip += 4; }
+            if (type == 0x86dd) return IPv6(packet, ip, out segment);
             if (type != 0x0800) return false;
         }
+        // Loopback and raw IP say the version in the header's first four bits.
+        else if (length > ip && packet[ip] >> 4 == 6) return IPv6(packet, ip, out segment);
         return IPv4(packet, ip, out segment);
+    }
+    // At most this many extension headers before TCP; more is no game packet.
+    private const int ExtensionHeaders = 8;
+    // The fixed 40-byte header, then the extension headers that may come before TCP: hop-by-hop
+    // options (0), routing (43), destination options (60), authentication (51) and a fragment
+    // header (44) that is the whole packet (offset 0, no more fragments). Anything else (ESP, a
+    // real fragment, no next header, a jumbogram) is not read.
+    private static bool IPv6(ReadOnlySpan<byte> packet, int ip, out TcpSegment segment)
+    {
+        segment = default;
+        if (packet.Length < ip + 40 || packet[ip] >> 4 != 6) return false;
+        var payloadLength = BinaryPrimitives.ReadUInt16BigEndian(packet[(ip + 4)..]);
+        var end = ip + 40 + payloadLength;
+        if (payloadLength == 0 || end > packet.Length) return false;
+        var next = packet[ip + 6]; var at = ip + 40;
+        for (var headers = 0; next != 6; headers++)
+        {
+            if (headers == ExtensionHeaders || at + 8 > end) return false;
+            int length;
+            switch (next)
+            {
+                case 0 or 43 or 60: length = (packet[at + 1] + 1) * 8; break;
+                case 51: length = (packet[at + 1] + 2) * 4; break;
+                case 44 when (BinaryPrimitives.ReadUInt16BigEndian(packet[(at + 2)..]) & 0xfff9) == 0: length = 8; break;
+                default: return false;
+            }
+            next = packet[at]; at += length;
+        }
+        var tcp = at;
+        if (tcp + 20 > end) return false;
+        var tcpLength = (packet[tcp + 12] >> 4) * 4;
+        if (tcpLength < 20 || tcp + tcpLength > end) return false;
+        var flow = new TcpFlow(FlowAddress.FromIPv6(packet.Slice(ip + 24, 16)), BinaryPrimitives.ReadUInt16BigEndian(packet[(tcp + 2)..]), FlowAddress.FromIPv6(packet.Slice(ip + 8, 16)), BinaryPrimitives.ReadUInt16BigEndian(packet[tcp..]));
+        segment = new(flow, BinaryPrimitives.ReadUInt32BigEndian(packet[(tcp + 4)..]), packet[tcp + 13], tcp + tcpLength, end - tcp - tcpLength);
+        return true;
     }
     private static bool IPv4(ReadOnlySpan<byte> packet, int ip, out TcpSegment segment)
     {

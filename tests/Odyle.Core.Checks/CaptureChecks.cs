@@ -28,7 +28,8 @@ static class CaptureChecks
         Pinned();
         Flows();
         IPv4Packets();
-        Console.WriteLine("Pinned decoder trace, connection address and IPv4 packet checks passed.");
+        IPv6Packets();
+        Console.WriteLine("Pinned decoder trace, connection address, IPv4 and IPv6 packet checks passed.");
     }
     // Connections are compared as numbers: an IPv4 packet and the IPv4-mapped row of a dual-mode
     // socket name the same connection, a real IPv6 address does not.
@@ -112,6 +113,70 @@ static class CaptureChecks
         var ip = new byte[20 + ipOptions]; ip[0] = (byte)(0x40 | (20 + ipOptions) / 4); BinaryPrimitives.WriteUInt16BigEndian(ip.AsSpan(2), (ushort)(ip.Length + tcp.Length + payload.Length));
         BinaryPrimitives.WriteUInt16BigEndian(ip.AsSpan(6), fragment); ip[8] = 64; ip[9] = 6; source.CopyTo(ip, 12); destination.CopyTo(ip, 16);
         return [.. Link(link, 0x0800, vlan), .. ip, .. tcp, .. payload, .. new byte[padding]];
+    }
+    // The game over IPv6 (#94): the fixed header, the extension headers that may come before TCP, and
+    // everything else refused; then a login read end to end from IPv6 packets.
+    static void IPv6Packets()
+    {
+        const string client = "2001:db8::2", server = "2001:db8:ffff::5";
+        var game = new TcpFlow(client, 50000, server, 13328); var data = "game bytes"u8.ToArray();
+        bool Reads(byte[] packet, int link = 1) => TcpPacket.TryParse(packet, link, out var segment) && segment.Flow == game && segment.Sequence == 0x0a0b0c0d && segment.Flags == 0x18 && packet.AsSpan(segment.PayloadOffset, segment.PayloadLength).SequenceEqual(data);
+        byte[] Packet((byte Type, int Length, ushort Fragment)[]? extensions = null, int link = 1, bool vlan = false, int padding = 0, int? claimed = null, byte last = 6, int tcpOptions = 0) =>
+            IPv6(link, server, client, 13328, 50000, 0x0a0b0c0d, 0x18, data, extensions ?? [], vlan, padding, claimed, last, tcpOptions);
+        foreach (var link in new[] { 1, 0, 108, 12, 101 }) Expect(Reads(Packet(link: link), link), $"an IPv6 segment on link type {link}");
+        Expect(Reads(Packet(vlan: true, padding: 10, tcpOptions: 12)), "VLAN, TCP options and Ethernet padding");
+        Expect(Reads(Packet([(0, 8, 0)])) && Reads(Packet([(60, 16, 0)])) && Reads(Packet([(43, 24, 0)])) && Reads(Packet([(51, 24, 0)])) && Reads(Packet([(44, 8, 0)])), "hop-by-hop, destination options, routing, authentication and an atomic fragment header");
+        Expect(Reads(Packet([(0, 8, 0), (60, 8, 0), (43, 16, 0), (44, 8, 0x0006), (51, 12, 0), (60, 2040, 0)])), "a chain of extension headers before TCP");
+        Expect(!Reads(Packet([(44, 8, 0x0001)])) && !Reads(Packet([(44, 8, 0x0008)])) && !Reads(Packet([(44, 8, 0xfff8)])), "a first, middle or last fragment is not read");
+        Expect(!Reads(Packet([(0, 8, 0)], last: 50)) && !Reads(Packet(last: 17)) && !Reads(Packet([(60, 8, 0)], last: 59)), "ESP, UDP and no next header are not read");
+        Expect(!Reads(Packet([.. Enumerable.Repeat(((byte)60, 8, (ushort)0), 9)])) && Reads(Packet([.. Enumerable.Repeat(((byte)60, 8, (ushort)0), 8)])), "at most eight extension headers");
+        var full = Packet([(0, 16, 0)]);
+        Expect(!Reads(Packet(claimed: 0)) && !Reads(Packet(claimed: 40 + data.Length)) && !Reads(full[..^1]) && !Reads(full[..(14 + 40 + 4)]) && !Reads(full[..(14 + 39)]), "a jumbogram, a length beyond the capture and truncated headers are not read");
+        var badTcp = Packet(); badTcp[14 + 40 + 12] = 0x40; Expect(!Reads(badTcp), "a TCP header shorter than 20 bytes is not read");
+        var four = Packet(); four[14] = 0x45; Expect(!TcpPacket.TryParse(four, 1, out _), "an IPv6 ethertype with an IPv4 header is not read");
+        // Random damage to IPv6 packets never throws, and whatever is read lies inside the packet.
+        var random = new Random(94);
+        for (var round = 0; round < 20000; round++)
+        {
+            var link = new[] { 1, 0, 108, 12, 101 }[random.Next(5)];
+            var extensions = Enumerable.Range(0, random.Next(0, 5)).Select(_ => (new byte[] { 0, 43, 44, 51, 60 }[random.Next(5)], random.Next(1, 6) * 8, (ushort)(random.Next(4) == 0 ? random.Next(65536) : 0))).ToArray();
+            var payload = new byte[random.Next(0, 80)]; random.NextBytes(payload);
+            var packet = IPv6(link, server, client, 13328, (ushort)random.Next(65536), (uint)random.Next(), (byte)random.Next(256), payload, extensions, link == 1 && random.Next(4) == 0, random.Next(3) == 0 ? random.Next(1, 20) : 0, null, 6, random.Next(3) == 0 ? random.Next(1, 11) * 4 : 0);
+            for (var damage = random.Next(4); damage > 0; damage--) packet[random.Next(packet.Length)] = (byte)random.Next(256);
+            if (random.Next(6) == 0) packet = packet[..random.Next(packet.Length + 1)];
+            if (TcpPacket.TryParse(packet, link, out var segment)) Expect(segment.PayloadOffset >= 0 && segment.PayloadLength >= 0 && segment.PayloadOffset + segment.PayloadLength <= packet.Length, $"IPv6 packet {round} stays inside the packet");
+        }
+        // A login over IPv6, split into packets: parsed, then read like any other connection.
+        var statuses = new List<CaptureStatus>(); var candidates = new List<int>(); var named = new List<string>();
+        var streams = new GameStreams(decoder => { decoder.Candidate += c => candidates.Add(c.Total); decoder.IdentityObserved += i => named.Add(i.CharacterName); }, (kind, _) => statuses.Add(kind));
+        byte[] login = [.. F(Identity(Own, "Hero")), .. F(Bundle(F([0x0b, 0x61, 1, .. Stat(0x0c, Odyle, 100, 50)]))),0x06, 0x00, 0x36, .. F(Update(0, Stat(0x08, Odyle, 0, 140)))];
+        const uint isn = 4000; var packets = new List<byte[]> { IPv6(1, server, client, 13328, 50000, isn, 0x12, [], [], false, 0, null, 6, 0) };
+        for (var at = 0; at < login.Length; at += 17) packets.Add(IPv6(1, server, client, 13328, 50000, isn + 1 + (uint)at, 0x18, login[at..Math.Min(login.Length, at + 17)], at % 34 == 0 ? [(0, 8, 0)] : [], false, 0, null, 6, 0));
+        (packets[2], packets[3]) = (packets[3], packets[2]);
+        foreach (var packet in packets)
+        {
+            Expect(TcpPacket.TryParse(packet, 1, out var segment) && segment.Flow == game, "every packet of the IPv6 login parses");
+            streams.Feed(segment.Flow, segment.Sequence, segment.Flags, packet.AsSpan(segment.PayloadOffset, segment.PayloadLength));
+        }
+        Expect(candidates.SequenceEqual([150, 140]) && named.SequenceEqual(["Hero"]) && statuses.SequenceEqual([CaptureStatus.Listening]), "a login over IPv6 is read: " + string.Join(",", candidates));
+    }
+    // Extension headers in order, each (type, length in bytes, fragment field), then `last` (TCP is 6).
+    static byte[] IPv6(int link, string source, string destination, ushort sourcePort, ushort destinationPort, uint sequence, byte flags, byte[] payload, (byte Type, int Length, ushort Fragment)[] extensions, bool vlan, int padding, int? claimed, byte last, int tcpOptions)
+    {
+        var chain = new List<byte>();
+        for (var i = 0; i < extensions.Length; i++)
+        {
+            var (type, length, fragment) = extensions[i]; var next = i + 1 < extensions.Length ? extensions[i + 1].Type : last;
+            var header = new byte[type == 44 ? 8 : length]; header[0] = next;
+            if (type == 44) BinaryPrimitives.WriteUInt16BigEndian(header.AsSpan(2), fragment);
+            else header[1] = (byte)(type == 51 ? length / 4 - 2 : length / 8 - 1);
+            chain.AddRange(header);
+        }
+        byte[] upper = [.. Tcp(sourcePort, destinationPort, sequence, flags, tcpOptions), .. payload];
+        var ip = new byte[40]; ip[0] = 0x60; BinaryPrimitives.WriteUInt16BigEndian(ip.AsSpan(4), (ushort)(claimed ?? chain.Count + upper.Length));
+        ip[6] = extensions.Length > 0 ? extensions[0].Type : last; ip[7] = 64;
+        System.Net.IPAddress.Parse(source).GetAddressBytes().CopyTo(ip, 8); System.Net.IPAddress.Parse(destination).GetAddressBytes().CopyTo(ip, 24);
+        return [.. Link(link, 0x86dd, vlan), .. ip, .. chain, .. upper, .. new byte[padding]];
     }
     static void Pinned()
     {

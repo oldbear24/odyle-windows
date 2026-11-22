@@ -133,7 +133,6 @@ public static class Czech
         ["Npcap lets only administrators capture · reinstall it without “Restrict Npcap driver's access to Administrators only”."] = "Npcap dovoluje zachytávat jen správcům · přeinstaluj ho bez volby „Restrict Npcap driver's access to Administrators only“.",
         ["Npcap shows this Windows account no network interface · if it was installed for administrators only, reinstall it without that option."] = "Npcap tomuto účtu Windows neukazuje žádné síťové rozhraní · pokud byl nainstalovaný jen pro správce, přeinstaluj ho bez této volby.",
         ["Npcap is installed · pair Odyle in settings to read the game."] = "Npcap je nainstalovaný · spáruj Odyle v nastavení a může číst hru.",
-        ["AION2 connects to the game server over IPv6, which the reader cannot read yet."] = "AION2 se k hernímu serveru připojuje přes IPv6, které čtečka zatím neumí číst.",
         ["The game connection runs through {0}, not AION2 · an accelerator or proxy hides it from the reader."] = "Herní spojení vede přes {0}, ne přes AION2 · akcelerátor nebo proxy ho před čtečkou skrývá.",
         ["AION2 is connected, but not on the game port 13328 (ports {0}) · the reader only reads 13328."] = "AION2 je připojené, ale ne na herním portu 13328 (porty {0}) · čtečka čte jen 13328.",
         ["Start Odyle with Windows? It waits in the tray, so the reader runs before you log into the game."] = "Spouštět Odyle se systémem Windows? Počká v oznamovací oblasti, takže čtečka poběží už před přihlášením do hry.",

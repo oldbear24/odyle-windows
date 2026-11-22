@@ -9,10 +9,10 @@ static class SetupChecks
         Check(GameConnection.IsGameProcess("AION2") && GameConnection.IsGameProcess("aion2-win64-shipping") && GameConnection.IsGameProcess("AION-2") && !GameConnection.IsGameProcess("Aion") && !GameConnection.IsGameProcess("Discord"), "the game's process names");
         TcpConnection Game(ushort port, bool ipv6 = false) => new(true, "AION2", port, ipv6);
         Check(GameConnection.Explain([]) is null && GameConnection.Explain([Game(443), Game(80)]) is null, "web connections alone say nothing");
-        Check(GameConnection.Explain([Game(443), Game(GameConnection.Port, ipv6: true)]) == "AION2 connects to the game server over IPv6, which the reader cannot read yet.", "an IPv6 game connection is named");
+        Check(GameConnection.Explain([Game(443), Game(GameConnection.Port, ipv6: true)]) is null, "an IPv6 game connection is read, so it is no reason");
         Check(GameConnection.Explain([Game(443), new(false, "ExitLag", GameConnection.Port, false)]) == "The game connection runs through ExitLag, not AION2 · an accelerator or proxy hides it from the reader.", "another program on the game port is named");
         Check(GameConnection.Explain([Game(443), Game(7001), Game(7000), Game(7001), Game(9000), Game(9100)]) == "AION2 is connected, but not on the game port 13328 (ports 7000, 7001, 9000) · the reader only reads 13328.", "other game ports are listed, at most three");
-        Check(GameConnection.Explain([Game(7000), Game(GameConnection.Port, ipv6: true), new(false, "ExitLag", GameConnection.Port, false)])!.Contains("IPv6"), "IPv6 is the first reason");
+        Check(GameConnection.Explain([Game(7000), Game(GameConnection.Port, ipv6: true), new(false, "ExitLag", GameConnection.Port, false)])!.Contains("ExitLag"), "another program on the game port comes before other ports");
         Check(GameConnection.MappedIPv4(System.Net.IPAddress.Parse("::ffff:203.0.113.5").GetAddressBytes())?.ToString() == "203.0.113.5" && GameConnection.MappedIPv4(System.Net.IPAddress.Parse("2001:db8::5").GetAddressBytes()) is null && GameConnection.MappedIPv4(System.Net.IPAddress.Parse("::5").GetAddressBytes()) is null && GameConnection.MappedIPv4(new byte[4]) is null, "an IPv4-mapped row of the IPv6 table is IPv4, a real IPv6 address is not");
 
         // The report masks the account id, this PC's name and the Windows user folder besides what the log masks.
