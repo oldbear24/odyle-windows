@@ -26,7 +26,92 @@ static class CaptureChecks
     public static void Run()
     {
         Pinned();
-        Console.WriteLine("Pinned decoder trace checks passed.");
+        Flows();
+        IPv4Packets();
+        Console.WriteLine("Pinned decoder trace, connection address and IPv4 packet checks passed.");
+    }
+    // Connections are compared as numbers: an IPv4 packet and the IPv4-mapped row of a dual-mode
+    // socket name the same connection, a real IPv6 address does not.
+    static void Flows()
+    {
+        var game = new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328);
+        Expect(game == new TcpFlow("::ffff:10.0.0.2", 50000, "::ffff:203.0.113.5", 13328) && game.Local.IsIPv4 && game.Remote.ToString() == "203.0.113.5", "an IPv4-mapped address is the IPv4 address");
+        Expect(game == new TcpFlow(FlowAddress.FromIPv4([10, 0, 0, 2]), 50000, FlowAddress.FromIPv4([203, 0, 113, 5]), 13328) && game.GetHashCode() == new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328).GetHashCode(), "addresses from packet bytes equal parsed ones");
+        var six = new TcpFlow("2001:db8::2", 50000, "2001:db8:ffff::5", 13328);
+        Expect(six != game && !six.Local.IsIPv4 && six.Remote.ToString() == "2001:db8:ffff::5" && six == new TcpFlow(FlowAddress.FromIPv6(System.Net.IPAddress.Parse("2001:db8::2").GetAddressBytes()), 50000, FlowAddress.Parse("2001:db8:ffff::5"), 13328), "an IPv6 address is its own");
+        Expect(new TcpFlow("::5", 1, "::6", 2) != new TcpFlow("0.0.0.5", 1, "0.0.0.6", 2), "an IPv4-compatible IPv6 address is not IPv4");
+        Expect(game != game with { LocalPort = 50001 } && new[] { six, game }.Contains(new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328)), "ports count and arrays find flows by value");
+    }
+    // The parser moved out of the capture loop (#85): for every IPv4 packet it answers exactly what
+    // the loop's inline parser of 0.36.1 answered (LegacyParse, copied verbatim), over valid packets
+    // of every link type and random damage to them.
+    static void IPv4Packets()
+    {
+        byte[] client = [10, 0, 0, 2], server = [203, 0, 113, 5];
+        var data = "game bytes"u8.ToArray();
+        foreach (var link in new[] { 1, 0, 108, 12, 101 })
+        {
+            var packet = IPv4(link, server, client, 13328, 50000, 0x01020304, 0x18, data);
+            Expect(TcpPacket.TryParse(packet, link, out var segment) && segment.Flow == new TcpFlow("10.0.0.2", 50000, "203.0.113.5", 13328) && segment.Sequence == 0x01020304 && segment.Flags == 0x18
+                && packet.AsSpan(segment.PayloadOffset, segment.PayloadLength).SequenceEqual(data), $"an IPv4 segment on link type {link}");
+        }
+        Expect(TcpPacket.TryParse(IPv4(1, server, client, 13328, 50000, 7, 0x12, [], vlan: true, ipOptions: 8, tcpOptions: 12, padding: 6), 1, out var tagged) && tagged.PayloadLength == 0 && tagged.Flags == 0x12, "VLAN, IP and TCP options, Ethernet padding");
+        Expect(!TcpPacket.TryParse(IPv4(1, server, client, 13328, 50000, 7, 0x18, data, fragment: 0x2000), 1, out _) && !TcpPacket.TryParse(IPv4(1, server, client, 13328, 50000, 7, 0x18, data, fragment: 0x0010), 1, out _), "fragments are not read");
+        Expect(!TcpPacket.TryParse(IPv4(1, server, client, 13328, 50000, 7, 0x18, data), 113, out _), "an unsupported link type is not read");
+        var random = new Random(20261122); var read = 0;
+        for (var round = 0; round < 20000; round++)
+        {
+            var link = new[] { 1, 0, 108, 12, 101 }[random.Next(5)];
+            var payload = new byte[random.Next(0, 100)]; random.NextBytes(payload);
+            var packet = IPv4(link, server, client, (ushort)random.Next(65536), (ushort)random.Next(65536), (uint)random.Next(), (byte)random.Next(256), payload,
+                vlan: link == 1 && random.Next(4) == 0, ipOptions: random.Next(3) == 0 ? random.Next(1, 11) * 4 : 0, tcpOptions: random.Next(3) == 0 ? random.Next(1, 11) * 4 : 0, fragment: random.Next(10) == 0 ? (ushort)random.Next(65536) : (ushort)0, padding: random.Next(3) == 0 ? random.Next(1, 30) : 0);
+            for (var damage = random.Next(4); damage > 0; damage--) packet[random.Next(Math.Min(packet.Length, 80))] = (byte)random.Next(256);
+            if (random.Next(6) == 0) packet = packet[..random.Next(packet.Length + 1)];
+            var legacy = LegacyParse(packet, link);
+            var parsed = TcpPacket.TryParse(packet, link, out var segment);
+            if (parsed && !segment.Flow.Local.IsIPv4) continue; // An IPv6 packet, which 0.36.1 never read.
+            Expect(parsed == legacy is not null, $"IPv4 packet {round}: read {parsed}, before {legacy is not null}");
+            if (legacy is not { } old) continue;
+            read++;
+            Expect(segment.Flow.Local.ToString() == old.Destination && segment.Flow.LocalPort == old.DestinationPort && segment.Flow.Remote.ToString() == old.Source && segment.Flow.RemotePort == old.SourcePort
+                && segment.Sequence == old.Sequence && segment.Flags == old.Flags && packet.AsSpan(segment.PayloadOffset, segment.PayloadLength).SequenceEqual(old.Payload), $"IPv4 packet {round} reads as before");
+        }
+        Expect(read is > 5000 and < 15000, $"the damaged packets are read and refused alike ({read} of 20000 read)");
+    }
+    // The capture loop's parser of 0.36.1 (PacketCapture.Receive), verbatim but for returning instead of continuing.
+    static (string Destination, ushort DestinationPort, string Source, ushort SourcePort, uint Sequence, byte Flags, byte[] Payload)? LegacyParse(byte[] bytes, int linkType)
+    {
+        var length = bytes.Length;
+        var ip = linkType == 1 ? 14 : linkType is 0 or 108 ? 4 : 0;
+        if (linkType == 1) { if (length < 14) return null; var type = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(12)); if (type is 0x8100 or 0x88a8) { if (length < 18) return null; type = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(16)); ip += 4; } if (type != 0x0800) return null; }
+        if (length < ip + 20 || bytes[ip] >> 4 != 4 || bytes[ip + 9] != 6 || (BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(ip + 6)) & 0x3fff) != 0) return null;
+        var ipLength = (bytes[ip] & 15) * 4; var total = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(ip + 2)); var tcp = ip + ipLength;
+        if (ipLength < 20 || total < ipLength + 20 || ip + total > length) return null;
+        var tcpLength = (bytes[tcp + 12] >> 4) * 4; if (tcpLength < 20 || ipLength + tcpLength > total) return null;
+        var source = new System.Net.IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new System.Net.IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
+        var flags = bytes[tcp + 13];
+        return (destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)), BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), flags, bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength).ToArray());
+    }
+    // The link header: Ethernet (with a VLAN tag if asked), the loopback family or nothing for raw IP.
+    static byte[] Link(int link, ushort type, bool vlan) => link switch
+    {
+        1 => [.. new byte[] { 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 2 }, .. vlan ? new byte[] { 0x81, 0x00, 0x00, 0x05 } : [], (byte)(type >> 8), (byte)type],
+        0 or 108 => type == 0x86dd ? [23, 0, 0, 0] : [2, 0, 0, 0],
+        _ => [],
+    };
+    static byte[] Tcp(ushort sourcePort, ushort destinationPort, uint sequence, byte flags, int options)
+    {
+        var tcp = new byte[20 + options]; BinaryPrimitives.WriteUInt16BigEndian(tcp, sourcePort); BinaryPrimitives.WriteUInt16BigEndian(tcp.AsSpan(2), destinationPort);
+        BinaryPrimitives.WriteUInt32BigEndian(tcp.AsSpan(4), sequence); tcp[12] = (byte)((20 + options) / 4 << 4); tcp[13] = flags; tcp[14] = 0xff;
+        for (var i = 20; i < tcp.Length; i++) tcp[i] = 1;
+        return tcp;
+    }
+    static byte[] IPv4(int link, byte[] source, byte[] destination, ushort sourcePort, ushort destinationPort, uint sequence, byte flags, byte[] payload, bool vlan = false, int ipOptions = 0, int tcpOptions = 0, ushort fragment = 0, int padding = 0)
+    {
+        var tcp = Tcp(sourcePort, destinationPort, sequence, flags, tcpOptions);
+        var ip = new byte[20 + ipOptions]; ip[0] = (byte)(0x40 | (20 + ipOptions) / 4); BinaryPrimitives.WriteUInt16BigEndian(ip.AsSpan(2), (ushort)(ip.Length + tcp.Length + payload.Length));
+        BinaryPrimitives.WriteUInt16BigEndian(ip.AsSpan(6), fragment); ip[8] = 64; ip[9] = 6; source.CopyTo(ip, 12); destination.CopyTo(ip, 16);
+        return [.. Link(link, 0x0800, vlan), .. ip, .. tcp, .. payload, .. new byte[padding]];
     }
     static void Pinned()
     {

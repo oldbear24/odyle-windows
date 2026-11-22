@@ -3,8 +3,6 @@ using static Odyle.Core.Localizer;
 namespace Odyle.Core;
 // Resyncing: a connection lost bytes and waits for the next heartbeat; Resumed: it is read again.
 public enum CaptureStatus { Waiting, Listening, Midstream, Resumed, Problem, Resyncing, TwoClients }
-// One TCP connection of the game as this PC receives it: Local is this PC, Remote the game server.
-public sealed record TcpFlow(string Local, ushort LocalPort, string Remote, ushort RemotePort);
 // The game's connections seen on one capture interface: reassembly and decoding per
 // connection. Feed answers how many payload bytes reached a decoder, and only those
 // count as game traffic, so 20 seconds without decodable bytes mark a value stale.
