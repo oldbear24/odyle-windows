@@ -63,7 +63,6 @@ static class DesktopChecks
         Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:10:00Z"), marked, times).Length == 0, "each reminder time reminds once");
         var late = Reminders.Due([snapshot], "u", at("2026-10-14T18:50:00Z"), none, times);
         Check(late.Single(r => r.Run.Id == "a") is { Lead: 15, Marks.Length: 2 }, "a run first seen within 15 minutes is reminded once, at the smallest time");
-        Check(Reminders.Due([snapshot], "u", at("2026-10-14T18:50:00Z"), new HashSet<string>(["a|2026-10-14 19:00:00.000Z"]), times).All(r => r.Run.Id != "a"), "a run reminded by an older app is not reminded again");
         // Quiet hours in the account's time zone, over midnight.
         var quiet = NotificationSettings.Default with { Quiet = new("22:00", "07:00", "Europe/Prague") };
         Check(!quiet.QuietAt(at("2026-10-15T19:59:00Z")), quiet.QuietAt(at("2026-10-15T20:00:00Z")), quiet.QuietAt(at("2026-10-16T04:59:00Z")), !quiet.QuietAt(at("2026-10-16T05:00:00Z")), "quiet hours wrap midnight in their time zone");

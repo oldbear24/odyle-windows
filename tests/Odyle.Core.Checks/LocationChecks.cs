@@ -19,7 +19,7 @@ static class LocationChecks
     }
     static void Frames()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<GameLocation>(); decoder.LocationObserved += seen.Add;
+        var decoder = new OdyleDecoder(); var seen = new List<GameLocation>(); decoder.LocationObserved += seen.Add;
         decoder.Feed(Frame(MapLoad(1110, -83475.7f, -33883.7f, 19698f, 113.4f)));
         Check(seen.Single() is { Map: 1110, Source: GameLocation.Load } l && Near(l.X, -83475.7f) && Near(l.Y, -33883.7f) && Near(l.Z, 19698f) && l.Heading is { } h && Near(h, 113.4f), "a world load names its map, position and heading");
         decoder.Feed(Frame([0xf3, .. MapLoad(600001, 100, 200, 300, -137.5f)]));
@@ -61,7 +61,7 @@ static class LocationChecks
             decoder.Feed(Frame([.. opcode, .. body]));
         }
         var trace = new DecoderTrace(); trace.Location(seen[0]); trace.Location(seen[0]); trace.Location(seen.Last(l => l.Source == GameLocation.Flight)); trace.Location(seen.Last(l => l.Source == GameLocation.Effect));
-        using var json = JsonDocument.Parse(trace.ToJson("0.28.0", ExperimentalOdyleDecoder.Version));
+        using var json = JsonDocument.Parse(trace.ToJson("0.28.0", OdyleDecoder.Version));
         var counts = json.RootElement.GetProperty("locations");
         Check(counts.GetProperty("load").GetInt64() == 2, counts.GetProperty("flight").GetInt64() == 1, counts.GetProperty("effect").GetInt64() == 1, !trace.ToJson("0.28.0", "x").Contains("83475"), "the trace counts positions without keeping them");
     }

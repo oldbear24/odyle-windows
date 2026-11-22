@@ -68,7 +68,7 @@ static partial class ReaderChecks
             return request.RequestUri.AbsolutePath switch
             {
                 "/api/odyle/heartbeat" when busy => Json(HttpStatusCode.TooManyRequests, """{"status":429,"message":"Too Many Requests."}""", "2"),
-                "/api/odyle/heartbeat" => Json(HttpStatusCode.OK, """{"serverNow":"2026-11-22 12:00:00.000Z"}"""),
+                "/api/odyle/heartbeat" => Json(HttpStatusCode.OK, """{"serverNow":"2026-11-22 12:00:00.000Z","serverVersion":"1.0.0"}"""),
                 "/api/odyle/desktop-sign-in" => Json(HttpStatusCode.TooManyRequests, """{"status":429,"message":"Too Many Requests."}""", "120"),
                 _ => Json(HttpStatusCode.OK, "{}"),
             };
@@ -184,7 +184,7 @@ static partial class ReaderChecks
         Connect(window, new Answering(request => { if (request.RequestUri!.AbsolutePath == "/api/odyle/invalidate") invalidations++; return Json(HttpStatusCode.OK, "{}"); }));
         Field("capture").SetValue(window, new PacketCapture()); Field("activeCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("currentCharacterId").SetValue(window, "c1");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
-        window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304"; window.Attribution.Latest = new PacketCandidate(390, ExperimentalOdyleDecoder.Version);
+        window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304"; window.Attribution.Latest = new PacketCandidate(390, OdyleDecoder.Version);
         Ended = null;
         await (Task)Call(window, "QuitAsync", true)!;
         Check(Ended == (true, true) && invalidations == 0 && HandoverStore.Take(DateTimeOffset.UtcNow) is { CharacterId: "c1", Total: 390 }, "a restart hands the live character over and does not mark it stale");

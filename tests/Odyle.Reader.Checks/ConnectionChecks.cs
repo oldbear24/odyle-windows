@@ -69,7 +69,7 @@ static partial class ReaderChecks
         Check(((string)Call(window, "DiagnosticsReport")!).Contains("Account: paired · 127.0.0.1 · not reached yet") && window.Link.Endpoint == "http://127.0.0.1:1", "what is typed in the address box meanwhile is not the pairing's server");
         // Offline the character the game names is followed as online and its reading shown; both wait for the server.
         var offlineCapture = new PacketCapture(); Field("capture").SetValue(window, offlineCapture);
-        Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
+        Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineCapture, new GameIdentity(7, "OfflineHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Check(Field("pendingIdentity").GetValue(window) is not null && window.Attribution.OwnerKey == "OfflineHero|2304", "the named character is followed and kept for the server");
         Check(Control<TextBlock>(window, "HeroTitle").Text == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");
@@ -89,7 +89,11 @@ static partial class ReaderChecks
         window.Link.Api = api;
         await (Task)Call(window, "ConnectAsync", auth)!;
         Check((await api.GetCharactersAsync()).Length == 0, "test account starts empty");
-        Check(Control<TextBlock>(window, "StatusLabel").Text == "", "once connected the footer says nothing: " + Control<TextBlock>(window, "StatusLabel").Text);
+        // A backend on dashboard 1.0.0 or later names its version (its test build answers "test"); one that forgot
+        // the field would show every player the older-server notice, so this run needs it.
+        Check(api.ServerVersion is not null, "the server names its version in its answers (serverVersion, dashboard 1.0.0 or later)");
+        // A backend on dashboard 1.0.0 or later names its version; before that the footer says the server runs an older Odyle.
+        Check(Control<TextBlock>(window, "StatusLabel").Text == (ServerVersions.Outdated(api.ServerVersion) ? OlderServerNotice : ""), "once connected the footer says nothing (dashboard " + (api.ServerVersion ?? "before 1.0.0") + "): " + Control<TextBlock>(window, "StatusLabel").Text);
         Check(Control<Button>(window, "ReportButton").Content as string == "Start", "a paired account can start the reader");
         var capture = new PacketCapture(); Field("capture").SetValue(window, capture);
         var detected = new GameIdentity(42, "DetectedHero", 2304, "Lumiel", "GLOBAL_EU");

@@ -43,10 +43,15 @@ public static class GameGroups
     // own gives its name, a character name as GameIdentity.TryName reads one, each once, at most
     // TeammatesLimit. Their entity ids, account GUIDs, character ids, legions and the rest are never
     // read. Empty for anything else, and for a roster that does not list the own entity.
-    public static IReadOnlyList<string> Teammates(ReadOnlySpan<byte> frame, ulong? own)
+    public static IReadOnlyList<string> Teammates(ReadOnlySpan<byte> frame, ulong? own) =>
+        own is { } id && IsRoster(frame) && Read(frame, id) is { } roster ? TeammatesOf(frame, roster) : [];
+    // The same for a frame Read already took as the own roster (roster is what it answered), without
+    // reading the frame a second time; empty for the other events.
+    public static IReadOnlyList<string> TeammatesOf(ReadOnlySpan<byte> frame, GameGroupEvent roster) =>
+        roster.Change is GroupChange.Party or GroupChange.Force && IsRoster(frame) ? Names(frame[2..], roster.Owner) : [];
+    private static List<string> Names(ReadOnlySpan<byte> p, ulong id)
     {
-        if (own is not { } id || !IsRoster(frame) || Read(frame, id) is null) return [];
-        var p = frame[2..]; var names = new List<string>();
+        var names = new List<string>();
         for (var i = 9; i + 9 + GuidLength + 8 < p.Length && names.Count < TeammatesLimit; i++)
         {
             if (p[i + 8] != GuidLength || !Guid(p.Slice(i + 9, GuidLength))) continue;

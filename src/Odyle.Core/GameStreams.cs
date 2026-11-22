@@ -12,14 +12,14 @@ public enum CaptureStatus { Waiting, Listening, Midstream, Resumed, Problem, Res
 // knows. The lost bytes may have held a character switch, so the status says Resyncing and
 // the app holds the next reading until the game names its character. More than five resyncs in a minute block the connection until it closes, so a
 // changed protocol shows up as a problem instead of a loop.
-public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<CaptureStatus, string> status)
+public sealed class GameStreams(Action<OdyleDecoder> attach, Action<CaptureStatus, string> status)
 {
     private static readonly TimeSpan GapLimit = TimeSpan.FromSeconds(3), ResyncWindow = TimeSpan.FromMinutes(1);
     private const int ResyncLimit = 5;
     private sealed class Stream(bool aligned)
     {
         public readonly TcpReceiveStream Tcp = new();
-        public readonly ExperimentalOdyleDecoder Decoder = new(aligned);
+        public readonly OdyleDecoder Decoder = new(aligned);
         public readonly Queue<DateTimeOffset> Resyncs = new();
         public bool Blocked, Resyncing;
         // Bytes of the current segment that reached the decoder.

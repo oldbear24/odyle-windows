@@ -8,7 +8,7 @@ static class PacketChecks
     // Synthetic protocol fixtures exercise transport and confidence behavior; they are not
     // captures. The stat fixtures rebuild the shapes the owner's decoder log recorded on
     // Global (EU Lumiel, 2026-10-14 and 15): record layout, resource ids and values.
-    const uint Odyle = ExperimentalOdyleDecoder.OdyleResource, Counter = 80000001;
+    const uint Odyle = OdyleDecoder.OdyleResource, Counter = 80000001;
     static readonly byte[] Tags = [0x00, 0x04, 0x08, 0x0c];
     public static void Run()
     {
@@ -71,15 +71,15 @@ static class PacketChecks
         Check(!StatRecord.TryRead(new byte[] { 0x10, 1, 0x87, 0x93, 3, 5 }, ref at, out _), at == 0, "an unknown tag is not a record");
         Check(!StatRecord.TryRead(new byte[] { 0x0c, 1, 0x87, 0x93, 3, 0x85 }, ref at, out _), at == 0, "a truncated value is not a record");
         Check(!StatRecord.TryRead(new byte[] { 0x04, 1, 0x87, 0x93, 3, 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _), at == 0, "an oversized value is not a record");
-        Check(!ExperimentalOdyleDecoder.TryVarint(new byte[] { 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _), at == 0, "an oversized varint answers false instead of throwing");
+        Check(!OdyleDecoder.TryVarint(new byte[] { 0xff, 0xff, 0xff, 0xff, 0xff, 1 }, ref at, out _), at == 0, "an oversized varint answers false instead of throwing");
     }
     static void Snapshots()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<PacketCandidate>(); var observed = new List<OdyleSnapshotObservation>(); var missing = 0;
+        var decoder = new OdyleDecoder(); var seen = new List<PacketCandidate>(); var observed = new List<OdyleSnapshotObservation>(); var missing = 0;
         decoder.Candidate += seen.Add; decoder.SnapshotObserved += observed.Add; decoder.SnapshotWithoutOdyle += () => missing++;
         // The snapshot after a teleport: Odyle 15 + 940 and the second counter 3 + 1 among other stats.
         decoder.Feed(Frame(Snapshot(Filler(0), Stat(0x0c, Odyle, 15, 940), Filler(1), Stat(0x0c, Counter, 3, 1), Filler(2))));
-        Check(seen.Single() is { Total: 955, Base: 15, Bonus: 940, Source: CandidateSource.Snapshot, ParserVersion: ExperimentalOdyleDecoder.Version }, observed.Single() is { Records: 5, Read: true, Fields: [{ Tag: 0x0c, Base: 15, Bonus: 940 }] }, missing == 0, "a two-field snapshot reads resource 60000001 only");
+        Check(seen.Single() is { Total: 955, Base: 15, Bonus: 940, Source: CandidateSource.Snapshot, ParserVersion: OdyleDecoder.Version }, observed.Single() is { Records: 5, Read: true, Fields: [{ Tag: 0x0c, Base: 15, Bonus: 940 }] }, missing == 0, "a two-field snapshot reads resource 60000001 only");
         // The login snapshot with no base: tag 08, whatever byte comes before it.
         decoder.Feed(Frame(Snapshot(Stat(0x04, 10000001, 7), Stat(0x08, Odyle, 0, 390))));
         Check(seen.Last() is { Total: 390, Base: 0, Bonus: 390 }, "0 + 390 (bonus only)");
@@ -114,7 +114,7 @@ static class PacketChecks
     }
     static void Updates()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<PacketCandidate>(); var updates = new List<OdyleUpdateObservation>();
+        var decoder = new OdyleDecoder(); var seen = new List<PacketCandidate>(); var updates = new List<OdyleUpdateObservation>();
         decoder.Candidate += seen.Add; decoder.UpdateObserved += updates.Add;
         // No snapshot needed (a reader started after login): the regeneration tick, +15 to base
         // every three hours, repeats base and bonus.
@@ -143,7 +143,7 @@ static class PacketChecks
     }
     static void Identities()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var changes = new List<ulong>(); var named = new List<GameIdentity>(); var seen = new List<PacketCandidate>();
+        var decoder = new OdyleDecoder(); var changes = new List<ulong>(); var named = new List<GameIdentity>(); var seen = new List<PacketCandidate>();
         decoder.CharacterChanged += changes.Add; decoder.IdentityObserved += named.Add; decoder.Candidate += seen.Add;
         decoder.Feed(Frame(Snapshot(Stat(0x08, Odyle, 0, 390))));
         decoder.Feed(Frame(Identity(42, "TestHero"))); decoder.Feed(Frame(Identity(42, "TestHero")));
@@ -171,7 +171,7 @@ static class PacketChecks
     }
     static void Framing()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<PacketCandidate>(); decoder.Candidate += seen.Add;
+        var decoder = new OdyleDecoder(); var seen = new List<PacketCandidate>(); decoder.Candidate += seen.Add;
         var snapshot = Frame(Snapshot(Stat(0x0c, Odyle, 100, 50)));
         decoder.Feed(snapshot.AsSpan(0, 3)); Check(seen.Count == 0, "fragment incomplete");
         decoder.Feed(snapshot.AsSpan(3)); Check(seen.Single().Total == 150, "fragments join");
@@ -179,17 +179,17 @@ static class PacketChecks
         // A bundle restoring more than 8 MB is skipped whole; the frames after it are read.
         var big = new byte[6 + 40000]; big[0] = big[1] = 0xff; BinaryPrimitives.WriteInt32LittleEndian(big.AsSpan(2), 9 * 1048576);
         decoder.Feed([.. Frame(big), .. snapshot]); Check(seen.Count == 3, "an oversized bundle is skipped, not fatal");
-        Reject(() => new ExperimentalOdyleDecoder().Feed(new byte[] { 255, 255, 255, 255, 255, 1 }), "oversized framing");
-        Reject(() => new ExperimentalOdyleDecoder().Feed(Frame(new byte[] { 255, 255, 255, 255, 127, 0 })), "a size no LZ4 block can restore");
+        Reject(() => new OdyleDecoder().Feed(new byte[] { 255, 255, 255, 255, 255, 1 }), "oversized framing");
+        Reject(() => new OdyleDecoder().Feed(Frame(new byte[] { 255, 255, 255, 255, 127, 0 })), "a size no LZ4 block can restore");
         // Midstream: a heartbeat is trusted once the frame after it starts with a valid length.
-        var midstream = new ExperimentalOdyleDecoder(startsAligned: false); var midSeen = new List<PacketCandidate>(); midstream.Candidate += midSeen.Add;
+        var midstream = new OdyleDecoder(startsAligned: false); var midSeen = new List<PacketCandidate>(); midstream.Candidate += midSeen.Add;
         midstream.Feed(snapshot); Check(midSeen.Count == 0, !midstream.Synchronized, "no reading before a frame boundary");
         midstream.Feed(new byte[] { 0x06, 0x00 }); midstream.Feed(new byte[] { 0x36 });
         Check(!midstream.Synchronized, "a heartbeat waits for the next frame's length");
         midstream.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 390))]));
         Check(midSeen.Single() is { Base: 0, Bonus: 390, Total: 390 }, midstream.Synchronized, "flagged 0 plus 390 after a heartbeat");
         // A byte from F0 to FE is a transport flag only before a frame the decoder reads; another opcode starting with one stays whole.
-        var opcodes = new List<int>(); var flagged = new ExperimentalOdyleDecoder(); flagged.FrameObserved += (opcode, _) => opcodes.Add(opcode);
+        var opcodes = new List<int>(); var flagged = new OdyleDecoder(); flagged.FrameObserved += (opcode, _) => opcodes.Add(opcode);
         flagged.Feed(Frame([0xf4, 0x12, 0x34, 0x56])); flagged.Feed(Frame([0xf2, 0x33])); flagged.Feed(Frame([0xf4, .. Snapshot(Stat(0x08, Odyle, 0, 5))]));
         Check(opcodes.SequenceEqual(new[] { 0xf412, 0xf233, 0x0b61 }), "a flag byte is stripped only before a readable frame: " + string.Join(",", opcodes.Select(o => o.ToString("X4"))));
         // One owner per game connection: the first interface to deliver it, until it goes quiet or stops.
@@ -198,14 +198,14 @@ static class PacketChecks
         Check(owners.Claim(flowA, "vswitch", at.AddSeconds(16)), owners.OwnerOf(flowA) == "vswitch", !owners.Claim(flowA, "eth", at.AddSeconds(17)), "a quiet owner hands it over");
         owners.Release("vswitch"); Check(owners.OwnerOf(flowA) is null, owners.Claim(flowA, "eth", at.AddSeconds(18)), "a stopped interface gives it up");
         owners.Keep(Array.Empty<TcpFlow>()); Check(owners.OwnerOf(flowA) is null, "connections the game closed are forgotten");
-        var falseMatch = new ExperimentalOdyleDecoder(startsAligned: false); var falseSeen = new List<PacketCandidate>(); falseMatch.Candidate += falseSeen.Add;
+        var falseMatch = new OdyleDecoder(startsAligned: false); var falseSeen = new List<PacketCandidate>(); falseMatch.Candidate += falseSeen.Add;
         falseMatch.Feed(new byte[] { 0x06, 0x00, 0x36, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 });
         Check(!falseMatch.Synchronized, "heartbeat bytes before an impossible length are not trusted");
         falseMatch.Feed([0x0e, 0x00, 0x36, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 70)))]);
         Check(falseMatch.Synchronized, falseSeen.Single().Total == 70, "the long heartbeat and zero padding synchronise");
         // Heartbeat bytes inside a payload before a length near 1 MB: the scan goes on at once
         // instead of waiting for a megabyte of stream.
-        var swallow = new ExperimentalOdyleDecoder(startsAligned: false); var swallowSeen = new List<PacketCandidate>(); swallow.Candidate += swallowSeen.Add;
+        var swallow = new OdyleDecoder(startsAligned: false); var swallowSeen = new List<PacketCandidate>(); swallow.Candidate += swallowSeen.Add;
         swallow.Feed([0x06, 0x00, 0x36, 0xff, 0xff, 0x3f, 1, 2, 3, 0x06, 0x00, 0x36, .. Frame(Snapshot(Stat(0x08, Odyle, 0, 80)))]);
         Check(swallow.Synchronized, swallowSeen.Single().Total == 80, "a scanned boundary before a frame above 64 KB is not trusted");
         // Once the next heartbeat confirms the boundary, large frames are read as usual.
@@ -227,13 +227,13 @@ static class PacketChecks
                 if (i == odyleAt) { var value = (uint)random.Next(0, 2000); var bonus = (uint)random.Next(0, 5000); records.Add(Stat(tag, Odyle, value, bonus)); expected = (int)(((tag & 4) != 0 ? value : 0) + ((tag & 8) != 0 ? bonus : 0)); }
                 else { var resource = (uint)random.Next(); records.Add(Stat(tag, resource == Odyle ? Counter : resource, (uint)random.Next(), (uint)random.Next())); }
             }
-            var decoder = new ExperimentalOdyleDecoder(); int? read = null; var missing = false;
+            var decoder = new OdyleDecoder(); int? read = null; var missing = false;
             decoder.Candidate += c => read = c.Total; decoder.SnapshotWithoutOdyle += () => missing = true;
             decoder.Feed(Frame(Snapshot([.. records])));
             Check(read == expected, missing == (expected is null && count >= 32), "random stat layout " + round);
         }
         byte[][] opcodes = [[0x0b, 0x61], [0x0c, 0x61], [0x33, 0x36]];
-        var framed = new ExperimentalOdyleDecoder();
+        var framed = new OdyleDecoder();
         for (var round = 0; round < 3000; round++)
         {
             var body = new byte[random.Next(0, 300)]; random.NextBytes(body);
@@ -245,7 +245,7 @@ static class PacketChecks
         {
             var bytes = new byte[random.Next(0, 400)]; random.NextBytes(bytes);
             if (bytes.Length > 3 && random.Next(3) == 0) { bytes[0] = 0x06; bytes[1] = 0; bytes[2] = 0x36; }
-            try { new ExperimentalOdyleDecoder(random.Next(2) == 0).Feed(bytes); } catch (InvalidDataException) { }
+            try { new OdyleDecoder(random.Next(2) == 0).Feed(bytes); } catch (InvalidDataException) { }
         }
         var streams = new GameStreams(_ => { }, (_, _) => { }); uint sequence = 1;
         for (var round = 0; round < 2000; round++)

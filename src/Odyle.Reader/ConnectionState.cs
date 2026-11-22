@@ -74,10 +74,14 @@ public sealed class ConnectionState
     public string NoOdyleSent = "";
     // The server refused this build's adapter name: Odyle needs an update to keep reading.
     public bool AdapterOutdated;
-    // Whether the server keeps NA-West apart and knows the Global servers' names; asked when the first
-    // character is named.
-    public bool? NaWest, GlobalServers;
+    // When the server's game servers were last asked for (the first character named on the connection),
+    // and whether that answer was read.
     public DateTimeOffset ServersAskedAt = DateTimeOffset.MinValue;
+    public bool ServersKnown;
+    // The dashboard version the server named (PartyApi.ServerVersion) as last noted for this connection, and whether
+    // it was noted yet (logged once, and again when it changes).
+    public string? ServerVersion;
+    public bool ServerVersionNoted;
     // The Discord application the server signs in with (the Discord status), or none.
     public string? DiscordApp;
     public bool DiscordMissing;

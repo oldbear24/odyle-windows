@@ -71,7 +71,7 @@ static class GroupChecks
     }
     static void Frames()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<GameGroupEvent>(); var order = new List<string>();
+        var decoder = new OdyleDecoder(); var seen = new List<GameGroupEvent>(); var order = new List<string>();
         decoder.GroupObserved += e => { seen.Add(e); order.Add("group"); }; decoder.IdentityObserved += _ => order.Add("identity");
         // A roster before the own identity waits for it, and comes before the name.
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
@@ -113,7 +113,7 @@ static class GroupChecks
             GameGroups.Read([.. opcode, .. body], Own);
         }
         // Another connection starts unknown: its first roster waits for its own identity again.
-        var next = new ExperimentalOdyleDecoder(); var later = new List<GameGroupEvent>(); next.GroupObserved += later.Add;
+        var next = new OdyleDecoder(); var later = new List<GameGroupEvent>(); next.GroupObserved += later.Add;
         next.Feed(Frame(PartyRoster(0, (Own, OwnCharacter, "Hero")))); next.Feed(Frame(Identity(Mate, "Mate")));
         Check(later.Count == 0, "a held roster without the entity the game then names is dropped");
     }
@@ -121,7 +121,7 @@ static class GroupChecks
     static void Teammates()
     {
         const ulong Third = 7070, ThirdCharacter = 0x090e_0000_0004_0001;
-        var decoder = new ExperimentalOdyleDecoder(); var names = new List<IReadOnlyList<string>>(); var groups = 0;
+        var decoder = new OdyleDecoder(); var names = new List<IReadOnlyList<string>>(); var groups = 0;
         decoder.GroupObserved += _ => groups++; decoder.TeammatesObserved += names.Add;
         // A held roster gives its names once the own identity is known, after the group.
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
@@ -155,6 +155,10 @@ static class GroupChecks
         byte[] big = [0x02, 0x96, 0, .. ForceKey, .. U64(OwnCharacter), 0, 20, 0, 0, 0, 2, 1, 0, 1, .. PartyKey, 1, 5, 0, 0, 0, 3, 61,
             .. Member(1, Own, OwnCharacter, "Hero", null), .. crowd.SelectMany((m, i) => Member((byte)(i + 2), m.Item1, m.Item2, m.Item3, null))];
         Check(GameGroups.Teammates(big, Own).Count == GameGroups.TeammatesLimit, "at most 48 names");
+        // The decoder hands over the event it read instead of reading the roster again: the same names.
+        var force = ForceRoster((Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"), (Third, ThirdCharacter, "Ållan"));
+        Check(GameGroups.TeammatesOf(force, GameGroups.Read(force, Own)!).SequenceEqual(GameGroups.Teammates(force, Own)), GameGroups.TeammatesOf(big, GameGroups.Read(big, Own)!).Count == GameGroups.TeammatesLimit,
+            GameGroups.TeammatesOf([0x1f, 0x92, 3], GameGroups.Read([0x1f, 0x92, 3], Own)!).Count == 0, "names from the event the decoder read match a fresh read");
     }
     static void Tracking()
     {

@@ -19,9 +19,7 @@ public static class PartyReadiness
     {
         if (!e.Sharing) return Presence.Offline;
         if (!e.Confirmed || e.LastReadingAt.Length == 0) return Presence.Unknown;
-        if (Readiness.Parse(e.LastSeenAt) is not { } seen || now - seen >= TimeSpan.FromSeconds(90)) return Presence.Offline;
-        if (!e.Valid || e.Source == "manual" || now - seen >= TimeSpan.FromSeconds(45)) return Presence.Stale;
-        return Presence.Live;
+        return Readiness.Seen(e.LastSeenAt, e.Valid, e.Source, now);
     }
 
     public static CharacterReadiness Character(PartyEntry e, DateTimeOffset now, int cost)
@@ -50,10 +48,10 @@ public static class PartyReadiness
     }
 
     // A room snapshot's party: each member's characters shared in the room, or the member alone.
-    // A snapshot without the flags (older backends) lists only shared characters of others.
+    // Every snapshot character carries shared; one without it counts as shared, as on the card and in compact mode.
     public static PartyEntry[] Entries(RoomSnapshot snapshot) => snapshot.Members.SelectMany(m =>
     {
-        var shared = m.Characters.Where(c => c.Shared ?? m.Sharing ?? true).ToArray();
+        var shared = m.Characters.Where(c => c.Shared ?? true).ToArray();
         return shared.Length > 0
             ? shared.Select(c => new PartyEntry(c.Id, m.User, m.Role, m.DisplayName, c.CharacterName, c.Value, c.Confirmed, c.Valid, c.Source, true, c.LastSeenAt, c.LastReadingAt))
             : [new PartyEntry("", m.User, m.Role, m.DisplayName, Sharing: m.Sharing ?? false, Source: "packet")];

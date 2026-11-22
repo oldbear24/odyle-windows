@@ -18,19 +18,19 @@ static partial class ReaderChecks
     {
         var delay = new DispatcherTimer { Interval = TimeSpan.FromHours(1) }; var resets = 0;
         var state = new ReaderAttribution(delay, () => resets++); var now = DateTimeOffset.UtcNow; var capture = new PacketCapture();
-        var snapshot = new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 10, Bonus = 390 };
+        var snapshot = new PacketCandidate(400, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 10, Bonus = 390 };
         Check(state.Candidate(snapshot, now) && state.Latest == snapshot && state.NameDue && state.OwnerKey == "" && delay.IsEnabled && state.PendingSince == now && state.ConnectionRead, "a snapshot is shown, waits for the game's name and starts the publish delay");
         state.GameKey = "Hero|2304"; state.NamedHasReading = true;
         state.AttributePending(now.AddSeconds(29));
         Check(state.OwnerKey == "", "within 30 seconds of a snapshot the reading waits for the name even when the named character had a reading");
         state.AttributePending(now.AddSeconds(31));
         Check(state.OwnerKey == "Hero|2304" && !state.NameDue, "after 30 seconds it goes to the named character whose Odyle was read");
-        Check(!state.Candidate(new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot), now.AddSeconds(1)) && state.Latest == snapshot && state.LatestAt == now.AddSeconds(1), "the same frame from a second interface only moves the reading's time on");
+        Check(!state.Candidate(new PacketCandidate(400, OdyleDecoder.Version, CandidateSource.Snapshot), now.AddSeconds(1)) && state.Latest == snapshot && state.LatestAt == now.AddSeconds(1), "the same frame from a second interface only moves the reading's time on");
         state.GameId = 7;
         Check(!state.Switched(7) && state.OwnerKey == "Hero|2304", "a second interface's report of the switch to the named character changes nothing");
         Check(state.Switched(8) && state.GameKey == ReaderAttribution.UnknownOwner && state.Latest is null && state.OwnerKey == "" && state.GameId == 0, "a switch drops the reading the previous character owned");
         var identity = new GameIdentity(8, "Alt", 2304, "Lumiel", "GLOBAL_EU"); var key = ReaderAttribution.KeyOf(identity);
-        state.Candidate(new PacketCandidate(120, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot), now.AddSeconds(5));
+        state.Candidate(new PacketCandidate(120, OdyleDecoder.Version, CandidateSource.Snapshot), now.AddSeconds(5));
         Check(key == "Alt|2304" && state.Name(key, "Alt") && !state.Name(key, "Alt") && state.GameName == "Alt" && state.Latest is { Total: 120 }, "naming another character keeps a reading nobody owns yet; naming it again changes nothing");
         Check(!state.NoteIdentity(capture, identity, key, now.AddSeconds(6)) && state.GameId == 8 && !state.NameDue && state.Named is { Identity.CharacterName: "Alt" }, "the identity is noted");
         state.Claim(key);
@@ -45,7 +45,7 @@ static partial class ReaderChecks
         Check(state.NoteIdentity(capture, identity, key, now.AddSeconds(31)) && state.OdyleMissingKey == key && !state.OdyleMissingDue, "and the next name says that character has no Odyle yet");
         // A resync: the next reading, even an update, waits for the name.
         state.Resync(); delay.Stop();
-        state.Candidate(new PacketCandidate(125, ExperimentalOdyleDecoder.Version, CandidateSource.Update), now.AddSeconds(40));
+        state.Candidate(new PacketCandidate(125, OdyleDecoder.Version, CandidateSource.Update), now.AddSeconds(40));
         Check(state.OwnerKey == "" && state.NameDue && !state.IdentityDue && !state.NamedHasReading && delay.IsEnabled, "after a resync the next update waits for the game's name");
         // A new game connection drops an update nobody owns; two game clients stop everything until one closes.
         Check(state.DropUnowned() && state.Latest is null && !delay.IsEnabled, "a new connection drops an update the game never attributed");
@@ -53,7 +53,7 @@ static partial class ReaderChecks
         Check(state.TwoClientsStarted() && !state.TwoClientsStarted() && state.GameKey == "" && resets == before + 1, "two game clients reset the attribution once");
         Check(state.OneClientLeft() && !state.OneClientLeft() && !state.TwoClients && resets == before + 2, "one closing starts over once");
         // A restart's hand-over is taken only while the game has named nothing since.
-        var handed = new Handover("http://x", "u", "c1", "Hero|2304", "Hero", 390, ExperimentalOdyleDecoder.Version, CandidateSource.Update, now);
+        var handed = new Handover("http://x", "u", "c1", "Hero|2304", "Hero", 390, OdyleDecoder.Version, CandidateSource.Update, now);
         state.NameDue = true;
         Check(!state.TakeOver(handed, now) && state.OwnerKey == "", "a hand-over is not taken after the game loaded a character");
         state.Reset();
@@ -66,7 +66,7 @@ static partial class ReaderChecks
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
-        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
         Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes", StringComparison.Ordinal), "cube count derives from the reading");
         Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
@@ -86,16 +86,16 @@ static partial class ReaderChecks
         // A resync may have lost a switch (the new character's snapshot and identity): the next reading,
         // even a live update, waits for the game's name and never falls back to the character named before.
         window.Attribution.Resync();
-        Call(window, "OnCandidate", inert, new PacketCandidate(200, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 200 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(200, OdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 200 });
         window.Attribution.PendingSince = DateTimeOffset.UtcNow.AddSeconds(-31); window.Attribution.AttributePending(DateTimeOffset.UtcNow);
         Check(Owner() == "" && !window.Attribution.NamedHasReading && Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "after a resync the next reading waits for the game's name instead of going to the character named before");
-        Call(window, "OnCandidate", inert, new PacketCandidate(205, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(205, OdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
         window.Attribution.AttributePending(DateTimeOffset.UtcNow); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         Check(Owner() == "", "and so do the updates after it");
         // Two game clients on this PC would mix their characters' messages: nothing is read or named until one closes.
         window.Attribution.OwnerKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";
         Call(window, "OnTwoClients");
-        Call(window, "OnCandidate", inert, new PacketCandidate(999, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(999, OdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
         Call(window, "OnSnapshotWithoutOdyle", inert);
         Check(window.Attribution.Latest is null && Owner() == "" && window.Attribution.GameKey == "" && !window.Attribution.OdyleMissingDue, "with two game clients nothing is read, attributed or named");
         Check((string)Call(window, "ReaderStatus")! == "two-clients", "the heartbeat reports two game clients");
@@ -103,11 +103,11 @@ static partial class ReaderChecks
         // The heartbeat's reader state: listening until this connection gave a reading, then reading.
         window.Attribution.ConnectionRead = false; Call(window, "SetReaderState", Enum.Parse(Field("readerState").FieldType, "Listening"), "Listening to AION2 · waiting for the Odyle snapshot.");
         var listening = (string)Call(window, "ReaderStatus")!;
-        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 }); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 }); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         Check(listening == "listening" && (string)Call(window, "ReaderStatus")! == "reading", "the heartbeat reports listening until Odyle is read on this connection, then reading");
         // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
         window.Attribution.Reset();
-        Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(380, OdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text == "The game names the character within a few minutes, or at once after a relog or channel change.", "a live update read without a snapshot is shown and waits for the game's name");
         ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
     }
@@ -115,7 +115,7 @@ static partial class ReaderChecks
     {
         // The state the card has after a reader started after login read a live update the game has not named yet.
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
-        Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(380, OdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
         ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         // A snapshot without Odyle waits for the game's name like any snapshot; the named character then
         // says it has no Odyle yet instead of waiting for a snapshot forever. A reading still waiting for a
@@ -128,7 +128,7 @@ static partial class ReaderChecks
         Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2", "a named character without Odyle says so, once");
         // Its first Odyle replaces the note. A server that refuses this build's adapter makes the card ask for an
         // update instead of repeating the server's message, and the update check runs at once.
-        Call(window, "OnCandidate", inert, new PacketCandidate(15, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(15, OdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
         window.Attribution.AttributePending(DateTimeOffset.UtcNow); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         Check(window.Attribution.OdyleMissingKey == "", "a reading clears the note");
         await (Task)Call(window, "PublishLatestAsync")!;
@@ -147,7 +147,7 @@ static partial class ReaderChecks
         Check(server.LastReport.Contains("\"base\":15,\"bonus\":0,\"kind\":\"update\",\"delta\":null"), "the first reading of a live streak carries base and bonus and is an update");
         async Task Change(int total, int natural, int items)
         {
-            Call(window, "OnCandidate", inert, new PacketCandidate(total, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = natural, Bonus = items });
+            Call(window, "OnCandidate", inert, new PacketCandidate(total, OdyleDecoder.Version, CandidateSource.Update) { Base = natural, Bonus = items });
             ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
         }
         await Change(0, 0, 0);
@@ -162,11 +162,11 @@ static partial class ReaderChecks
         Field("clockRules").SetValue(window, null);
         // Near its cap the clock turns orange (11 ticks to 560: 30 to 33 hours), and red with the value once the pool is full.
         var shownReading = window.Attribution.Latest;
-        window.Attribution.Latest = new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }; Call(window, "RenderOdyleClock");
+        window.Attribution.Latest = new PacketCandidate(400, OdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }; Call(window, "RenderOdyleClock");
         Check(odyleClock.Text.StartsWith("Nearly full · +15 in ", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
         // The taskbar button fills with the natural pool towards its cap, in the card's colours.
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
-        window.Attribution.Latest = new PacketCandidate(560, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }; Call(window, "RenderOdyleClock");
+        window.Attribution.Latest = new PacketCandidate(560, OdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }; Call(window, "RenderOdyleClock");
         Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
         window.Attribution.Latest = shownReading; Call(window, "RenderOdyleClock");
@@ -204,11 +204,11 @@ static partial class ReaderChecks
         Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
         window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304";
-        window.Attribution.GameName = "TestHero"; window.Attribution.Latest = new PacketCandidate(390, ExperimentalOdyleDecoder.Version);
+        window.Attribution.GameName = "TestHero"; window.Attribution.Latest = new PacketCandidate(390, OdyleDecoder.Version);
         Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
         Field("activeCharacterId").SetValue(window, "c1");
         var handover = (Handover?)Call(window, "LiveHandover");
-        Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: ExperimentalOdyleDecoder.Version }, "a live reading is handed to the restart");
+        Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: OdyleDecoder.Version }, "a live reading is handed to the restart");
         HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
         // The restarted build: connected again, the reader running, nothing named by the game yet.
         Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
@@ -224,7 +224,7 @@ static partial class ReaderChecks
         // so it waits for the game's name and the character is not taken over.
         await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover!);
         var loading = new PacketCapture(); Field("capture").SetValue(window, loading);
-        Call(window, "OnCandidate", loading, new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 10, Bonus = 390 });
+        Call(window, "OnCandidate", loading, new PacketCandidate(400, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 10, Bonus = 390 });
         await (Task)Call(window, "TakeOverAsync")!; ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         Check(!File.Exists(HandoverStore.FilePath) && window.Attribution.OwnerKey == "" && window.Attribution.Latest is PacketCandidate { Total: 400 }, "a snapshot read before the connection waits for the game's name instead of the hand-over");
         // A hand-over from the build before v2 (with its stat owner fields) is taken over and its reading sent

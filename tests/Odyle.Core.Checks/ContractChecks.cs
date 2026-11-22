@@ -45,7 +45,7 @@ static class ContractChecks
         try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, " ")); throw new Exception("Blank adapter accepted."); } catch (ArgumentException) { }
         try { await local.ReportAsync(new PacketReading("s", 1, "Main", "EU", "GLOBAL_EU", 100, "test-fixture-v1", Source: "manual")); throw new Exception("Manual source accepted."); } catch (ArgumentException) { }
         // The backend lists global-reference-v2 (and v1 for apps not yet updated) in backend/odyle/protocols.go.
-        if (ExperimentalOdyleDecoder.Version != "global-reference-v2" || ExperimentalOdyleDecoder.OdyleResource != 60000001) throw new Exception("Adapter name must match the backend registry.");
+        if (OdyleDecoder.Version != "global-reference-v2" || OdyleDecoder.OdyleResource != 60000001) throw new Exception("Adapter name must match the backend registry.");
         Console.WriteLine("Connection links, Discord accounts, persistent stale zero, wire contract and URL/value protection passed.");
     }
 }

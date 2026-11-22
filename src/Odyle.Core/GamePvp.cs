@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace Odyle.Core;
 // PvP stats (opt-in): the own character's kills, assists and deaths against other players, for an
 // account that turned on PvP stats on the dashboard. Nothing here is read without that opt-in
-// (ExperimentalOdyleDecoder.ReadPvp), except for the patch-day trace, which counts and keeps nothing.
+// (OdyleDecoder.ReadPvp), except for the patch-day trace, which counts and keeps nothing.
 //
 // Four server-to-client frames are read, by the layouts public decoders document for Global
 // (docs/packet-reader.md, PvP stats). They are not yet confirmed with a capture of the owner's client:
@@ -35,7 +35,7 @@ public static class GamePvp
     public static bool Player(ReadOnlySpan<byte> payload, out ulong entity, out string name, out ushort server)
     {
         name = ""; server = 0; var o = 0;
-        if (!ExperimentalOdyleDecoder.TryVarint(payload, ref o, out entity) || !Entity(entity) || payload.Length - o < 7) return false;
+        if (!OdyleDecoder.TryVarint(payload, ref o, out entity) || !Entity(entity) || payload.Length - o < 7) return false;
         o += 4;
         if ((payload[o++] & 1) == 0) return false;
         int count = payload[o++];
@@ -50,9 +50,9 @@ public static class GamePvp
     public static bool Kill(ReadOnlySpan<byte> payload, out ulong victim, out ulong killer, out string killerName, out ushort killerServer)
     {
         killer = 0; killerName = ""; killerServer = 0; var o = 0;
-        if (!ExperimentalOdyleDecoder.TryVarint(payload, ref o, out victim) || !Entity(victim) || payload.Length - o < 5) return false;
+        if (!OdyleDecoder.TryVarint(payload, ref o, out victim) || !Entity(victim) || payload.Length - o < 5) return false;
         var kind = BinaryPrimitives.ReadUInt32LittleEndian(payload[o..]); o += 4;
-        if (!ExperimentalOdyleDecoder.TryVarint(payload, ref o, out killer) || kind == 0 && killer == 0) return false;
+        if (!OdyleDecoder.TryVarint(payload, ref o, out killer) || kind == 0 && killer == 0) return false;
         if (!Entity(killer) || payload.Length - o < 4) return true;
         var server = BinaryPrimitives.ReadUInt16LittleEndian(payload[o..]); int count = payload[o + 2];
         if (server is < 1000 or >= 3000 || count is < 1 or > 36 || payload.Length - o - 3 < count || !GameIdentity.TryName(payload.Slice(o + 3, count), out var name)) return true;
@@ -69,14 +69,14 @@ public static class GamePvp
         if (frame.Length < 5) return false;
         var p = frame[2..]; var o = 0;
         if (frame[0] == 0x03 && frame[1] == 0x38)
-            return ExperimentalOdyleDecoder.TryVarint(p, ref o, out actor) && Entity(actor) && o < p.Length && p[o++] == 0
-                && ExperimentalOdyleDecoder.TryVarint(p, ref o, out target) && Entity(target) && target != actor;
+            return OdyleDecoder.TryVarint(p, ref o, out actor) && Entity(actor) && o < p.Length && p[o++] == 0
+                && OdyleDecoder.TryVarint(p, ref o, out target) && Entity(target) && target != actor;
         if (frame[0] != 0x04 || frame[1] != 0x38) return false;
         if (p.Length >= 2 && p[0] == 1 && p[1] == 0) o = 2;
-        return ExperimentalOdyleDecoder.TryVarint(p, ref o, out target) && Entity(target)
-            && ExperimentalOdyleDecoder.TryVarint(p, ref o, out var layout) && (layout & 0x0f) is >= 4 and <= 7
-            && ExperimentalOdyleDecoder.TryVarint(p, ref o, out _)
-            && ExperimentalOdyleDecoder.TryVarint(p, ref o, out actor) && Entity(actor) && actor != target;
+        return OdyleDecoder.TryVarint(p, ref o, out target) && Entity(target)
+            && OdyleDecoder.TryVarint(p, ref o, out var layout) && (layout & 0x0f) is >= 4 and <= 7
+            && OdyleDecoder.TryVarint(p, ref o, out _)
+            && OdyleDecoder.TryVarint(p, ref o, out actor) && Entity(actor) && actor != target;
     }
 }
 

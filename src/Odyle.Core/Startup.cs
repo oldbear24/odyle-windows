@@ -36,23 +36,23 @@ public static class StartupCommand
     // --build-info). The link itself still goes through the pairing confirmation.
     public static IReadOnlyList<string> Accepted(IReadOnlyList<string> args)
     {
-        if (!args.Any(a => string.Equals(a, PairArgument, StringComparison.OrdinalIgnoreCase))) return args;
+        if (!Has(args, PairArgument)) return args;
         return args.Count == 2 && string.Equals(args[0], PairArgument, StringComparison.OrdinalIgnoreCase) && args[1].Length > 0 && !args[1].StartsWith("--", StringComparison.Ordinal) ? args : [];
     }
-    public static bool InTray(IEnumerable<string> args) => args.Any(a => string.Equals(a, TrayArgument, StringComparison.OrdinalIgnoreCase));
-    public static bool Unpairs(IEnumerable<string> args) => args.Any(a => string.Equals(a, UnpairArgument, StringComparison.OrdinalIgnoreCase));
-    public static bool Quits(IEnumerable<string> args) => args.Any(a => string.Equals(a, QuitArgument, StringComparison.OrdinalIgnoreCase));
-    public static bool Traces(IEnumerable<string> args) => args.Any(a => string.Equals(a, TraceArgument, StringComparison.OrdinalIgnoreCase));
+    public static bool InTray(IEnumerable<string> args) => Has(args, TrayArgument);
+    public static bool Unpairs(IEnumerable<string> args) => Has(args, UnpairArgument);
+    public static bool Quits(IEnumerable<string> args) => Has(args, QuitArgument);
+    public static bool Traces(IEnumerable<string> args) => Has(args, TraceArgument);
     // The file --build-info writes to, or null without the argument (or without a file after it).
-    public static string? BuildInfoPath(IReadOnlyList<string> args)
-    {
-        for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], BuildInfoArgument, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
-        return null;
-    }
+    public static string? BuildInfoPath(IReadOnlyList<string> args) => ValueAfter(args, BuildInfoArgument);
     // The link after --pair, or null without one.
-    public static string? PairLinkOf(IReadOnlyList<string> args)
+    public static string? PairLinkOf(IReadOnlyList<string> args) => ValueAfter(args, PairArgument);
+    // Whether a switch is among the arguments, in any case.
+    private static bool Has(IEnumerable<string> args, string name) => args.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase));
+    // The first non-empty argument right after the switch, or null.
+    private static string? ValueAfter(IReadOnlyList<string> args, string name)
     {
-        for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], PairArgument, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
+        for (var i = 0; i < args.Count - 1; i++) if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase) && args[i + 1].Length > 0) return args[i + 1];
         return null;
     }
     // The jump list action after --do, or null without a known one.

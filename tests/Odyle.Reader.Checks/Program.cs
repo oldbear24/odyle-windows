@@ -22,6 +22,7 @@ using Odyle.Reader;
 //   --only <a,b>           only the scenarios whose names contain one of these (with any of the above)
 //   --list                 the scenarios' names
 //   --screenshots <dir>    previews of the window (writes PNGs; see Screenshots)
+//   --server-screenshots <dir>  previews of the old-server notice and of a pairing from before device keys (ServerScreenshots)
 //   --update-probe, --compact-probe: opt-in probes on a desktop
 static partial class ReaderChecks
 {
@@ -45,6 +46,7 @@ static partial class ReaderChecks
             try
             {
                 if (args is ["--screenshots", var directory]) { probe = NewWindow(); Screenshots(probe, directory); return; }
+                if (args is ["--server-screenshots", var previews]) { await ServerScreenshots(previews); return; }
                 if (args is ["--update-probe"]) { await UpdateProbe(); return; }
                 if (args is ["--compact-probe"]) { probe = NewWindow(); CompactProbe(probe); return; }
                 await RunAsync(only, scratch);
@@ -106,6 +108,8 @@ static partial class ReaderChecks
         Add("notification-settings", NotificationSettingsScenario);
         Add("run-chip-and-places", RunChipAndPlacesScenario);
         Add("party-refresh", PartyRefreshChecks);
+        Add("server-version", ServerVersionScenario);
+        Add("keyless-session", KeylessSessionScenario);
         if (online is { } live) Add("online", window => OnlineScenario(window, live.Url, live.Code));
         Add("heartbeat-unpaired", HeartbeatUnpairedScenario);
         Add("server-busy", ServerBusyScenario);
@@ -286,7 +290,7 @@ static partial class ReaderChecks
             await server.SignInArrived!.Task;
             var reading = Field("capture").GetValue(window) as PacketCapture;
             Check(reading is not null && window.Link.Api is PartyApi && window.Link.SessionId is "", "the reader runs while the server is still being asked");
-            Call(window, "OnCandidate", reading!, new PacketCandidate(512, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 12, Bonus = 500 });
+            Call(window, "OnCandidate", reading!, new PacketCandidate(512, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 12, Bonus = 500 });
             var naming = (Task)Call(window, "SaveDetectedCharacterAsync", reading!, new GameIdentity(46, "EarlyHero", 2304, "Lumiel", "GLOBAL_EU"))!;
             await Task.Delay(100);
             Check(!naming.IsCompleted && server.Saved == 0 && server.Reports == 0 && Control<TextBlock>(window, "ValueLabel").Text == "512", "what it reads is shown and waits for the connection");
@@ -338,6 +342,8 @@ static partial class ReaderChecks
         public string LastReport = "";
         public TaskCompletionSource? SignInGate, SignInArrived;
         public string Teammates = """{"serverNow":"x"}""", Heartbeat = """{"serverNow":"2026-11-21 12:00:00.000Z"}""";
+        // The dashboard version the session answer names; null like a dashboard before 1.0.0.
+        public string? Version;
         const string Auth = """{"token":"pairing-check-token","record":{"id":"u","displayName":"Player"},"deviceKey":"pairing-check-key"}""";
         string Early => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":0,"confirmed":false,"valid":false,"lastReadingAt":""}""";
         string EarlyRead => $$"""{"id":"{{CharacterId}}","user":"u","characterName":"EarlyHero","server":"Lumiel","region":"GLOBAL_EU","value":512,"confirmed":true,"valid":true,"lastReadingAt":"2026-11-21 12:00:00.000Z"}""";
@@ -363,7 +369,7 @@ static partial class ReaderChecks
                 "/api/odyle/pair" or "/api/odyle/desktop-sign-in" => (HttpStatusCode.OK, Auth),
                 "/api/odyle/session" when FailSession => (HttpStatusCode.ServiceUnavailable, """{"status":503,"message":"Something went wrong."}"""),
                 "/api/odyle/session" when previous && PreviousSession is { } answer => (answer, $$"""{"status":{{(int)answer}},"message":"Unknown session."}"""),
-                "/api/odyle/session" => (HttpStatusCode.OK, """{"sessionId":"s1","sequence":0}"""),
+                "/api/odyle/session" => (HttpStatusCode.OK, Version is null ? """{"sessionId":"s1","sequence":0}""" : $$"""{"sessionId":"s1","sequence":0,"serverVersion":"{{Version}}"}"""),
                 "/api/collections/characters/records" => (HttpStatusCode.OK, "{\"items\":[" + string.Join(",", new[] { HasAlt ? Alt : "", Saved > 0 ? Early : "" }.Where(c => c.Length > 0)) + "]}"),
                 "/api/odyle/character" => (HttpStatusCode.OK, $$"""{"character":{{Early}}}"""),
                 "/api/odyle/report" => (HttpStatusCode.OK, $$"""{"character":{{EarlyRead}}}"""),
@@ -471,17 +477,17 @@ static partial class ReaderChecks
             File.WriteAllText(Path.Combine(source, "Odyle.exe"), "new"); File.WriteAllText(Path.Combine(source, "THIRD-PARTY.md"), "new notices");
             Updater.Apply(source, target);
             Check(File.ReadAllText(Path.Combine(target, "Odyle.exe")) == "new" && File.ReadAllText(Path.Combine(target, "Odyle.exe.old")) == "running" && File.ReadAllText(Path.Combine(target, "THIRD-PARTY.md")) == "new notices", "installing moves the executable aside and copies the new files in");
-            // This checks executable is stamped 1.0.0.0, newer than the unstamped app build.
+            // This checks executable is stamped 90.0.0.0 (its project sets it), newer than the app build.
             Updater.Staging = Path.Combine(root, "updates");
-            foreach (var (folder, stamped) in new[] { ("1.0.0.0", true), ("9.9.9.9", true), ("9.9.9.8", false), ("0.0.0.1", true), ("9.9.9.7.partial", true) })
+            foreach (var (folder, stamped) in new[] { ("90.0.0.0", true), ("9.9.9.9", true), ("9.9.9.8", false), ("0.0.0.1", true), ("9.9.9.7.partial", true) })
             {
                 var dir = Path.Combine(Updater.Staging, folder); Directory.CreateDirectory(dir);
                 if (stamped) File.Copy(Environment.ProcessPath!, Path.Combine(dir, "Odyle.exe")); else File.WriteAllText(Path.Combine(dir, "Odyle.exe"), "not an executable");
             }
             var staged = Updater.Staged();
-            Check(staged is { Version: { Major: 1, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "1.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
+            Check(staged is { Version: { Major: 90, Minor: 0, Build: 0, Revision: 0 } } && staged.Directory == Path.Combine(Updater.Staging, "90.0.0.0"), "a staged folder counts only with an executable stamped with its newer version");
             Updater.CleanUp();
-            Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "1.0.0.0", "9.9.9.8", "9.9.9.9" }), "cleanup removes partial downloads and versions that are not newer");
+            Check(Directory.GetDirectories(Updater.Staging).Select(Path.GetFileName).OrderBy(n => n).SequenceEqual(new[] { "9.9.9.8", "9.9.9.9", "90.0.0.0" }), "cleanup removes partial downloads and versions that are not newer");
             RollbackChecks(root);
             // A download reports its progress once per whole percent, not once per 64 KB read (#87).
             var reported = new List<double>(); var whole = new WholePercent(new Recorder(reported.Add));
@@ -527,9 +533,9 @@ static partial class ReaderChecks
         // A healthy start whose previous build could not be removed yet is not counted again.
         File.WriteAllText(starts, "0.36.0.0 -1");
         Check(Updater.BeginStart(exe, version) == Updater.StartHealth.Settled && !File.Exists(old) && !File.Exists(starts), "a start already proved healthy is settled and removes the previous build");
-        // The version rolled back from is skipped until a newer one is out (this checks executable is stamped 1.0.0.0).
+        // The version rolled back from is skipped until a newer one is out (this checks executable is stamped 90.0.0.0).
         File.Copy(Environment.ProcessPath!, failed, overwrite: true);
-        Check(Updater.FailedVersion(exe, version) == new Version(1, 0, 0, 0) && Updater.FailedVersion(exe, new Version(1, 0, 0)) is null && Updater.FailedVersion(exe, new Version(2, 0, 0)) is null, "the failed version is skipped only while it is newer");
+        Check(Updater.FailedVersion(exe, version) == new Version(90, 0, 0, 0) && Updater.FailedVersion(exe, new Version(90, 0, 0)) is null && Updater.FailedVersion(exe, new Version(91, 0, 0)) is null, "the failed version is skipped only while it is newer");
         // Installing an update starts the new build's count from none and forgets the rollback.
         var source = Path.Combine(root, "rollback-source"); Directory.CreateDirectory(source); File.WriteAllText(Path.Combine(source, "Odyle.exe"), "newest");
         File.WriteAllText(old, "previous"); File.WriteAllText(starts, "0.36.0.0 1");
@@ -606,7 +612,7 @@ static partial class ReaderChecks
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         window.Attribution.DetectedKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";
-        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
         window.Attribution.OwnerKey = "TestHero|2304"; Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live");

@@ -146,8 +146,8 @@ public readonly record struct StatRecord(byte Tag, uint Resource, long Base, lon
         if (p < 0 || data.Length - p < 5 || !IsTag(data[p])) return false;
         var tag = data[p]; var resource = BinaryPrimitives.ReadUInt32LittleEndian(data[(p + 1)..]); p += 5;
         ulong value = 0, bonus = 0;
-        if ((tag & 4) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out value)) return false;
-        if ((tag & 8) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out bonus)) return false;
+        if ((tag & 4) != 0 && !OdyleDecoder.TryVarint(data, ref p, out value)) return false;
+        if ((tag & 8) != 0 && !OdyleDecoder.TryVarint(data, ref p, out bonus)) return false;
         record = new(tag, resource, (long)value, (long)bonus); offset = p; return true;
     }
 }
@@ -162,10 +162,10 @@ public sealed record OdyleSnapshotObservation(int PayloadBytes, int? Records, Od
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
 /// <summary>
-/// Decodes the Global AION2 stream: length-prefixed frames, optional transport
+/// The production decoder of the Global AION2 stream: length-prefixed frames, optional transport
 /// flag, LZ4 blocks, own identity (3336), stat snapshot (0B61) and stat update (0C61).
 /// </summary>
-public sealed class ExperimentalOdyleDecoder
+public sealed class OdyleDecoder
 {
     /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
     public const string Version = "global-reference-v2";
@@ -184,7 +184,7 @@ public sealed class ExperimentalOdyleDecoder
     private readonly bool startsAligned;
     private bool synchronized, probation;
     /// <param name="startsAligned">False for a connection joined midstream; framing then waits for a heartbeat.</param>
-    public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
+    public OdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
     /// <summary>True once a frame boundary is known. A midstream start or a resync waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
@@ -344,7 +344,7 @@ public sealed class ExperimentalOdyleDecoder
             ownCharacter = id; pvp.Own(id, identity?.CharacterName ?? "", identity?.ServerId ?? 0);
             if (switched) CharacterChanged?.Invoke(id);
             // A roster held for this id comes before the name, so the name finds it.
-            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) { GroupObserved?.Invoke(group); Teammates(held, id); } }
+            if (heldRoster is { } held) { heldRoster = null; if (GameGroups.Read(held, id) is { } group) { GroupObserved?.Invoke(group); Teammates(held, group); } }
             if (identity is not null) IdentityObserved?.Invoke(identity);
             return;
         }
@@ -353,7 +353,7 @@ public sealed class ExperimentalOdyleDecoder
         if (frame[1] is 0x92 or 0x96)
         {
             if (ownCharacter is null && GameGroups.IsRoster(frame)) heldRoster = frame.ToArray();
-            else if (GameGroups.Read(frame, ownCharacter) is { } group) { GroupObserved?.Invoke(group); Teammates(frame, ownCharacter); }
+            else if (GameGroups.Read(frame, ownCharacter) is { } group) { GroupObserved?.Invoke(group); Teammates(frame, group); }
             return;
         }
         // World loads and arrivals (21 36, 23 36), and effects naming the own entity (2A 38) for its
@@ -445,10 +445,11 @@ public sealed class ExperimentalOdyleDecoder
         if (record.Resource != OdyleResource || trailer != (payload[0] == 1 ? 5 : 1) || record.Total > ValueLimit) return;
         Candidate?.Invoke(new((int)record.Total, Version, CandidateSource.Update) { Base = (int)record.Base, Bonus = (int)record.Bonus });
     }
-    // A roster's other members' names, read only while someone listens for them.
-    private void Teammates(ReadOnlySpan<byte> roster, ulong? own)
+    // A roster's other members' names, read only while someone listens for them; group is what
+    // GameGroups.Read just answered for the same frame.
+    private void Teammates(ReadOnlySpan<byte> frame, GameGroupEvent group)
     {
-        if (TeammatesObserved is { } observed && GameGroups.Teammates(roster, own) is { Count: > 0 } names) observed(names);
+        if (TeammatesObserved is { } observed && GameGroups.TeammatesOf(frame, group) is { Count: > 0 } names) observed(names);
     }
     /// <summary>Reads a varint of at most five bytes. False, offset unchanged, when the data ends first or the varint is longer; never throws.</summary>
     public static bool TryVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)

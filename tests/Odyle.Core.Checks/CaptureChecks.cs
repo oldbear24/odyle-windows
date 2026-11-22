@@ -16,12 +16,14 @@ using Odyle.Core;
 // bytes already read, lost (resync) or conflicting, from the SYN or joined midstream.
 static class CaptureChecks
 {
-    const uint Odyle = ExperimentalOdyleDecoder.OdyleResource, Counter = 80000001;
+    const uint Odyle = OdyleDecoder.OdyleResource, Counter = 80000001;
     const ulong Own = 606, Other = 707, Mate = 5069, Foe = 9001, OwnCharacter = 0x0900_0000_0003_6c9a, MateCharacter = 0x090e_0000_0003_b300;
     static readonly byte[] Tags = [0x00, 0x04, 0x08, 0x0c];
     static readonly byte[] PartyKey = [0xba, 0x0b, 0x06, 0x00, 0xb2, 0xdf, 0xf7, 0x23], ForceKey = [0x59, 0x1a, 0x00, 0x00, 0xb2, 0xdf, 0xf7, 0x23];
-    // Taken from the decoder of 0.36.1 (91ed207), before any of #85's changes.
-    const string PinnedTrace = "85C2852DD23DC562A4521F44D77556CCF877C3094A90AD3873A87C9B0BCAFCFF";
+    // Taken from the decoder of 0.36.1 (91ed207), before any of #85's changes (85C2852D…), then again in 1.0.0
+    // once GameIdentity lost its RenamedServer property (#93): the identity lines no longer print it, and the
+    // trace with that property put back in hashes to 85C2852D… as before, so the decoder's output is the same.
+    const string PinnedTrace = "FEF769FC7F70FA8B0A8018206D15D96E7E2B1063BB3A2C89ECE7F94B2376320C";
     const int PinnedLines = 125231;
     public static void Run()
     {
@@ -209,7 +211,7 @@ static class CaptureChecks
         public int Count(string kind) => counts.GetValueOrDefault(kind);
         public string Counts => string.Join(" ", counts.OrderBy(c => c.Key, StringComparer.Ordinal).Select(c => c.Key + "=" + c.Value));
         // Every event of one decoder.
-        public void Attach(ExperimentalOdyleDecoder decoder, int run, Func<bool> pvp)
+        public void Attach(OdyleDecoder decoder, int run, Func<bool> pvp)
         {
             decoder.Clock = () => DateTimeOffset.UnixEpoch.AddDays(20000);
             decoder.ReadPvp = pvp;
@@ -267,7 +269,7 @@ static class CaptureChecks
     static void DecoderAlone(Trace trace, int run)
     {
         var random = new Random(7000 + run); var pvp = run % 2 == 0; var content = Traffic(random);
-        var decoder = new ExperimentalOdyleDecoder(run % 5 != 4); trace.Attach(decoder, 1000 + run, () => pvp);
+        var decoder = new OdyleDecoder(run % 5 != 4); trace.Attach(decoder, 1000 + run, () => pvp);
         for (var at = 0; at < content.Length;)
         {
             var length = Math.Min(content.Length - at, random.Next(3) == 0 ? 1 : random.Next(1, 3000));

@@ -246,9 +246,10 @@ public partial class MainWindow : Window
     }
     private void Settings_Click(object sender, RoutedEventArgs e) => OpenSettings();
     // The footer says only what needs attention; "" clears it once that is over (connected again, saved).
+    // An empty status leaves the footer to the notice of a server on an older dashboard (ServerNotice).
     private void Status(string message)
     {
-        StatusLabel.Text = message;
+        StatusLabel.Text = message.Length > 0 ? message : ServerNotice;
         if (message != lastStatus) { lastStatus = message; if (message.Length > 0) { Log.Info("Status: " + message); Translation.Announce(StatusLabel); } }
     }
     // What a failed request means for the person at the PC, in their language.
@@ -736,6 +737,15 @@ public partial class MainWindow : Window
             if (unreadable) { settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false); Status(T("The connection saved on this PC could not be read. Copy a new connection link from the dashboard to pair again.")); }
             return;
         }
+        // A pairing from before device keys (Oct 2026) cannot sign in once its token ends, and servers on dashboard 1.0.0
+        // refuse it: this PC is unpaired and pairs again, with the server's address kept in Settings.
+        if (string.IsNullOrWhiteSpace(saved.DeviceKey))
+        {
+            Log.Warn("The saved pairing has no device key (paired before device keys); it was removed, and this PC needs to pair again.");
+            SessionStore.Clear(); link.Forget(); settings.EndpointInput.Text = saved.Endpoint; settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(false);
+            Status(T("This PC was paired with an older Odyle and needs to pair again. Copy a new connection link from the dashboard.")); RenderHero();
+            return;
+        }
         settings.EndpointInput.Text = link.Endpoint = saved.Endpoint; Status(T("Connecting to your account…"));
         PartyApi next;
         try { next = UseApi(newApi(saved.Endpoint, saved.Token, saved.DeviceKey)); }
@@ -744,7 +754,7 @@ public partial class MainWindow : Window
         // reads meanwhile waits for the operations lock this start holds: once the account is connected it is saved
         // and sent, and while the server cannot confirm the pairing it stays on this PC like any offline reading.
         if (capture is null && link.Attempt == 0) await StartReaderAsync();
-        try { var auth = await next.SignInAsync(); await SavePairingAsync(auth); await ConnectAsync(auth); }
+        try { var auth = await next.SignInAsync(); SavePairing(auth); await ConnectAsync(auth); }
         // Only the server's own 401 means the pairing ended (Disconnect, Sign out everywhere, the PC removed on the
         // dashboard); a 401 from something in front of the server arrives as 502 (PartyApi.IsServersOwn401).
         catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.Unauthorized)
@@ -799,7 +809,7 @@ public partial class MainWindow : Window
     }
     private void DropApi() { partyTimer.Stop(); realtime?.Dispose(); realtime = null; link.Drop(); NewConnection(); }
     // Forgets what the previous server answered and refused; the capture reads PvP only for an account that wants it.
-    private void NewConnection() { connection = new(); partyQueue.NewConnection(); if (capture is { } reading) reading.ReadPvp = PvpWanted; }
+    private void NewConnection() { connection = new(); partyQueue.NewConnection(); if (capture is { } reading) reading.ReadPvp = PvpWanted; RenderServerNotice(); }
     private void ShowAccount(string displayName)
     {
         accountName = displayName;
@@ -807,13 +817,37 @@ public partial class MainWindow : Window
         settings.AccountDetail.Text = T("Signed in as {0} via Discord · {1}", accountName, host);
         RenderHero();
     }
-    private static string Unpaired => T("This PC is no longer paired with your account. Copy a new connection link from the dashboard.");
-    // Saves the pairing on this PC. An app paired before device keys existed gets its key
-    // here, so from now on it stays paired however long it is closed.
-    private async Task SavePairingAsync(AuthResponse auth)
+    // The dashboard version the server names (PartyApi.ServerVersion), noted after the session starts and after each
+    // heartbeat: logged once per connection and again when it changes. A server below ServerVersions.Minimum, or one
+    // that names none (dashboards before 1.0.0), keeps working; the footer and Settings say it runs an older Odyle.
+    private void NoteServerVersion()
     {
         if (api is not { } current) return;
-        try { await current.EnsureDeviceKeyAsync(); } catch (Exception error) when (error is HttpRequestException or TaskCanceledException) { }
+        var version = current.ServerVersion;
+        if (connection.ServerVersionNoted && version == connection.ServerVersion) return;
+        connection.ServerVersionNoted = true; connection.ServerVersion = version;
+        var parsed = ServerVersions.Parse(version);
+        Log.Info(version is null ? $"The server names no version: it runs a dashboard older than {ServerVersions.Minimum}, which this app needs; it keeps working."
+            : parsed is null ? "The server named a version that cannot be read; it is taken as older than " + ServerVersions.Minimum + "."
+            : parsed < ServerVersions.Minimum ? $"The server runs dashboard {parsed}, older than {ServerVersions.Minimum}, which this app needs; it keeps working."
+            : $"The server runs dashboard {parsed}.");
+        RenderServerNotice();
+    }
+    private string ServerNotice => api is not null && connection.ServerVersionNoted && ServerVersions.Outdated(connection.ServerVersion) ? T("This server runs an older Odyle; ask its operator to update.") : "";
+    private string shownServerNotice = "";
+    private void RenderServerNotice()
+    {
+        var notice = ServerNotice;
+        settings.ServerNoticeLabel.Text = notice; settings.ServerNoticeLabel.Visibility = notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // The footer shows it while it says nothing else, and drops it once it no longer applies.
+        if (StatusLabel.Text.Length == 0 || StatusLabel.Text == shownServerNotice) StatusLabel.Text = notice;
+        shownServerNotice = notice;
+    }
+    private static string Unpaired => T("This PC is no longer paired with your account. Copy a new connection link from the dashboard.");
+    // Saves the pairing on this PC: its device key keeps it paired however long the app is closed.
+    private void SavePairing(AuthResponse auth)
+    {
+        if (api is not { } current) return;
         try { SessionStore.Save(new SavedSession(current.Endpoint, auth.Token, current.DeviceKey)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or Win32Exception) { Log.Error("The connection could not be saved", error); Status(T("Connected, but this PC could not save the connection: {0}", error.Message)); }
     }
@@ -828,7 +862,8 @@ public partial class MainWindow : Window
         link.Connected(session); activeCharacterId = ""; accountId = auth.Record.Id; ShowAccount(auth.Record.DisplayName);
         // A fresh connection: a backend without the switch never pauses readers.
         NoteReaderPause(session.ReaderPaused ?? false); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
-        Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\"{(api.DeviceKey is null ? " without a device key" : "")}.");
+        Log.Info($"Connected to {api.Endpoint} as account {accountId} on device \"{PartyApi.DeviceName}\".");
+        NoteServerVersion();
         settings.RetryButton.Visibility = Visibility.Collapsed; ShowConnected(true); UsesPaths();
         var listed = await ReloadAsync();
         Status("");
@@ -988,7 +1023,7 @@ public partial class MainWindow : Window
             var auth = await next.PairAsync(details.Code); var previous = api; UseApi(next);
             // Pairing again replaces this PC's previous pairing.
             if (previous is not null) { await UnpairQuietlyAsync(previous); previous.Dispose(); }
-            settings.EndpointInput.Text = details.Endpoint; await SavePairingAsync(auth); settings.CodeInput.Clear(); await ConnectAsync(auth);
+            settings.EndpointInput.Text = details.Endpoint; SavePairing(auth); settings.CodeInput.Clear(); await ConnectAsync(auth);
         }
         // Paired and saved, but the session or the first reload failed (#79): the code is used up, so the
         // saved pairing is tried again by itself, like one the server could not confirm at start.
@@ -1428,7 +1463,7 @@ public partial class MainWindow : Window
             ("App", $"Odyle {Updater.Current} · {Updater.Runtime} · {(Updater.SelfContained ? "self-contained" : "small")} package · {(Updater.IsReleaseBuild ? "release" : "development")} build"),
             ("Windows", $"{Environment.OSVersion} · language {Localizer.Language} ({Localizer.Culture.Name})"),
             ("Npcap", npcap), ("Capture interfaces", adapters), ("Account", account), ("Reader", reader),
-            ("Adapter", ExperimentalOdyleDecoder.Version + (connection.AdapterOutdated ? " · refused by the server" : "")),
+            ("Adapter", OdyleDecoder.Version + (connection.AdapterOutdated ? " · refused by the server" : "")),
             ("Server", readerPaused ? "packet readers paused by the operators" : "packet readers allowed")], readerHistory, Log.Tail(80));
     }
     private void RenderNpcap()
@@ -1651,7 +1686,7 @@ public partial class MainWindow : Window
         next.LocationObserved += l => { if (l.Map is { } map) Log.Info($"Decoder: world load on map {map}."); };
         next.UpdateObserved += u =>
         {
-            var odyle = u.Resource == ExperimentalOdyleDecoder.OdyleResource;
+            var odyle = u.Resource == OdyleDecoder.OdyleResource;
             if (!odyle) lock (resources) if (resources.Count >= limit || !resources.Add(u.Resource)) return;
             Log.Info($"Decoder: {(odyle ? "Odyle update" : "stat update, not Odyle (once per run)")}, resource {u.Resource}, tag {u.Tag:X2}, direction {u.Direction}, values {u.Base} + {u.Bonus}, {u.TrailerBytes} trailer bytes.");
         };
@@ -1758,7 +1793,7 @@ public partial class MainWindow : Window
         // operators switched this one off. The update is looked for at once instead of at the daily
         // check, and the reading is tried again quietly every ten minutes in case the server takes
         // the adapter back.
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused && reading.ParserVersion == ExperimentalOdyleDecoder.Version)
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused && reading.ParserVersion == OdyleDecoder.Version)
         {
             var now = DateTimeOffset.UtcNow;
             if (!connection.AdapterOutdated) Log.Warn($"The server does not accept the adapter {reading.ParserVersion}; Odyle {Updater.Current} needs an update to keep reading.");
@@ -1823,25 +1858,24 @@ public partial class MainWindow : Window
             }
             if (attribution.DetectedKey != key)
             {
-                // Asked when a character is first named on a connection, and again at most once an hour for a server
-                // neither this build nor the server named yet (the server reads PLAYNC's list every night).
-                if (connection.NaWest is null || identity.Server is null && identity.Region is not null && DateTimeOffset.UtcNow - connection.ServersAskedAt > TimeSpan.FromHours(1))
+                // The server's names of the game servers win over this build's (GameIdentity.Learn). Asked when a character
+                // is first named on a connection, and again at most once an hour after an answer that could not be read or
+                // for a server neither this build nor the server named yet (the server reads PLAYNC's list every night).
+                var now = DateTimeOffset.UtcNow;
+                if (connection.ServersAskedAt == DateTimeOffset.MinValue || (!connection.ServersKnown || identity.Server is null && identity.Region is not null) && now - connection.ServersAskedAt > TimeSpan.FromHours(1))
                 {
-                    ServerRegions known;
-                    try { known = await api.GetServersAsync(); }
-                    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { known = ServerRegions.None; Log.Warn("The server's regions and game servers could not be read: " + error.Message); }
-                    connection.ServersAskedAt = DateTimeOffset.UtcNow; GameIdentity.Learn(known.Servers);
-                    // A server that does not list NA-West yet saves those characters as NA, as before (#4), and one that
-                    // does not know the Global servers' names saves them under the older ones; both stay for the connection.
-                    connection.NaWest ??= known.NaWest; connection.GlobalServers ??= known.GlobalServers;
-                    if (identity.Server is null && identity.Region is not null) identity = identity with { Server = GameIdentity.ServerOf(identity.ServerId).Server };
+                    connection.ServersAskedAt = now;
+                    // An answer that cannot be read keeps the names learned before.
+                    try { GameIdentity.Learn((await api.GetServersAsync()).Servers); connection.ServersKnown = true; }
+                    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { Log.Warn("The server's regions and game servers could not be read: " + error.Message); }
                 }
+                identity = identity with { Server = GameIdentity.ServerOf(identity.ServerId).Server };
                 if (identity.Server is null || identity.Region is null)
                 {
                     Status(T("Detected {0}, but its server ({1}) is not supported yet. Its Odyle is not saved.", identity.CharacterName, identity.ServerId));
                     RenderHero(); return;
                 }
-                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.ServerFor(connection.GlobalServers == true)!, identity.RegionFor(connection.NaWest == true)!);
+                var saved = await api.SaveCharacterAsync(identity.CharacterName, identity.Server, identity.Region);
                 currentCharacterId = saved.Id; attribution.DetectedKey = key; await ReloadAsync();
                 Log.Info($"{identity.CharacterName} · {identity.Server} is saved to the account."); Status("");
             }
@@ -2105,7 +2139,7 @@ public partial class MainWindow : Window
         if (api is not { } current) return;
         var session = await link.RenewSessionAsync(current);
         activeCharacterId = ""; publishedTotal = -1; publishFailure = null; publishBlockedUntil = DateTimeOffset.MinValue;
-        Log.Info("Started a new publisher session."); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
+        Log.Info("Started a new publisher session."); NoteServerVersion(); Status(""); NoteReaderPause(session.ReaderPaused); NoteShareLocation(session.ShareLocation); NotePvpStats(session.PvpStats); NoteShareTeammates(session.ShareTeammates);
         if (readerPaused) await FollowReaderPauseAsync();
         if (capture is not null && attribution.Latest is not null) await PublishCoreAsync();
         RenderHero();
@@ -2118,7 +2152,7 @@ public partial class MainWindow : Window
             var now = DateTimeOffset.UtcNow;
             // Paused by a 429: nothing is sent, and the quiet time does not count as a lost connection.
             if (link.Waiting(current, now)) return;
-            if (link.TokenDue(now)) { await SavePairingAsync(await current.SignInAsync()); link.TokenRenewedAt = now; }
+            if (link.TokenDue(now)) { SavePairing(await current.SignInAsync()); link.TokenRenewedAt = now; }
             if (link.SessionDue(now)) await ReconnectAsync();
             if (api is null) return;
             if (capture is { } running && attribution.Latest is not null)
@@ -2129,6 +2163,8 @@ public partial class MainWindow : Window
                 else if (activeCharacterId.Length > 0) { await InvalidateActiveAsync(); SetReaderState(ReaderState.Stale, T("No readable game packets for 20 seconds · the last value is kept but marked stale.")); RenderHero(); }
             }
             var answer = await api.HeartbeatAsync(link.SessionId, activeCharacterId.Length > 0 ? activeCharacterId : null, ReaderStatus(), gameVersion); link.LastTick = DateTimeOffset.UtcNow;
+            // A server updated while the app runs says so within one heartbeat.
+            NoteServerVersion();
             // The pause switch reaches every paired app within one heartbeat, both ways.
             NoteReaderPause(answer.ReaderPaused); await FollowReaderPauseAsync(); NoteShareLocation(answer.ShareLocation); NotePvpStats(answer.PvpStats); NoteShareTeammates(answer.ShareTeammates);
             // PvP events that could not be sent (no connection, a busy server) go with the next heartbeat.
@@ -2185,7 +2221,7 @@ public partial class MainWindow : Window
     private void WriteTrace()
     {
         if (trace is null) return;
-        try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), ExperimentalOdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
+        try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), OdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn("The decoder trace could not be written: " + error.Message); }
     }
     // The game build Steam installed (GameClient), logged whenever a game connection starts with
