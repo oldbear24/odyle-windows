@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Odyle.Core;
 PacketChecks.Run();
+CaptureChecks.Run();
 await LocationChecks.Run();
 await GroupChecks.Run();
 await PvpChecks.Run();
