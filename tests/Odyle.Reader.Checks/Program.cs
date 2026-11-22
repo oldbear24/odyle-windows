@@ -623,7 +623,7 @@ static partial class ReaderChecks
         foreach (var name in new[] { "Stopped", "Listening", "Live", "Stale", "Problem" })
         {
             Call(window, "SetReaderState", Enum.Parse(state, name), name);
-            var tray = Field("tray").GetValue(window)!; var icon = tray.GetType().GetProperty("Icon")!.GetValue(tray)!;
+            var icon = window.TrayIcon.CurrentIcon;
             var bitmap = icon.GetType().GetMethod("ToBitmap")!.Invoke(icon, null)!;
             bitmap.GetType().GetMethod("Save", [typeof(string)])!.Invoke(bitmap, [Path.Combine(directory, $"tray-{name.ToLowerInvariant()}.png")]);
         }
@@ -761,6 +761,8 @@ static partial class ReaderChecks
         Check(Enumerable.Range(0, 20).All(_ => Looked(true)), "a SYN-ACK looks at the connection table again");
         Check(clock.Elapsed > TimeSpan.FromMilliseconds(900) || !Looked(true), "at most 20 SYN-ACK looks a second");
     }
+    // A tray menu item (WinForms, read through reflection: the checks reference WPF only).
+    static object TrayItem(MainWindow window, string name) => typeof(Tray).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window.TrayIcon)!;
     static Window Settings(MainWindow window) => (Window)Field("settings").GetValue(window)!;
     // Fading while the game is in front (W#18), on the desktop: the real card, layered at 60 %, over a
     // stand-in for the game (both pinned on top), captured from the screen around the stand-in only.

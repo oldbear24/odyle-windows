@@ -252,8 +252,8 @@ static partial class ReaderChecks
         string ItemText(object item) => (string)item.GetType().GetProperty("Text")!.GetValue(item)!;
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "2026-10-17T10:00:00Z"), new Character("c2", "u", "Altie", "Lumiel", "GLOBAL_EU", 1090, true, true, "2026-10-17T09:00:00Z"), new Character("c3", "u", "", "Lumiel", "GLOBAL_EU", 0, false, false, "") });
         Call(window, "TrayMenuOpening");
-        var trayRows = ((System.Collections.IEnumerable)Field("charactersItem").GetValue(window)!.GetType().GetProperty("DropDownItems")!.GetValue(Field("charactersItem").GetValue(window))!).Cast<object>().Select(ItemText).ToArray();
-        Check(ItemText(Field("readerItem").GetValue(window)!) == "Stop reader" && ItemText(Field("trayStatusItem").GetValue(window)!) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
+        var trayRows = ((System.Collections.IEnumerable)TrayItem(window, "Characters").GetType().GetProperty("DropDownItems")!.GetValue(TrayItem(window, "Characters"))!).Cast<object>().Select(ItemText).ToArray();
+        Check(ItemText(TrayItem(window, "Reader")) == "Stop reader" && ItemText(TrayItem(window, "Status")) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
         Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ") && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · "), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
         // The card's "Your characters" (W#17): closed until asked, then the tray's rows; it opens by
         // itself while the game switches characters and closes once the game names the next one.
@@ -278,7 +278,7 @@ static partial class ReaderChecks
         // The tray icon carries the reader's state: a dot while it reads, none when stopped, each drawn once.
         var readerStates = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         var stateBefore = Field("readerState").GetValue(window)!; var lineBefore = Control<TextBlock>(window, "PacketStateLabel").Text;
-        object TrayIconNow() { var icon = Field("tray").GetValue(window)!; return icon.GetType().GetProperty("Icon")!.GetValue(icon)!; }
+        object TrayIconNow() => window.TrayIcon.CurrentIcon;
         Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live"); var liveIcon = TrayIconNow();
         Call(window, "SetReaderState", Enum.Parse(readerStates, "Stale"), "Stale"); var staleIcon = TrayIconNow();
         Call(window, "SetReaderState", Enum.Parse(readerStates, "Stopped"), "Stopped"); var stoppedIcon = TrayIconNow();

@@ -82,14 +82,9 @@ public partial class MainWindow : Window
     private string? renderedTasksCharacter;
     // Pinned above other windows and the checklist beside the card: remembered on this PC.
     private Preferences preferences = new();
-    private readonly Forms.ToolStripMenuItem pinItem = new(T("Stay on top")) { CheckOnClick = true };
     // Compact mode (the card cut down to your Odyle and your party's, in the same window and
-    // place), its tray item, and the shortcut registered for it on a message-only window.
+    // place), and the shortcut registered for it on a message-only window.
     private bool compactMode;
-    private readonly Forms.ToolStripMenuItem compactItem = new(T("Compact mode")) { CheckOnClick = true };
-    // The tray menu says what the reader does and lists the account's characters (W#17); both are
-    // filled each time the menu opens (TrayMenuOpening).
-    private readonly Forms.ToolStripMenuItem trayStatusItem = new("") { Enabled = false }, readerItem = new(""), tasksItem = new(T("Show tasks")) { CheckOnClick = true }, charactersItem = new(T("Characters"));
     private NativeWindows.Shortcut? shortcut;
     private string hotkeyProblem = "";
     // The value and cube cost the card shows, for the strip.
@@ -125,9 +120,10 @@ public partial class MainWindow : Window
     internal UpdateFlow Updates => updates;
     // The window's position is remembered a second after it last moved.
     private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private readonly Forms.NotifyIcon tray;
-    // The last tray notification, kept for the checks (the tray icon is off there).
-    internal (string Title, string Text)? LastNotice { get; set; }
+    // The tray icon, its menu and its notifications (Tray); the menu is filled as it opens (TrayMenuOpening).
+    private readonly Tray tray;
+    internal Tray TrayIcon => tray;
+    internal (string Title, string Text)? LastNotice { get => tray.LastNotice; set => tray.LastNotice = value; }
     private int hiddenTicks;
 
     public MainWindow() : this(true) { }
@@ -140,17 +136,9 @@ public partial class MainWindow : Window
         partyQueue = new(() => api, id => rooms.Any(r => r.Id == id), ApplyRoomsAsync, ApplySnapshots);
         updates = new(() => api, () => quitting, () => busy, card => { RenderUpdate(); if (card) RenderHero(); }, NotifyReady, Status, () => QuitAsync(restart: true));
         InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
-        tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
-        var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(T("Open Odyle"), null, (_, _) => Dispatcher.Invoke(ShowWindow));
-        readerItem.Click += (_, _) => Dispatcher.Invoke(() => Reader_Click(readerItem, new RoutedEventArgs())); menu.Items.Add(readerItem);
-        tasksItem.Click += (_, _) => Dispatcher.Invoke(() => { SetTasksShown(tasksItem.Checked, persist: true); if (tasksItem.Checked) ShowWindow(); }); menu.Items.Add(tasksItem);
-        menu.Items.Add(charactersItem); menu.Opening += (_, _) => Dispatcher.Invoke(TrayMenuOpening);
-        pinItem.Click += (_, _) => Dispatcher.Invoke(() => SetStayOnTop(pinItem.Checked, persist: true)); menu.Items.Add(pinItem);
-        compactItem.Click += (_, _) => Dispatcher.Invoke(() => { SetCompact(compactItem.Checked, persist: true); ShowWindow(); }); menu.Items.Add(compactItem);
-        menu.Items.Add(T("Settings"), null, (_, _) => Dispatcher.Invoke(() => { ShowWindow(); OpenSettings(); }));
-        menu.Items.Add(T("Quit"), null, async (_, _) => await Dispatcher.InvokeAsync(() => Guarded("Quit from the tray", QuitAskedAsync)).Task.Unwrap()); tray.ContextMenuStrip = menu;
-        tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
+        tray = new(enableTray, Dispatcher, Brush, new(Open: ShowWindow, Reader: () => Reader_Click(this, new RoutedEventArgs()), Tasks: shown => { SetTasksShown(shown, persist: true); if (shown) ShowWindow(); },
+            Opening: TrayMenuOpening, Pin: on => SetStayOnTop(on, persist: true), Compact: on => { SetCompact(on, persist: true); ShowWindow(); }, Settings: () => { ShowWindow(); OpenSettings(); },
+            Quit: () => Guarded("Quit from the tray", QuitAskedAsync)));
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => NativeWindows.DarkFrame(settings);
@@ -221,45 +209,6 @@ public partial class MainWindow : Window
         if (choice == (preferences.Language is "en" or "cs" ? preferences.Language : Automatic)) return;
         PreferencesStore.Save(preferences = preferences with { Language = choice });
         settings.LanguageRestartPanel.Visibility = Resolve(choice, System.Globalization.CultureInfo.CurrentUICulture) != Localizer.Language ? Visibility.Visible : Visibility.Collapsed;
-    }
-    // The tray icon carries the reader's state (W#17): the card's reader dot in its corner, the
-    // same colour (live, listening, waiting or stale, a problem), none while the reader is stopped.
-    // Each variant is drawn once and kept.
-    private readonly Dictionary<string, System.Drawing.Icon> trayIcons = [];
-    private System.Drawing.Icon TrayIcon(string? dot)
-    {
-        if (dot is null) return trayIcons.TryGetValue("", out var plain) ? plain : trayIcons[""] = LoadTrayIcon();
-        if (trayIcons.TryGetValue(dot, out var known)) return known;
-        try
-        {
-            var color = ((System.Windows.Media.SolidColorBrush)Brush(dot)).Color;
-            using var bitmap = TrayIcon(null).ToBitmap();
-            using (var g = System.Drawing.Graphics.FromImage(bitmap))
-            {
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                var size = bitmap.Width * 0.46f; var at = bitmap.Width - size - 0.5f;
-                using var ring = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(255, 12, 18, 14));
-                using var fill = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(color.A, color.R, color.G, color.B));
-                g.FillEllipse(ring, at - 2, at - 2, size + 2, size + 2);
-                g.FillEllipse(fill, at, at, size - 2, size - 2);
-            }
-            var handle = bitmap.GetHicon();
-            // A copy owns its own handle, so the one GetHicon made can be released right away.
-            using (var drawn = System.Drawing.Icon.FromHandle(handle)) trayIcons[dot] = (System.Drawing.Icon)drawn.Clone();
-            NativeWindows.ReleaseIcon(handle);
-            return trayIcons[dot];
-        }
-        catch { return TrayIcon(null); }
-    }
-    private static System.Drawing.Icon LoadTrayIcon()
-    {
-        try
-        {
-            var resource = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Odyle;component/Assets/odyle.ico"));
-            if (resource is not null) return new System.Drawing.Icon(resource.Stream, 32, 32);
-        }
-        catch { }
-        return System.Drawing.SystemIcons.Application;
     }
     protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); NativeWindows.DarkFrame(this); HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(layering.Hook); }
     private readonly NativeWindows.Layering layering = new();
@@ -347,7 +296,7 @@ public partial class MainWindow : Window
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text);
-        tray.Icon = TrayIcon(state == ReaderState.Stopped ? null : dot);
+        tray.ShowState(state == ReaderState.Stopped ? null : dot);
         if (PacketStateLabel.Text != message) { PacketStateLabel.Text = message; Translation.Announce(PacketStateLabel); }
         // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
         // restricted, a capture that failed. It reads again: the next problem is told again.
@@ -374,14 +323,11 @@ public partial class MainWindow : Window
     private void TrayMenuOpening()
     {
         var state = PacketStateLabel.Text is { Length: > 0 } text ? text : T("Not connected");
-        trayStatusItem.Text = state.Length > 60 ? state[..59] + "…" : state;
-        readerItem.Text = capture is not null ? T("Stop reader") : T("Start reader");
-        readerItem.Enabled = capture is not null || api is not null || Offline;
-        tasksItem.Checked = TasksShown; tasksItem.Enabled = !compactMode;
-        charactersItem.DropDownItems.Clear();
-        var listed = ListedCharacters();
-        foreach (var c in listed) charactersItem.DropDownItems.Add($"{c.CharacterName} · {CharacterDetail(c)}", null, (_, _) => Dispatcher.Invoke(ShowWindow));
-        charactersItem.Enabled = listed.Length > 0;
+        tray.Status.Text = state.Length > 60 ? state[..59] + "…" : state;
+        tray.Reader.Text = capture is not null ? T("Stop reader") : T("Start reader");
+        tray.Reader.Enabled = capture is not null || api is not null || Offline;
+        tray.Tasks.Checked = TasksShown; tray.Tasks.Enabled = !compactMode;
+        tray.ListCharacters(ListedCharacters().Select(c => $"{c.CharacterName} · {CharacterDetail(c)}").ToArray());
     }
     // The account's characters as the tray menu and the card list them: the fullest first (equal
     // ones: the longest unread first), at most 20; each with its Odyle, cubes at the card's cost
@@ -502,8 +448,7 @@ public partial class MainWindow : Window
         RenderClock();
         var name = character?.CharacterName ?? accountName;
         var tip = offline ? T("Odyle · Offline") : !connected ? T("Odyle · Not connected") : value is { } shown ? $"Odyle · {name} · {shown.ToString("N0", Culture)}" : $"Odyle · {name}";
-        if (tip.Length > 63) tip = tip[..63];
-        if (tray.Text != tip) tray.Text = tip;
+        tray.ShowTip(tip);
         heroValue = value; heroCost = cost; RenderCompact();
     }
     // The pill beside the value: what happens to the reading on the card. Sending turns Stale with the time.
@@ -1111,12 +1056,7 @@ public partial class MainWindow : Window
         PreferencesStore.Save(preferences = preferences with { HiddenAnnouncement = hiddenAnnouncement });
     }
     // Tray notifications (toasts on Windows 10 and 11); clicking one opens the window.
-    private void Notify(string title, string text)
-    {
-        LastNotice = (title, text); Log.Info("Notification: " + title);
-        // Windows keeps 63 characters of a notification title and 255 of its text.
-        if (tray.Visible) tray.ShowBalloonTip(10000, title.Length > 63 ? title[..62] + "…" : title, text.Length > 255 ? text[..254] + "…" : text, Forms.ToolTipIcon.Info);
-    }
+    private void Notify(string title, string text) => tray.Notify(title, text);
     // The account's notification settings from the rooms answer (TrayReminders.FollowAsync).
     private Task FollowNotificationsAsync(NotificationSettings? listed) => reminders.FollowAsync(listed, api);
     // Planned runs the account joined on the dashboard, reminded in the tray (TrayReminders.Runs).
@@ -1225,7 +1165,7 @@ public partial class MainWindow : Window
     // header pin, the tray menu and settings toggle the same remembered choice.
     private void SetStayOnTop(bool on, bool persist)
     {
-        Topmost = on; pinItem.Checked = on; settings.StayOnTopToggle.IsChecked = on;
+        Topmost = on; tray.Pin.Checked = on; settings.StayOnTopToggle.IsChecked = on;
         PinButton.Foreground = Brush(on ? "Mint" : "Muted");
         PinButton.ToolTip = on ? T("Pinned above other windows · click to unpin") : T("Stay on top of other windows, for example the game in windowed mode");
         if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
@@ -1283,7 +1223,7 @@ public partial class MainWindow : Window
     // the tray or the shortcut; back the same way, with a double-click or with ⤢.
     private void SetCompact(bool on, bool persist)
     {
-        compactItem.Checked = on;
+        tray.Compact.Checked = on;
         if (persist) PreferencesStore.Save(preferences = preferences with { CompactMode = on });
         if (on == compactMode) return;
         compactMode = on;
