@@ -124,8 +124,8 @@ internal sealed class UpdateFlow
                 Staged = await Task.Run(() => Download(release, progress, CancellationToken.None));
             }
             Note = ""; Log.Info($"Odyle {Staged.Version} is downloaded, verified and waiting in {Staged.Directory}.");
-            if (install || UpdateNow) return;
-            ready(Staged);
+            // Installed below, after the finally (a return here would skip it, as it did from #1 to 0.36.1).
+            if (!install && !UpdateNow) ready(Staged);
         }
         // An answer that is not GitHub's release data (a proxy's page, say) is a failed check too (ReleaseFeed.Parse).
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)

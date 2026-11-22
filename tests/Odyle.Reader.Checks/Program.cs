@@ -109,6 +109,8 @@ static partial class ReaderChecks
         Add("server-busy", ServerBusyScenario);
         Add("held-back", HeldBackScenario);
         Add("update-now", UpdateNowScenario);
+        Add("update-now-check", UpdateNowCheckScenario);
+        Add("start-check", StartCheckScenario);
         Add("quit-cap", QuitCapScenario);
         Add("quit-restart", QuitRestartScenario);
         Add("quit-after-install", QuitAfterInstallScenario);

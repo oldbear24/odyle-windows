@@ -107,10 +107,12 @@ static partial class ReaderChecks
         await updates.HeldBackAsync([newer]);
         Check(updates.Staged is null && forgotten.Count == 1 && forgotten[0].SequenceEqual([newer]) && asked == 0 && Control<Button>(window, "UpdateButton").Visibility == Visibility.Collapsed,
             "a downloaded version the server holds back is dropped and no longer offered");
-        // This build held back: the latest release, older than it, is looked for and downloaded at once.
+        // This build held back: the latest release, older than it, is downloaded and installed at once, and Odyle restarts
+        // (the next start would not install an older package).
         var older = new Version(0, 1, 0); latest = new AppRelease(older, "0.1.0", "https://github.com/oldbear24/odyle-windows/releases/tag/0.1.0", null, []);
+        Ended = null;
         await updates.HeldBackAsync([Updater.Current]);
-        Check(asked == 1 && updates.Staged?.Version == older, "a build the server holds back looks for the latest release at once and downloads it");
+        Check(asked == 1 && applied.SequenceEqual([older]) && Ended == (true, true) && updates.Installed, "a build the server holds back goes back to the latest release at once and restarts into it");
     }
     // "Update all apps now" (#96): a build that is current does nothing; one found later than the start's check waits
     // and is told once; asked to update now, a downloaded update installs at once, and a failed copy says so and stays.
@@ -137,6 +139,28 @@ static partial class ReaderChecks
         failCopy = false;
         await updates.UpdateNowAsync(new UpdateRequest(null));
         Check(applied.SequenceEqual([newer]) && Ended == (true, true) && asked == 1, "asked to update now, the downloaded update installs at once and Odyle restarts");
+    }
+    // Asked to update now with nothing downloaded yet, and the update found by the start's check: what the check finds
+    // is installed at once and Odyle restarts.
+    static async Task UpdateNowCheckScenario(MainWindow window)
+    {
+        var updates = window.Updates; var applied = new List<Version>(); var newer = new Version(99, 0, 0);
+        updates.IsRelease = () => true; updates.FindStaged = () => null; updates.Forget = _ => { }; updates.Apply = update => applied.Add(update.Version);
+        updates.Check = (_, _) => Task.FromResult<AppRelease?>(new AppRelease(newer, "99.0.0", "https://github.com/oldbear24/odyle-windows/releases/tag/99.0.0", null, []));
+        updates.Download = (release, _, _) => Task.FromResult(new StagedUpdate(release.Version, Path.GetTempPath(), release.Url));
+        updates.Schedule.Reached(DateTimeOffset.UtcNow, upToDate: true); Ended = null;
+        await updates.UpdateNowAsync(new UpdateRequest(newer));
+        Check(applied.SequenceEqual([newer]) && Ended == (true, true), "asked to update now with nothing downloaded, the update is downloaded, installed and Odyle restarts");
+    }
+    static async Task StartCheckScenario(MainWindow window)
+    {
+        var updates = window.Updates; var applied = new List<Version>(); var newer = new Version(99, 0, 0);
+        updates.IsRelease = () => true; updates.FindStaged = () => null; updates.Forget = _ => { }; updates.Apply = update => applied.Add(update.Version);
+        updates.Check = (_, _) => Task.FromResult<AppRelease?>(new AppRelease(newer, "99.0.0", "https://github.com/oldbear24/odyle-windows/releases/tag/99.0.0", null, []));
+        updates.Download = (release, _, _) => Task.FromResult(new StagedUpdate(release.Version, Path.GetTempPath(), release.Url));
+        Ended = null; window.LastNotice = null;
+        await updates.CheckAsync(manual: false);
+        Check(applied.SequenceEqual([newer]) && Ended == (true, true) && window.LastNotice is null, "the start's first check installs what it finds at once and restarts, without a notification");
     }
     // Quitting (#96): a capture that will not stop holds the quit for at most 4 seconds.
     static async Task QuitCapScenario(MainWindow window)
