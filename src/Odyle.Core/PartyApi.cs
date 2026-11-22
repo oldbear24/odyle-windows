@@ -56,7 +56,7 @@ public sealed record Character(string Id, string User, string CharacterName, str
 public sealed record OdyleParts(int Base, int Bonus);
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
-// Sharing (the member-wide switch) and each character's Shared say what the room sees (null: older backends).
+// Sharing (whether the member shares any character here) and each character's Shared say what the room sees.
 public sealed record RoomMember(string Id, string User, string Role, string DisplayName, Character[] Characters, bool? Sharing = null);
 // A planned run of a room: planner and attendees are account ids, startsAt a PocketBase date. Waiting are the attendees beyond its dungeon's party size, who wait for a place: they stay in Attendees (null from backends before dashboard 0.41).
 public sealed record PlannedRun(string Id, string Dungeon, string StartsAt, string Note = "", string Planner = "", string[]? Attendees = null, string[]? Waiting = null);

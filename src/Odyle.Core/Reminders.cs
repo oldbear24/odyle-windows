@@ -10,8 +10,6 @@ public static class Reminders
 {
     public static readonly TimeSpan Lead = TimeSpan.FromMinutes(15);
     public static string Key(PlannedRun run, int lead) => run.Id + "|" + run.StartsAt + "|" + lead;
-    // Apps before reminder times kept run|start for the 15 minutes.
-    static string LegacyKey(PlannedRun run) => run.Id + "|" + run.StartsAt;
     // Runs the account goes to that are within a reminder time and were not reminded at it yet, soonest first.
     public static DueRun[] Due(IEnumerable<RoomSnapshot> snapshots, string accountId, DateTimeOffset now, IReadOnlySet<string> reminded, IReadOnlyCollection<int>? leads = null)
     {
@@ -26,7 +24,7 @@ public static class Reminders
                 var within = times.Where(lead => x.Start!.Value - now <= TimeSpan.FromMinutes(lead)).ToArray();
                 if (within.Length == 0) return null;
                 var lead = within.Min();
-                if (reminded.Contains(Key(x.Run, lead)) || lead <= Lead.TotalMinutes && reminded.Contains(LegacyKey(x.Run))) return null;
+                if (reminded.Contains(Key(x.Run, lead))) return null;
                 return new DueRun(x.Room, x.Run, x.Start!.Value, Key(x.Run, lead), lead, within.Select(l => Key(x.Run, l)).ToArray());
             }).OfType<DueRun>().ToArray();
     }
