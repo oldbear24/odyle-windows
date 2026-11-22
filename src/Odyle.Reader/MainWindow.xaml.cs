@@ -2679,6 +2679,8 @@ public partial class MainWindow : Window
     }
     // "Odyle.exe --unpair" (the uninstaller) asks the running Odyle to quit before it forgets the pairing.
     public async void QuitOnRequest() { Log.Info("Another start of Odyle (--unpair) asked this one to quit."); await Guarded("Quitting for --unpair", () => QuitAsync()); }
+    // How quitting ends the app: restarted (in the tray when it was hidden) or shut down. The checks end nothing.
+    internal Action<bool, bool> EndApp = (restart, tray) => { if (restart && System.Windows.Application.Current is App app) app.Restart(tray); else System.Windows.Application.Current.Shutdown(); };
     private async Task QuitAsync(bool restart = false)
     {
         // Quitting already (an update found at start while the user quits) is not repeated.
@@ -2701,7 +2703,7 @@ public partial class MainWindow : Window
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); whatsNew?.Close();
             if (hotkeyWindow is not null) { UnregisterHotKey(hotkeyWindow.Handle, HotkeyId); hotkeyWindow.Dispose(); }
-            if (restart && System.Windows.Application.Current is App app) app.Restart(tray: hidden); else System.Windows.Application.Current.Shutdown();
+            EndApp(restart, hidden);
         }
     }
 }

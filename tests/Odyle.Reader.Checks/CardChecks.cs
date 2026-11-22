@@ -1,0 +1,240 @@
+using System.IO;
+using System.Reflection;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Shell;
+using System.Windows.Threading;
+using Odyle.Core;
+using Odyle.Reader;
+
+// The reading card: which character a reading belongs to, sending it, the operators' reader pause, the
+// restart hand-over and what the tray and the card list of the account's characters.
+static partial class ReaderChecks
+{
+    static void AttributionScenario(MainWindow window)
+    {
+        // A decoded reading is displayed immediately, before its owner is known or saved.
+        var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
+        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
+        Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
+        Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes"), "cube count derives from the reading");
+        Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
+        Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
+        Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
+        // A snapshot the game leaves unnamed for 30 seconds came without a world load: it goes to the
+        // named character only if that character's Odyle was already read this run.
+        string Owner() => (string)Field("readingOwnerKey").GetValue(window)!;
+        Field("gameCharacterKey").SetValue(window, "TestHero|2304"); Field("namedHasReading").SetValue(window, true);
+        Call(window, "AttributePending");
+        Check(Owner() == "", "during the loading screen a snapshot waits for the name even when the named character had a reading");
+        Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Field("namedHasReading").SetValue(window, false);
+        Call(window, "AttributePending");
+        Check(Owner() == "", "an unnamed snapshot never goes to a named character that had no Odyle reading");
+        Field("namedHasReading").SetValue(window, true); Call(window, "AttributePending");
+        Check(Owner() == "TestHero|2304", "after 30 seconds an unnamed snapshot goes to the named character whose Odyle was read");
+        // A resync may have lost a switch (the new character's snapshot and identity): the next reading,
+        // even a live update, waits for the game's name and never falls back to the character named before.
+        Call(window, "OnResync");
+        Call(window, "OnCandidate", inert, new PacketCandidate(200, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 200 });
+        Field("pendingSince").SetValue(window, DateTimeOffset.UtcNow.AddSeconds(-31)); Call(window, "AttributePending");
+        Check(Owner() == "" && !(bool)Field("namedHasReading").GetValue(window)! && Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "after a resync the next reading waits for the game's name instead of going to the character named before");
+        Call(window, "OnCandidate", inert, new PacketCandidate(205, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
+        Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Check(Owner() == "", "and so do the updates after it");
+        // Two game clients on this PC would mix their characters' messages: nothing is read or named until one closes.
+        Field("readingOwnerKey").SetValue(window, "TestHero|2304"); Field("gameCharacterKey").SetValue(window, "TestHero|2304");
+        Call(window, "OnTwoClients");
+        Call(window, "OnCandidate", inert, new PacketCandidate(999, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 999 });
+        Call(window, "OnSnapshotWithoutOdyle", inert);
+        Check(Field("latest").GetValue(window) is null && Owner() == "" && (string)Field("gameCharacterKey").GetValue(window)! == "" && !(bool)Field("odyleMissingDue").GetValue(window)!, "with two game clients nothing is read, attributed or named");
+        Check((string)Call(window, "ReaderStatus")! == "two-clients", "the heartbeat reports two game clients");
+        Field("twoClients").SetValue(window, false);
+        // The heartbeat's reader state: listening until this connection gave a reading, then reading.
+        Field("connectionRead").SetValue(window, false); Call(window, "SetReaderState", Enum.Parse(Field("readerState").FieldType, "Listening"), "Listening to AION2 · waiting for the Odyle snapshot.");
+        var listening = (string)Call(window, "ReaderStatus")!;
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 }); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Check(listening == "listening" && (string)Call(window, "ReaderStatus")! == "reading", "the heartbeat reports listening until Odyle is read on this connection, then reading");
+        // A reader started after login (no snapshot this run) shows the next live update and says the game names the character soon.
+        Call(window, "ResetAttribution");
+        Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
+        Check(Control<TextBlock>(window, "ValueLabel").Text == "380" && Control<TextBlock>(window, "ReadingLabel").Text == "The game names the character within a few minutes, or at once after a relog or channel change.", "a live update read without a snapshot is shown and waits for the game's name");
+        ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+    }
+    static async Task PublishingScenario(MainWindow window)
+    {
+        // The state the card has after a reader started after login read a live update the game has not named yet.
+        var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
+        Call(window, "OnCandidate", inert, new PacketCandidate(380, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 380 });
+        ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        // A snapshot without Odyle waits for the game's name like any snapshot; the named character then
+        // says it has no Odyle yet instead of waiting for a snapshot forever. A reading still waiting for a
+        // name belonged to the character the game left.
+        var server = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, server)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+        Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, "");
+        Call(window, "OnSnapshotWithoutOdyle", inert);
+        Check(Field("latest").GetValue(window) is null, "an unnamed reading is dropped by a snapshot without Odyle");
+        await (Task)Call(window, "SaveDetectedCharacterAsync", inert, new GameIdentity(50, "Newcomer", 2304, "Lumiel", "GLOBAL_EU"))!;
+        Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2", "a named character without Odyle says so, once");
+        // Its first Odyle replaces the note. A server that refuses this build's adapter makes the card ask for an
+        // update instead of repeating the server's message, and the update check runs at once.
+        Call(window, "OnCandidate", inert, new PacketCandidate(15, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
+        Call(window, "AttributePending"); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Check((string)Field("odyleMissingKey").GetValue(window)! == "", "a reading clears the note");
+        await (Task)Call(window, "PublishLatestAsync")!;
+        Check(server.Reports == 1 && Conn(window).AdapterOutdated && Control<TextBlock>(window, "StateText").Text == "Not saved" && Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · it looks for one every hour." && Control<TextBlock>(window, "PacketStateLabel").Text == "The server no longer accepts readings from this Odyle version.", "a refused adapter asks for an update");
+        Check((DateTimeOffset)Field("publishBlockedUntil").GetValue(window)! > DateTimeOffset.UtcNow.AddMinutes(9) && DateTimeOffset.UtcNow - (DateTimeOffset)Field("outdatedCheckAt").GetValue(window)! < TimeSpan.FromMinutes(1), "the reading is tried again in ten minutes and the update check ran at once");
+        Field("staged").SetValue(window, new StagedUpdate(new Version(9, 9, 9, 9), Path.GetTempPath(), "https://github.com/oldbear24/odyle-windows/releases")); Call(window, "RenderHero");
+        Check(Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · Restart to update installs it.", "a downloaded update is offered");
+        Field("staged").SetValue(window, null);
+        server.Refusal = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); await (Task)Call(window, "PublishLatestAsync")!;
+        Check(server.Reports == 2 && !Conn(window).AdapterOutdated && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
+        // A live reading says no more than that: the value is on the card, so neither the reader line nor an age repeats it.
+        Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Live" && Control<TextBlock>(window, "AgeLabel").Visibility == Visibility.Collapsed, "a live reading has a short reader line and no age: " + Control<TextBlock>(window, "PacketStateLabel").Text);
+        // The first live reading offers to start with Windows (answered below, with Start with Windows).
+        Check(Control<Border>(window, "AutostartOffer").Visibility == Visibility.Visible, "the first live reading offers to start with Windows");
+        // The reading carries the game's two numbers and what changed since the one saved before it.
+        Check(server.LastReport.Contains("\"base\":15,\"bonus\":0,\"kind\":\"update\",\"delta\":null"), "the first reading of a live streak carries base and bonus and is an update");
+        async Task Change(int total, int natural, int items)
+        {
+            Call(window, "OnCandidate", inert, new PacketCandidate(total, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = natural, Bonus = items });
+            ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop(); await (Task)Call(window, "PublishLatestAsync")!;
+        }
+        await Change(0, 0, 0);
+        Check(server.LastReport.Contains("\"base\":0,\"bonus\":0,\"kind\":\"spend\",\"delta\":-15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 0 · items 0 · −15 at "), "a spend is sent as one, and the card shows the split and the change");
+        await Change(15, 15, 0);
+        Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at "), "a rise of the natural pool alone is a regeneration tick");
+        // The Odyle clock under the split: the next tick and when each cap the character may have is reached; the operators can hide it.
+        var odyleClock = Control<TextBlock>(window, "OdyleClockLabel");
+        Check(odyleClock.Visibility == Visibility.Visible && System.Text.RegularExpressions.Regex.IsMatch(odyleClock.Text, @"^\+15 in .+ · full ≈ .+ at 560 / .+ at 840$"), "the card shows the Odyle clock: " + odyleClock.Text);
+        Field("clockRules").SetValue(window, ClockRules.Default with { Paused = true }); Call(window, "RenderOdyleClock");
+        Check(odyleClock.Visibility == Visibility.Collapsed, "the operators can hide the Odyle clock");
+        Field("clockRules").SetValue(window, null);
+        // Near its cap the clock turns orange (11 ticks to 560: 30 to 33 hours), and red with the value once the pool is full.
+        var shownReading = Field("latest").GetValue(window);
+        Field("latest").SetValue(window, new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }); Call(window, "RenderOdyleClock");
+        Check(odyleClock.Text.StartsWith("Nearly full · +15 in ") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
+        // The taskbar button fills with the natural pool towards its cap, in the card's colours.
+        Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
+        Field("latest").SetValue(window, new PacketCandidate(560, ExperimentalOdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }); Call(window, "RenderOdyleClock");
+        Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560") && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
+        Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
+        Field("latest").SetValue(window, shownReading); Call(window, "RenderOdyleClock");
+        Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
+        Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Normal }, "far from its cap the taskbar button is green again");
+        // The Discord status (off by default): while the reader has the game, the card's character with its Odyle.
+        Check(Settings(window).FindName("DiscordToggle") is CheckBox { IsChecked: false } && Call(window, "PresenceNow") is null, "the Discord status is off unless chosen");
+        Call(window, "SetDiscordStatus", true, false); Field("gamePresent").SetValue(window, true);
+        Check(Call(window, "PresenceNow") is DiscordActivity { Details: var details } && details.EndsWith(" · " + Control<TextBlock>(window, "ValueLabel").Text + " Odyle") && ((TextBlock)Settings(window).FindName("DiscordNoteLabel")).Visibility == Visibility.Visible, "chosen, Discord shows the character and its Odyle while the game is read");
+        Field("gamePresent").SetValue(window, false);
+        Check(Call(window, "PresenceNow") is null, "without the game Discord shows nothing");
+        Call(window, "SetDiscordStatus", false, false);
+        // The server's operators pause packet readers: a reading answered 503 stops the capture, the card
+        // says so with the operators' announcement, and nothing starts until the heartbeat says it is over.
+        server.Paused = true; Field("publishedTotal").SetValue(window, -1); Field("readerWanted").SetValue(window, true);
+        await (Task)Call(window, "PublishLatestAsync")!; await Task.Delay(100);
+        Check((bool)Field("readerPaused").GetValue(window)! && Field("capture").GetValue(window) is null && Control<TextBlock>(window, "PacketStateLabel").Text == "Paused by the server's operators · the capture is off until they resume it." && Control<TextBlock>(window, "StateText").Text == "Paused" && !Control<Button>(window, "ReportButton").IsEnabled, "a reading refused for the pause stops the capture");
+        Check(Control<TextBlock>(window, "ReadingLabel").Text == "Paused by the server · reading resumes by itself when the operators allow it again.", "the card says the server paused reading");
+        Call(window, "ShowAnnouncement", new Announcement("Readers are off while we check the new game patch.", "warning")); Call(window, "RenderHero");
+        Check(Control<TextBlock>(window, "ReadingLabel").Text == "Paused by the server · Readers are off while we check the new game patch." && Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed, "the operators' announcement moves into the card");
+        await (Task)Call(window, "StartReaderAsync")!;
+        Check(Field("capture").GetValue(window) is null && Control<TextBlock>(window, "StateText").Text == "Paused", "nothing starts while readers are paused");
+        // The heartbeat says the pause is over: the reader starts again by itself (here it finds no Npcap and says so).
+        server.Paused = false; Npcap.Probe = () => false; Field("sessionId").SetValue(window, "s"); Field("needsReconnect").SetValue(window, false);
+        Field("tokenRenewedAt").SetValue(window, DateTimeOffset.UtcNow); Field("lastTick").SetValue(window, DateTimeOffset.UtcNow);
+        await (Task)Call(window, "PulseAsync")!; await Task.Delay(100);
+        var npcapTimer = (DispatcherTimer)Field("npcapTimer").GetValue(window)!;
+        Check(!(bool)Field("readerPaused").GetValue(window)! && Control<TextBlock>(window, "PacketStateLabel").Text == "Npcap is not installed · Odyle needs it to read the game." && Control<Button>(window, "NpcapLink").Visibility == Visibility.Visible && npcapTimer.IsEnabled, "once the pause is over the reader starts again by itself");
+        Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "StateText").Text != "Paused" && Control<Button>(window, "ReportButton").IsEnabled, "the announcement returns above the card");
+        npcapTimer.Stop(); Npcap.Probe = Npcap.Installed; Call(window, "ShowAnnouncement", new object[] { null! }); Field("readerWanted").SetValue(window, false);
+    }
+    static async Task HandoverScenario(MainWindow window)
+    {
+        Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
+        foreach (var key in new[] { "gameCharacterKey", "detectedCharacterKey", "readingOwnerKey" }) Field(key).SetValue(window, "TestHero|2304");
+        Field("gameCharacterName").SetValue(window, "TestHero"); Field("latest").SetValue(window, new PacketCandidate(390, ExperimentalOdyleDecoder.Version));
+        Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
+        Field("activeCharacterId").SetValue(window, "c1");
+        var handover = (Handover?)Call(window, "LiveHandover");
+        Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: ExperimentalOdyleDecoder.Version }, "a live reading is handed to the restart");
+        HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
+        // The restarted build: connected again, the reader running, nothing named by the game yet.
+        Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
+        await (Task)Call(window, "TakeOverAsync")!;
+        Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is PacketCandidate { Total: 390 }, "the next start takes the character over, once");
+        Check(Control<TextBlock>(window, "HeroTitle").Text == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
+        HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
+        Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");
+        HandoverStore.Save(handover! with { AccountId = "someone-else" }); await (Task)Call(window, "StopCaptureAsync", false)!;
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "" && Field("latest").GetValue(window) is null, "another account's hand-over is ignored");
+        // The reader starts before the server is asked (#86): a snapshot it read meanwhile came with a world load,
+        // so it waits for the game's name and the character is not taken over.
+        await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover!);
+        var loading = new PacketCapture(); Field("capture").SetValue(window, loading);
+        Call(window, "OnCandidate", loading, new PacketCandidate(400, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 10, Bonus = 390 });
+        await (Task)Call(window, "TakeOverAsync")!; ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
+        Check(!File.Exists(HandoverStore.FilePath) && (string)Field("readingOwnerKey").GetValue(window)! == "" && Field("latest").GetValue(window) is PacketCandidate { Total: 400 }, "a snapshot read before the connection waits for the game's name instead of the hand-over");
+        // A hand-over from the build before v2 (with its stat owner fields) is taken over and its reading sent
+        // again under the adapter that read it. A server that no longer takes that adapter drops the reading
+        // without asking for an update, and this build reads the next Odyle change.
+        await (Task)Call(window, "StopCaptureAsync", false)!;
+        File.WriteAllText(HandoverStore.FilePath, $$"""{"Endpoint":"http://127.0.0.1:8090","AccountId":"u","CharacterId":"c1","CharacterKey":"TestHero|2304","CharacterName":"TestHero","Total":390,"EntityId":51591,"OwnerConfirmed":true,"ParserVersion":"global-reference-v1","Source":0,"SavedAt":"{{DateTimeOffset.UtcNow:O}}"}""");
+        var refusing = new FakeServer(); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090", "token", null, refusing)); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue);
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(!File.Exists(HandoverStore.FilePath) && refusing.Reports == 1 && (string)Field("readingOwnerKey").GetValue(window)! == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && Field("latest").GetValue(window) is null && !Conn(window).AdapterOutdated, "a refused reading of the previous adapter is dropped without asking for an update");
+        Check(Control<TextBlock>(window, "PacketStateLabel").Text == "Updated · the value is read again at the next Odyle change.", "the reader line says the value is read again");
+        Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        await (Task)Call(window, "StopCaptureAsync", false)!;
+        Field("api").SetValue(window, null); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); Field("activeCharacterId").SetValue(window, "");
+        Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("accountId").SetValue(window, ""); Call(window, "RenderHero");
+    }
+    static void TrayAndCharactersScenario(MainWindow window)
+    {
+        // An update restart hands the live character to the next start, which takes it over without a relog.
+        Field("capture").SetValue(window, new PacketCapture()); Field("api").SetValue(window, new PartyApi("http://127.0.0.1:8090")); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
+        Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
+        // The tray menu (W#17): the reader's state line, Stop while it reads, and the characters, the
+        // fullest first, each with its value and cubes; nameless records are left out. (WinForms
+        // items are read through reflection: the checks reference WPF only.)
+        string ItemText(object item) => (string)item.GetType().GetProperty("Text")!.GetValue(item)!;
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "2026-10-17T10:00:00Z"), new Character("c2", "u", "Altie", "Lumiel", "GLOBAL_EU", 1090, true, true, "2026-10-17T09:00:00Z"), new Character("c3", "u", "", "Lumiel", "GLOBAL_EU", 0, false, false, "") });
+        Call(window, "TrayMenuOpening");
+        var trayRows = ((System.Collections.IEnumerable)Field("charactersItem").GetValue(window)!.GetType().GetProperty("DropDownItems")!.GetValue(Field("charactersItem").GetValue(window))!).Cast<object>().Select(ItemText).ToArray();
+        Check(ItemText(Field("readerItem").GetValue(window)!) == "Stop reader" && ItemText(Field("trayStatusItem").GetValue(window)!) == Control<TextBlock>(window, "PacketStateLabel").Text, "the tray menu says what the reader does and offers to stop it");
+        Check(trayRows.Length == 2 && trayRows[0].StartsWith("Altie · ") && trayRows[0].Contains(" Odyle · ") && trayRows[1].StartsWith("TestHero · "), "the tray lists the characters, the fullest first: " + string.Join(" | ", trayRows));
+        // The card's "Your characters" (W#17): closed until asked, then the tray's rows; it opens by
+        // itself while the game switches characters and closes once the game names the next one.
+        var altToggle = Control<Button>(window, "AltToggle"); var alts = Control<ItemsControl>(window, "AltList");
+        Call(window, "RenderHero");
+        Check(altToggle.Visibility == Visibility.Visible && alts.Visibility == Visibility.Collapsed && altToggle.Content as string == "Your characters (2) ▾", "with two characters the card offers them, closed: " + altToggle.Content);
+        altToggle.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        var altRows = (alts.ItemsSource?.Cast<object>() ?? []).Select(r => (string)r.GetType().GetProperty("Name")!.GetValue(r)! + " · " + (string)r.GetType().GetProperty("Detail")!.GetValue(r)!).ToArray();
+        Check(alts.Visibility == Visibility.Visible && altRows.Length == 2 && altRows[0] == trayRows[0] && altRows[1] == trayRows[1], "opened, it lists them as the tray does: " + string.Join(" | ", altRows));
+        var altSource = alts.ItemsSource; Call(window, "RenderHero");
+        Check(ReferenceEquals(altSource, alts.ItemsSource), "rendering the card again keeps the characters' rows");
+        // Hidden in the tray the card does not tick (#84); showing it renders it at once.
+        Control<TextBlock>(window, "CaptureStatsLabel").Text = "hidden"; Call(window, "Tick");
+        Check(Control<TextBlock>(window, "CaptureStatsLabel").Text == "hidden", "a hidden window's card does not tick");
+        altToggle.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        var namedKey = Field("gameCharacterKey").GetValue(window)!;
+        Field("gameCharacterKey").SetValue(window, "?"); Call(window, "RenderHero");
+        Check(alts.Visibility == Visibility.Visible && altToggle.Content as string == "Your characters (2) ▴", "while the game switches characters the list opens by itself");
+        Field("gameCharacterKey").SetValue(window, "Altie|2304"); Call(window, "RenderHero");
+        Check(alts.Visibility == Visibility.Collapsed, "and closes once the game names the next character");
+        Field("gameCharacterKey").SetValue(window, namedKey);
+        // The tray icon carries the reader's state: a dot while it reads, none when stopped, each drawn once.
+        var readerStates = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
+        var stateBefore = Field("readerState").GetValue(window)!; var lineBefore = Control<TextBlock>(window, "PacketStateLabel").Text;
+        object TrayIconNow() { var icon = Field("tray").GetValue(window)!; return icon.GetType().GetProperty("Icon")!.GetValue(icon)!; }
+        Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live"); var liveIcon = TrayIconNow();
+        Call(window, "SetReaderState", Enum.Parse(readerStates, "Stale"), "Stale"); var staleIcon = TrayIconNow();
+        Call(window, "SetReaderState", Enum.Parse(readerStates, "Stopped"), "Stopped"); var stoppedIcon = TrayIconNow();
+        Call(window, "SetReaderState", Enum.Parse(readerStates, "Live"), "Live again");
+        Check(!ReferenceEquals(liveIcon, stoppedIcon) && !ReferenceEquals(liveIcon, staleIcon) && !ReferenceEquals(staleIcon, stoppedIcon) && ReferenceEquals(TrayIconNow(), liveIcon), "the tray icon shows whether the reader reads, waits or is stopped");
+        Call(window, "SetReaderState", stateBefore, lineBefore);
+    }
+}
