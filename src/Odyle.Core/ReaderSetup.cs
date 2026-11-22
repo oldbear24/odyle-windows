@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -61,7 +62,7 @@ public static partial class Diagnostics
         var states = readerStates.ToArray();
         text.AppendLine("Last reader states:");
         foreach (var state in states.Length == 0 ? ["none this run"] : states) text.Append("  ").AppendLine(state);
-        text.AppendLine($"Log, last {logTail.Count} lines:");
+        text.AppendLine(CultureInfo.InvariantCulture, $"Log, last {logTail.Count} lines:");
         foreach (var line in logTail) text.Append("  ").AppendLine(line);
         return Redact(text.ToString());
     }

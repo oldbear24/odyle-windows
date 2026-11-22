@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -41,7 +42,7 @@ public sealed record Character(string Id, string User, string CharacterName, str
     // OfficialServerId: its PLAYNC profile once the daily lookup found it. The Discord status shows both.
     // Location: where the character was last seen, while its player shares their location (Places).
     // GameGroup: the party and force the game put it in, as its player's app read them (GameBands).
-    public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0") : "—")} Odyle)";
+    public string Label => $"{CharacterName} · {Server} ({(Confirmed ? Value.ToString("N0", CultureInfo.CurrentCulture) : "—")} Odyle)";
     public string RegionLabel => Region.Replace("GLOBAL_", "") switch { "EU" => "EU", "NA" => "NA-E", "NAW" => "NA-W", "SA" => "SA", "ASIA" => Localizer.T("Asia"), var other => other };
     public string ServerLine => $"{Server} · {RegionLabel}";
     // Class and level as PLAYNC's official search lists them (the dashboard's daily lookup, #25):
