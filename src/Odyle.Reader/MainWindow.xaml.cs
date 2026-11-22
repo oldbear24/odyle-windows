@@ -92,7 +92,7 @@ public partial class MainWindow : Window
     // The tray menu says what the reader does and lists the account's characters (W#17); both are
     // filled each time the menu opens (TrayMenuOpening).
     private readonly Forms.ToolStripMenuItem trayStatusItem = new("") { Enabled = false }, readerItem = new(""), tasksItem = new(T("Show tasks")) { CheckOnClick = true }, charactersItem = new(T("Characters"));
-    private HwndSource? hotkeyWindow;
+    private NativeWindows.Shortcut? shortcut;
     private string hotkeyProblem = "";
     // The value and cube cost the card shows, for the strip.
     private int? heroValue;
@@ -130,7 +130,6 @@ public partial class MainWindow : Window
     // The last tray notification, kept for the checks (the tray icon is off there).
     internal (string Title, string Text)? LastNotice { get; set; }
     private int hiddenTicks;
-    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     public MainWindow() : this(true) { }
     // saved: the preferences App read at start (for the language), so they are read once; the checks read them here.
@@ -153,7 +152,7 @@ public partial class MainWindow : Window
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow); tray.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowWindow);
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
-        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
+        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => NativeWindows.DarkFrame(settings);
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await Guarded("Check for updates", () => updates.CheckAsync(manual: true)); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(updates.Staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
@@ -246,12 +245,11 @@ public partial class MainWindow : Window
             var handle = bitmap.GetHicon();
             // A copy owns its own handle, so the one GetHicon made can be released right away.
             using (var drawn = System.Drawing.Icon.FromHandle(handle)) trayIcons[dot] = (System.Drawing.Icon)drawn.Clone();
-            DestroyIcon(handle);
+            NativeWindows.ReleaseIcon(handle);
             return trayIcons[dot];
         }
         catch { return TrayIcon(null); }
     }
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr handle);
     private static System.Drawing.Icon LoadTrayIcon()
     {
         try
@@ -262,20 +260,8 @@ public partial class MainWindow : Window
         catch { }
         return System.Drawing.SystemIcons.Application;
     }
-    protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); DarkFrame(this); HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(KeepLayered); }
-    // Windows 11: dark title bar and a border that matches the window.
-    private static void DarkFrame(Window window)
-    {
-        try
-        {
-            var handle = new WindowInteropHelper(window).Handle;
-            int dark = 1, caption = 0x0013160F, border = 0x00293024;
-            DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));
-            DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));
-            DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
-        }
-        catch { }
-    }
+    protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); NativeWindows.DarkFrame(this); HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(layering.Hook); }
+    private readonly NativeWindows.Layering layering = new();
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     // A second start of Odyle signals this one (App) to show its window in front.
     // Open in Odyle on the dashboard (odyle://pair?link=…). The link names the server, and any page could
@@ -1352,9 +1338,7 @@ public partial class MainWindow : Window
     private Func<bool> gameInFront;
     private bool GameWindowInFront()
     {
-        var front = GetForegroundWindow();
-        if (front == IntPtr.Zero) return false;
-        GetWindowThreadProcessId(front, out var pid);
+        if (!NativeWindows.ForegroundProcess(out var pid)) return false;
         if (pid == foregroundPid) return foregroundIsGame;
         foregroundPid = pid;
         try { using var process = System.Diagnostics.Process.GetProcessById((int)pid); foregroundIsGame = GameConnection.IsGameProcess(process.ProcessName); }
@@ -1373,32 +1357,9 @@ public partial class MainWindow : Window
         var fade = preferences.FadeInGame && !IsMouseOver && gameInFront();
         // WPF takes the layered style off when it changes the window's style itself: it is put back.
         var handle = new WindowInteropHelper(this).Handle;
-        var layered = handle != IntPtr.Zero && (GetWindowLong(handle, GwlExStyle) & WsExLayered) != 0;
+        var layered = NativeWindows.Layering.IsLayered(handle);
         if (fade == faded && layered == preferences.FadeInGame) return;
-        faded = fade; SetAlpha(fade ? FadedAlpha : (byte)255, layered: preferences.FadeInGame);
-    }
-    // The window's opacity: layered while fading is on (255 is fully opaque), plain otherwise.
-    private void SetAlpha(byte alpha, bool layered)
-    {
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero) return;
-        var style = GetWindowLong(handle, GwlExStyle);
-        settingLayered = true;
-        try
-        {
-            if (!layered) { if ((style & WsExLayered) != 0) SetWindowLong(handle, GwlExStyle, style & ~WsExLayered); return; }
-            if ((style & WsExLayered) == 0) SetWindowLong(handle, GwlExStyle, style | WsExLayered);
-        }
-        finally { settingLayered = false; }
-        SetLayeredWindowAttributes(handle, 0, alpha, LwaAlpha);
-    }
-    // WPF drops WS_EX_LAYERED from a window without AllowsTransparency while the style changes
-    // (WM_STYLECHANGING). The change the fading makes itself is let through as it is.
-    private bool settingLayered;
-    private IntPtr KeepLayered(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (message == 0x7C && settingLayered && wParam.ToInt64() == GwlExStyle) handled = true;
-        return IntPtr.Zero;
+        faded = fade; layering.SetAlpha(handle, fade ? FadedAlpha : (byte)255, layered: preferences.FadeInGame);
     }
     // Following the game: it came when the reader finds its connection after waiting for one, and
     // it went when the reader waits for a connection again after it had one.
@@ -1414,12 +1375,6 @@ public partial class MainWindow : Window
         if (Topmost) { Topmost = false; Topmost = true; }
         _ = RefreshPartyAsync(); _ = RefreshTasksAsync();
     }
-    private const int GwlExStyle = -20, WsExLayered = 0x80000; private const uint LwaAlpha = 0x2;
-    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr window, int index);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] private static extern int SetWindowLong(IntPtr window, int index, int value);
-    [DllImport("user32.dll")] private static extern bool SetLayeredWindowAttributes(IntPtr window, uint key, byte alpha, uint flags);
     // Compact mode in place of the card, in the same window: it keeps its place, title bar, pin and
     // tray, and only its content shrinks to your Odyle and your party's. In from the header button,
     // the tray or the shortcut; back the same way, with a double-click or with ⤢.
@@ -1450,7 +1405,7 @@ public partial class MainWindow : Window
         if (whatsNew is null)
         {
             whatsNew = new WhatsNewWindow(Changelog.Parse(WhatsNewWindow.Embedded()), VersionText);
-            whatsNew.SourceInitialized += (_, _) => DarkFrame(whatsNew); whatsNew.Closed += (_, _) => whatsNew = null;
+            whatsNew.SourceInitialized += (_, _) => NativeWindows.DarkFrame(whatsNew); whatsNew.Closed += (_, _) => whatsNew = null;
             if (IsVisible) whatsNew.Owner = this;
         }
         if (!App.Headless) { whatsNew.Show(); whatsNew.WindowState = WindowState.Normal; whatsNew.Activate(); }
@@ -1503,31 +1458,15 @@ public partial class MainWindow : Window
         if (hotkey == preferences.CompactHotkey) return;
         PreferencesStore.Save(preferences = preferences with { CompactHotkey = hotkey }); UseHotkey(hotkey);
     }
-    // The shortcut is registered for the whole session (RegisterHotKey). One another app holds
+    // The shortcut is registered for the whole session (NativeWindows.Shortcut). One another app holds
     // already says so in Settings, where another can be chosen.
-    [DllImport("user32.dll", SetLastError = true)] private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
-    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr window, int id);
-    private const int HotkeyId = 0x4F44;
     private void UseHotkey(string hotkey)
     {
         hotkeyProblem = "";
-        if (!App.Headless)
+        if (!App.Headless && !(shortcut ??= new(ToggleCompact)).Use(hotkey, out var error))
         {
-            if (hotkeyWindow is null)
-            {
-                hotkeyWindow = new HwndSource(new HwndSourceParameters("Odyle shortcut") { ParentWindow = new IntPtr(-3), WindowStyle = 0 });
-                hotkeyWindow.AddHook((IntPtr _, int message, IntPtr id, IntPtr _, ref bool handled) =>
-                {
-                    if (message == 0x0312 && id.ToInt32() == HotkeyId) { handled = true; ToggleCompact(); }
-                    return IntPtr.Zero;
-                });
-            }
-            UnregisterHotKey(hotkeyWindow.Handle, HotkeyId);
-            if (CompactStrip.Parse(hotkey) is { } keys && !RegisterHotKey(hotkeyWindow.Handle, HotkeyId, keys.Modifiers, keys.Key))
-            {
-                hotkeyProblem = T("{0} is taken by another app · choose another shortcut.", hotkey);
-                Log.Warn($"The shortcut {hotkey} could not be registered (error {Marshal.GetLastWin32Error()}).");
-            }
+            hotkeyProblem = T("{0} is taken by another app · choose another shortcut.", hotkey);
+            Log.Warn($"The shortcut {hotkey} could not be registered (error {error}).");
         }
         settings.HotkeyProblemLabel.Text = hotkeyProblem; settings.HotkeyProblemLabel.Visibility = hotkeyProblem.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         CompactButton.ToolTip = CompactStrip.Parse(hotkey) is null || hotkeyProblem.Length > 0 ? T("Compact mode · your Odyle and your party's, nothing else") : T("Compact mode · your Odyle and your party's, nothing else ({0})", hotkey);
@@ -1571,18 +1510,15 @@ public partial class MainWindow : Window
     private void Window_StateChanged(object? sender, EventArgs e) { if (WindowState == WindowState.Normal) Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, FitWindow); }
     private void FitWindow()
     {
-        if (!IsVisible || WindowState != WindowState.Normal || Content is not FrameworkElement content || PresentationSource.FromVisual(this) is not HwndSource { CompositionTarget: { } target } source || !GetClientRect(source.Handle, out var client)) return;
-        var shown = target.TransformFromDevice.Transform(new Point(client.Right - client.Left, client.Bottom - client.Top)); var wanted = content.DesiredSize;
+        if (!IsVisible || WindowState != WindowState.Normal || Content is not FrameworkElement content || PresentationSource.FromVisual(this) is not HwndSource { CompositionTarget: { } target } source || !NativeWindows.ClientSize(source.Handle, out var width, out var height)) return;
+        var shown = target.TransformFromDevice.Transform(new Point(width, height)); var wanted = content.DesiredSize;
         if (Math.Abs(shown.X - wanted.Width) > 2 || Math.Abs(shown.Y - wanted.Height) > 2)
         {
             Log.Warn($"The window showed {shown.X:0}×{shown.Y:0} for content of {wanted.Width:0}×{wanted.Height:0}; fitting it again.");
             SizeToContent = SizeToContent.Manual; SizeToContent = SizeToContent.WidthAndHeight;
         }
-        InvalidateRect(source.Handle, IntPtr.Zero, false);
+        NativeWindows.Repaint(source.Handle);
     }
-    [StructLayout(LayoutKind.Sequential)] private struct ClientRect { public int Left, Top, Right, Bottom; }
-    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr window, out ClientRect rect);
-    [DllImport("user32.dll")] private static extern bool InvalidateRect(IntPtr window, IntPtr rect, bool erase);
     // The window opens where it was last, while that is still on a connected screen;
     // otherwise centred as on a first start. Screens are converted with the system DPI,
     // which is what this system-aware app's coordinates use.
@@ -2453,7 +2389,7 @@ public partial class MainWindow : Window
         finally
         {
             operations.Release(); tray.Dispose(); exit = true; settings.Exiting = true; settings.Close(); whatsNew?.Close();
-            if (hotkeyWindow is not null) { UnregisterHotKey(hotkeyWindow.Handle, HotkeyId); hotkeyWindow.Dispose(); }
+            shortcut?.Dispose();
             EndApp(restart, hidden);
         }
     }
