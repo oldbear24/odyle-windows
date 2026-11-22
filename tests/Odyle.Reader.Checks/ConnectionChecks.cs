@@ -69,7 +69,7 @@ static partial class ReaderChecks
         Check(((string)Call(window, "DiagnosticsReport")!).Contains("Account: paired · 127.0.0.1 · not reached yet") && window.Link.Endpoint == "http://127.0.0.1:1", "what is typed in the address box meanwhile is not the pairing's server");
         // Offline the character the game names is followed as online and its reading shown; both wait for the server.
         var offlineCapture = new PacketCapture(); Field("capture").SetValue(window, offlineCapture);
-        Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
+        Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineCapture, new GameIdentity(7, "OfflineHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Check(Field("pendingIdentity").GetValue(window) is not null && window.Attribution.OwnerKey == "OfflineHero|2304", "the named character is followed and kept for the server");
         Check(Control<TextBlock>(window, "HeroTitle").Text == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");

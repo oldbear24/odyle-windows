@@ -71,7 +71,7 @@ static class GroupChecks
     }
     static void Frames()
     {
-        var decoder = new ExperimentalOdyleDecoder(); var seen = new List<GameGroupEvent>(); var order = new List<string>();
+        var decoder = new OdyleDecoder(); var seen = new List<GameGroupEvent>(); var order = new List<string>();
         decoder.GroupObserved += e => { seen.Add(e); order.Add("group"); }; decoder.IdentityObserved += _ => order.Add("identity");
         // A roster before the own identity waits for it, and comes before the name.
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
@@ -113,7 +113,7 @@ static class GroupChecks
             GameGroups.Read([.. opcode, .. body], Own);
         }
         // Another connection starts unknown: its first roster waits for its own identity again.
-        var next = new ExperimentalOdyleDecoder(); var later = new List<GameGroupEvent>(); next.GroupObserved += later.Add;
+        var next = new OdyleDecoder(); var later = new List<GameGroupEvent>(); next.GroupObserved += later.Add;
         next.Feed(Frame(PartyRoster(0, (Own, OwnCharacter, "Hero")))); next.Feed(Frame(Identity(Mate, "Mate")));
         Check(later.Count == 0, "a held roster without the entity the game then names is dropped");
     }
@@ -121,7 +121,7 @@ static class GroupChecks
     static void Teammates()
     {
         const ulong Third = 7070, ThirdCharacter = 0x090e_0000_0004_0001;
-        var decoder = new ExperimentalOdyleDecoder(); var names = new List<IReadOnlyList<string>>(); var groups = 0;
+        var decoder = new OdyleDecoder(); var names = new List<IReadOnlyList<string>>(); var groups = 0;
         decoder.GroupObserved += _ => groups++; decoder.TeammatesObserved += names.Add;
         // A held roster gives its names once the own identity is known, after the group.
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));

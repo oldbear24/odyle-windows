@@ -184,7 +184,7 @@ static partial class ReaderChecks
         Connect(window, new Answering(request => { if (request.RequestUri!.AbsolutePath == "/api/odyle/invalidate") invalidations++; return Json(HttpStatusCode.OK, "{}"); }));
         Field("capture").SetValue(window, new PacketCapture()); Field("activeCharacterId").SetValue(window, "c1"); Field("accountId").SetValue(window, "u"); Field("currentCharacterId").SetValue(window, "c1");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
-        window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304"; window.Attribution.Latest = new PacketCandidate(390, ExperimentalOdyleDecoder.Version);
+        window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304"; window.Attribution.Latest = new PacketCandidate(390, OdyleDecoder.Version);
         Ended = null;
         await (Task)Call(window, "QuitAsync", true)!;
         Check(Ended == (true, true) && invalidations == 0 && HandoverStore.Take(DateTimeOffset.UtcNow) is { CharacterId: "c1", Total: 390 }, "a restart hands the live character over and does not mark it stale");

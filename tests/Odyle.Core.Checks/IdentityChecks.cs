@@ -41,7 +41,7 @@ static class IdentityChecks
         Check(new uint[] { 5, 25, 45, 48 }.All(job => GameIdentity.Read(Payload(2304, job: job))?.Class == job), new uint[] { 0, 4, 49, 1000 }.All(job => GameIdentity.Read(Payload(2304, job: job)) is null), "class range includes the Brawler");
         var bytes = Payload(2304); bytes[7] = 255; Check(GameIdentity.Read(bytes) is null, "invalid UTF8 rejected");
         bytes = Payload(2304); for (var i = 0; i < bytes.Length; i++) Check(GameIdentity.Read(bytes.AsSpan(0, i)) is null, "truncated identity rejected");
-        var decoder = new ExperimentalOdyleDecoder(); var observed = new List<GameIdentity>(); decoder.IdentityObserved += observed.Add;
+        var decoder = new OdyleDecoder(); var observed = new List<GameIdentity>(); decoder.IdentityObserved += observed.Add;
         bytes = Payload(2304); var frame = new byte[3 + bytes.Length]; frame[0] = (byte)(bytes.Length + 6); frame[1] = 0x33; frame[2] = 0x36; bytes.CopyTo(frame, 3);
         decoder.Feed(frame.AsSpan(0, 4)); decoder.Feed(frame.AsSpan(4));
         Check(observed.Single().Server == "Lumiel", "fragmented own identity forwarded");

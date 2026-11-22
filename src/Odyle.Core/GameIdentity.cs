@@ -49,7 +49,7 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
     public static GameIdentity? Read(ReadOnlySpan<byte> payload)
     {
         var offset = 0;
-        if (!ExperimentalOdyleDecoder.TryVarint(payload, ref offset, out var id) || id == 0 || payload.Length - offset < 6) return null;
+        if (!OdyleDecoder.TryVarint(payload, ref offset, out var id) || id == 0 || payload.Length - offset < 6) return null;
         offset += 4;
         if ((payload[offset++] & 1) == 0) return null;
         var count = payload[offset++];

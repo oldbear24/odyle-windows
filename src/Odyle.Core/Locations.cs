@@ -40,9 +40,9 @@ public sealed record GameLocation(int? Map, float X, float Y, float Z, float? He
     private static GameLocation? OwnEffect(ReadOnlySpan<byte> p, ulong own)
     {
         var o = 0;
-        if (!ExperimentalOdyleDecoder.TryVarint(p, ref o, out var actor) || actor != own || o + 23 > p.Length || p[o] != 1 || p[o + 1] != 0x11) return null;
+        if (!OdyleDecoder.TryVarint(p, ref o, out var actor) || actor != own || o + 23 > p.Length || p[o] != 1 || p[o + 1] != 0x11) return null;
         var effect = BinaryPrimitives.ReadUInt32LittleEndian(p[(o + 3)..]); o += 23;
-        if (!ExperimentalOdyleDecoder.TryVarint(p, ref o, out var again) || again != own || p.Length != o + 14 || p[o] != 1 || p[o + 1] != 0) return null;
+        if (!OdyleDecoder.TryVarint(p, ref o, out var again) || again != own || p.Length != o + 14 || p[o] != 1 || p[o + 1] != 0) return null;
         return Position(p[(o + 2)..], out var x, out var y, out var z) ? new(null, x, y, z, null, effect == FlightTick ? Flight : Effect) : null;
     }
     private static bool Position(ReadOnlySpan<byte> p, out float x, out float y, out float z)

@@ -53,7 +53,7 @@ static class PvpChecks
     static void Decoding()
     {
         var on = false; var now = Start;
-        var decoder = new ExperimentalOdyleDecoder { ReadPvp = () => on, Clock = () => now };
+        var decoder = new OdyleDecoder { ReadPvp = () => on, Clock = () => now };
         var events = new List<PvpEvent>(); var reads = new List<PvpRead>();
         decoder.PvpObserved += events.Add; decoder.PvpFrameObserved += reads.Add;
         decoder.Feed(Frame(Identity(Own, "Hero")));
@@ -90,7 +90,7 @@ static class PvpChecks
         Check(events.Last() is { Kind: PvpKind.Kill, Name: "Nyra", Owner: Mate }, "the new character's kills are its own");
         // The trace counts by kind, never by name.
         var trace = new DecoderTrace(); foreach (var read in reads) trace.Pvp(read);
-        using var json = JsonDocument.Parse(trace.ToJson("0.33.0", ExperimentalOdyleDecoder.Version));
+        using var json = JsonDocument.Parse(trace.ToJson("0.33.0", OdyleDecoder.Version));
         var counted = json.RootElement.GetProperty("pvp");
         Check(counted.GetProperty("kill").GetInt64() == 2 && counted.GetProperty("death").GetInt64() == 1 && counted.GetProperty("assist").GetInt64() == 1 && counted.GetProperty("ownHit").GetInt64() == 1 && counted.GetProperty("creditUnread").GetInt64() == 1
             && !trace.ToJson("0.33.0", "a").Contains("Vexa") && !trace.ToJson("0.33.0", "a").Contains("Nyra"), "the trace counts PvP frames by what they were read as, without names");

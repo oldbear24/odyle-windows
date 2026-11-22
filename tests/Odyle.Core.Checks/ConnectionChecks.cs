@@ -169,7 +169,7 @@ static class ConnectionChecks
             // Reader health: the heartbeat says what the reader does and the game build it reads.
             await api.HeartbeatAsync("s", "c", "listening", "Steam build 25800038");
             Check(paused.Requests[^1].Body == """{"sessionId":"s","characterId":"c","reader":"listening","game":"Steam build 25800038"}""", "the heartbeat carries the reader's state and the game build");
-            try { await api.ReportAsync(new PacketReading("s", 1, "Main", "Lumiel", "GLOBAL_EU", 390, ExperimentalOdyleDecoder.Version)); throw new Exception("Connection check failed: a paused reading was accepted."); }
+            try { await api.ReportAsync(new PacketReading("s", 1, "Main", "Lumiel", "GLOBAL_EU", 390, OdyleDecoder.Version)); throw new Exception("Connection check failed: a paused reading was accepted."); }
             catch (HttpRequestException error) { Check(error.StatusCode == HttpStatusCode.ServiceUnavailable, error.Message == PartyApi.ReadersPaused, !api.PairingEnded, "a reading while readers are paused answers 503 with the pause message"); }
         }
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);

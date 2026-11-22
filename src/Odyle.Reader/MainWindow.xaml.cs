@@ -1428,7 +1428,7 @@ public partial class MainWindow : Window
             ("App", $"Odyle {Updater.Current} · {Updater.Runtime} · {(Updater.SelfContained ? "self-contained" : "small")} package · {(Updater.IsReleaseBuild ? "release" : "development")} build"),
             ("Windows", $"{Environment.OSVersion} · language {Localizer.Language} ({Localizer.Culture.Name})"),
             ("Npcap", npcap), ("Capture interfaces", adapters), ("Account", account), ("Reader", reader),
-            ("Adapter", ExperimentalOdyleDecoder.Version + (connection.AdapterOutdated ? " · refused by the server" : "")),
+            ("Adapter", OdyleDecoder.Version + (connection.AdapterOutdated ? " · refused by the server" : "")),
             ("Server", readerPaused ? "packet readers paused by the operators" : "packet readers allowed")], readerHistory, Log.Tail(80));
     }
     private void RenderNpcap()
@@ -1651,7 +1651,7 @@ public partial class MainWindow : Window
         next.LocationObserved += l => { if (l.Map is { } map) Log.Info($"Decoder: world load on map {map}."); };
         next.UpdateObserved += u =>
         {
-            var odyle = u.Resource == ExperimentalOdyleDecoder.OdyleResource;
+            var odyle = u.Resource == OdyleDecoder.OdyleResource;
             if (!odyle) lock (resources) if (resources.Count >= limit || !resources.Add(u.Resource)) return;
             Log.Info($"Decoder: {(odyle ? "Odyle update" : "stat update, not Odyle (once per run)")}, resource {u.Resource}, tag {u.Tag:X2}, direction {u.Direction}, values {u.Base} + {u.Bonus}, {u.TrailerBytes} trailer bytes.");
         };
@@ -1758,7 +1758,7 @@ public partial class MainWindow : Window
         // operators switched this one off. The update is looked for at once instead of at the daily
         // check, and the reading is tried again quietly every ten minutes in case the server takes
         // the adapter back.
-        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused && reading.ParserVersion == ExperimentalOdyleDecoder.Version)
+        catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.Message == PartyApi.AdapterRefused && reading.ParserVersion == OdyleDecoder.Version)
         {
             var now = DateTimeOffset.UtcNow;
             if (!connection.AdapterOutdated) Log.Warn($"The server does not accept the adapter {reading.ParserVersion}; Odyle {Updater.Current} needs an update to keep reading.");
@@ -2185,7 +2185,7 @@ public partial class MainWindow : Window
     private void WriteTrace()
     {
         if (trace is null) return;
-        try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), ExperimentalOdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
+        try { File.WriteAllText(TracePath, trace.ToJson(Updater.Current.ToString(), OdyleDecoder.Version)); Log.Info("Decoder trace: " + trace.Summary()); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Log.Warn("The decoder trace could not be written: " + error.Message); }
     }
     // The game build Steam installed (GameClient), logged whenever a game connection starts with

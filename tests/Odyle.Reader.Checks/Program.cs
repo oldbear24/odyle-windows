@@ -286,7 +286,7 @@ static partial class ReaderChecks
             await server.SignInArrived!.Task;
             var reading = Field("capture").GetValue(window) as PacketCapture;
             Check(reading is not null && window.Link.Api is PartyApi && window.Link.SessionId is "", "the reader runs while the server is still being asked");
-            Call(window, "OnCandidate", reading!, new PacketCandidate(512, ExperimentalOdyleDecoder.Version, CandidateSource.Snapshot) { Base = 12, Bonus = 500 });
+            Call(window, "OnCandidate", reading!, new PacketCandidate(512, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 12, Bonus = 500 });
             var naming = (Task)Call(window, "SaveDetectedCharacterAsync", reading!, new GameIdentity(46, "EarlyHero", 2304, "Lumiel", "GLOBAL_EU"))!;
             await Task.Delay(100);
             Check(!naming.IsCompleted && server.Saved == 0 && server.Reports == 0 && Control<TextBlock>(window, "ValueLabel").Text == "512", "what it reads is shown and waits for the connection");
@@ -606,7 +606,7 @@ static partial class ReaderChecks
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         window.Attribution.DetectedKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";
-        Call(window, "OnCandidate", inert, new PacketCandidate(390, ExperimentalOdyleDecoder.Version) { Base = 0, Bonus = 390 });
+        Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
         window.Attribution.OwnerKey = "TestHero|2304"; Field("activeCharacterId").SetValue(window, "c1");
         var state = typeof(MainWindow).GetNestedType("ReaderState", BindingFlags.NonPublic)!;
         Call(window, "SetReaderState", Enum.Parse(state, "Live"), "Live");

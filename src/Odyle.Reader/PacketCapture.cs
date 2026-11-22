@@ -336,7 +336,7 @@ public sealed class PacketCapture : IAsyncDisposable
         ReadTcpTable(23, 56, row => Add(row, 48, 52, 44, true));
         return result;
     }
-    private void Attach(ExperimentalOdyleDecoder decoder)
+    private void Attach(OdyleDecoder decoder)
     {
         decoder.Candidate += c => Candidate?.Invoke(c); decoder.CharacterChanged += id => CharacterChanged?.Invoke(id); decoder.FrameObserved += (opcode, size) => FrameObserved?.Invoke(opcode, size);
         decoder.UpdateObserved += value => UpdateObserved?.Invoke(value); decoder.LayoutObserved += value => LayoutObserved?.Invoke(value); decoder.IdentityObserved += value => IdentityObserved?.Invoke(value);

@@ -146,8 +146,8 @@ public readonly record struct StatRecord(byte Tag, uint Resource, long Base, lon
         if (p < 0 || data.Length - p < 5 || !IsTag(data[p])) return false;
         var tag = data[p]; var resource = BinaryPrimitives.ReadUInt32LittleEndian(data[(p + 1)..]); p += 5;
         ulong value = 0, bonus = 0;
-        if ((tag & 4) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out value)) return false;
-        if ((tag & 8) != 0 && !ExperimentalOdyleDecoder.TryVarint(data, ref p, out bonus)) return false;
+        if ((tag & 4) != 0 && !OdyleDecoder.TryVarint(data, ref p, out value)) return false;
+        if ((tag & 8) != 0 && !OdyleDecoder.TryVarint(data, ref p, out bonus)) return false;
         record = new(tag, resource, (long)value, (long)bonus); offset = p; return true;
     }
 }
@@ -162,10 +162,10 @@ public sealed record OdyleSnapshotObservation(int PayloadBytes, int? Records, Od
 public sealed record OdyleFrameLayout(ushort Opcode, byte Header0, byte Header1, byte Header2, int PayloadBytes);
 
 /// <summary>
-/// Decodes the Global AION2 stream: length-prefixed frames, optional transport
+/// The production decoder of the Global AION2 stream: length-prefixed frames, optional transport
 /// flag, LZ4 blocks, own identity (3336), stat snapshot (0B61) and stat update (0C61).
 /// </summary>
-public sealed class ExperimentalOdyleDecoder
+public sealed class OdyleDecoder
 {
     /// <summary>Adapter name sent with every reading. The backend registry lists the names it stores.</summary>
     public const string Version = "global-reference-v2";
@@ -184,7 +184,7 @@ public sealed class ExperimentalOdyleDecoder
     private readonly bool startsAligned;
     private bool synchronized, probation;
     /// <param name="startsAligned">False for a connection joined midstream; framing then waits for a heartbeat.</param>
-    public ExperimentalOdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
+    public OdyleDecoder(bool startsAligned = true) { this.startsAligned = startsAligned; synchronized = startsAligned; }
     /// <summary>True once a frame boundary is known. A midstream start or a resync waits for a protocol heartbeat.</summary>
     public bool Synchronized => synchronized;
     public event Action<PacketCandidate>? Candidate;
