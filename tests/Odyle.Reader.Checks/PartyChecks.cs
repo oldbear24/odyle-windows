@@ -8,6 +8,23 @@ using Odyle.Reader;
 // reminders, the account's notification settings, the run chip and the places of location sharing.
 static partial class ReaderChecks
 {
+    // The tray reminders on their own (TrayReminders), without a window: open tasks an hour before the daily reset are
+    // told once, also across restarts (preferences.json), and quiet hours mark them without a notification.
+    static void ResetRemindersScenario()
+    {
+        var saved = new Preferences(); var told = new List<(string Title, string Text)>();
+        var reminders = new TrayReminders(() => saved, next => saved = next, (title, text) => told.Add((title, text)));
+        var resets = new TaskResets(); var now = Checklist.NextReset("daily", DateTimeOffset.UtcNow, resets).AddHours(-1);
+        UserTask[] tasks = [new("t1", "u", "Daily dungeon", "daily"), new("t2", "u", "Weekly raid", "weekly")];
+        reminders.Resets(tasks, resets, now);
+        Check(told is [{ Title: var title, Text: "Still open: Daily dungeon" }] && title.StartsWith("Daily reset in ") && title.EndsWith(" · 1 task open") && saved.RemindedResets is [_], "an open daily task is told an hour before the reset: " + string.Join(" | ", told));
+        reminders.Resets(tasks, resets, now.AddMinutes(10));
+        Check(told.Count == 1, "and only once");
+        var tomorrow = now.AddDays(1); var hhmm = (DateTimeOffset at) => at.UtcDateTime.ToString("HH:mm");
+        reminders.Settings = NotificationSettings.Default with { Quiet = new(hhmm(tomorrow.AddMinutes(-30)), hhmm(tomorrow.AddMinutes(30)), "UTC") };
+        reminders.Resets(tasks, resets, tomorrow);
+        Check(told.Count == 1 && saved.RemindedResets is [_, _], "in quiet hours the next reset is marked without a notification");
+    }
     static void PartyListScenario(MainWindow window)
     {
         window.Link.Api = new PartyApi("http://127.0.0.1:8090"); Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MaxValue);
@@ -79,12 +96,12 @@ static partial class ReaderChecks
         Check(Notice() is { Title: "Fire Temple starts in 13 minutes" }, "a run moved to another time is announced again");
         // The account's notification settings (the dashboard's Account & data): no tray reminders, quiet hours.
         ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(1))) });
-        Field("notifications").SetValue(window, NotificationSettings.Default with { Channels = new(Tray: false) }); Call(window, "CheckReminders");
+        window.Reminders.Settings = NotificationSettings.Default with { Channels = new(Tray: false) }; Call(window, "CheckReminders");
         Check(Notice() is null, "reminders can be switched off for the tray on the dashboard");
         string Hhmm(DateTimeOffset at) => at.UtcDateTime.ToString("HH:mm");
-        Field("notifications").SetValue(window, NotificationSettings.Default with { Quiet = new(Hhmm(DateTimeOffset.UtcNow.AddMinutes(-30)), Hhmm(DateTimeOffset.UtcNow.AddMinutes(30)), "UTC") }); Call(window, "CheckReminders");
+        window.Reminders.Settings = NotificationSettings.Default with { Quiet = new(Hhmm(DateTimeOffset.UtcNow.AddMinutes(-30)), Hhmm(DateTimeOffset.UtcNow.AddMinutes(30)), "UTC") }; Call(window, "CheckReminders");
         Check(Notice() is null && PreferencesStore.Load().RemindedRuns!.Contains(Reminders.Key(new PlannedRun("run1", "Fire Temple", RunAt(soon.AddMinutes(1)), "", "u", []), 15)), "quiet hours show no reminder, and it does not come later");
-        ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(2))) }); Field("notifications").SetValue(window, NotificationSettings.Default with { LeadMinutes = [5] }); Call(window, "CheckReminders");
+        ClearNotice(); Field("snapshots").SetValue(window, new[] { Planned(RunAt(soon.AddMinutes(2))) }); window.Reminders.Settings = NotificationSettings.Default with { LeadMinutes = [5] }; Call(window, "CheckReminders");
         Check(Notice() is null, "a run beyond the account's reminder times waits");
     }
     static async Task NotificationSettingsScenario(MainWindow window)
@@ -96,17 +113,17 @@ static partial class ReaderChecks
         Check(settings.FindName("RemindersToggle") is null && settings.FindName("NotificationsButton") is Button, "settings link to the dashboard's notification settings");
         var moving = new FakeServer(); window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, moving);
         Field("preferences").SetValue(window, PreferencesStore.Load() with { RemindRuns = false, RemindRunsMoved = false });
-        await (Task)Call(window, "FollowNotificationsAsync", NotificationSettings.Default)!;
-        Check(moving.LastNotifications.Contains("\"tray\":false") && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false, Saved: true } && PreferencesStore.Load().RemindRunsMoved, "an old local switch-off moves to the account");
-        moving.LastNotifications = ""; await (Task)Call(window, "FollowNotificationsAsync", NotificationSettings.Default)!;
-        Check(moving.LastNotifications == "" && Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: true }, "once: from then on the account's settings count");
-        await (Task)Call(window, "FollowNotificationsAsync", new object[] { null! })!;
-        Check(Field("notifications").GetValue(window) is NotificationSettings { RunsInTray: false }, "a backend without them keeps the local choice");
+        await window.Reminders.FollowAsync(NotificationSettings.Default, window.Link.Api);
+        Check(moving.LastNotifications.Contains("\"tray\":false") && window.Reminders.Settings is NotificationSettings { RunsInTray: false, Saved: true } && PreferencesStore.Load().RemindRunsMoved, "an old local switch-off moves to the account");
+        moving.LastNotifications = ""; await window.Reminders.FollowAsync(NotificationSettings.Default, window.Link.Api);
+        Check(moving.LastNotifications == "" && window.Reminders.Settings is NotificationSettings { RunsInTray: true }, "once: from then on the account's settings count");
+        await window.Reminders.FollowAsync(null, window.Link.Api);
+        Check(window.Reminders.Settings is NotificationSettings { RunsInTray: false }, "a backend without them keeps the local choice");
         // Cap alerts from the server show in the tray when the account wants them there.
         var capNews = RealtimeNews.Parse(System.Text.Json.JsonDocument.Parse("""{"capAlerts":[{"characterId":"c","characterName":"Lumina","state":"full","base":840,"cap":840,"settled":true,"tick":15}]}""").RootElement.Clone());
-        ClearNotice(); Field("notifications").SetValue(window, NotificationSettings.Default); await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
+        ClearNotice(); window.Reminders.Settings = NotificationSettings.Default; await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
         Check(Notice() is null, "cap alerts stay off until the account turns them on");
-        Field("notifications").SetValue(window, NotificationSettings.Default with { Kinds = new(Cap: true) }); await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
+        window.Reminders.Settings = NotificationSettings.Default with { Kinds = new(Cap: true) }; await (Task)Call(window, "OnNewsAsync", "odyle.user.u", capNews)!;
         Check(Notice() is { Title: "Lumina is losing Odyle", Text: "Its natural pool is full: each tick of 15 is lost until you spend some." }, "a cap alert shows in the tray");
     }
     static async Task RunChipAndPlacesScenario(MainWindow window)

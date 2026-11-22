@@ -101,6 +101,7 @@ static partial class ReaderChecks
         Add("position", PositionScenario);
         AddStatic("czech", CzechScenario);
         Add("run-reminders", RunRemindersScenario);
+        AddStatic("reset-reminders", ResetRemindersScenario);
         Add("notification-settings", NotificationSettingsScenario);
         Add("run-chip-and-places", RunChipAndPlacesScenario);
         Add("party-refresh", PartyRefreshChecks);

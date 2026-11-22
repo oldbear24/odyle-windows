@@ -116,8 +116,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(1) };
     // The Odyle clock's rules from the server; null from older backends (the defaults apply).
     private ClockRules? clockRules;
-    // The account's notification settings (the dashboard's Account & data → Notifications).
-    private NotificationSettings notifications = NotificationSettings.Default;
+    // The account's notification settings and the tray reminders they ask for (TrayReminders).
+    private readonly TrayReminders reminders;
+    internal TrayReminders Reminders => reminders;
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     // When and how this build updates itself (UpdateFlow); Settings and the card show it (RenderUpdate).
     private readonly UpdateFlow updates;
@@ -135,6 +136,7 @@ public partial class MainWindow : Window
     {
         // Starting over also forgets where the named character was and the party it was in.
         attribution = new(publishDelay, () => { locations.Reset(); groups.Reset(); });
+        reminders = new(() => preferences, saved => PreferencesStore.Save(preferences = saved), Notify);
         partyQueue = new(() => api, id => rooms.Any(r => r.Id == id), ApplyRoomsAsync, ApplySnapshots);
         updates = new(() => api, () => quitting, () => busy, card => { RenderUpdate(); if (card) RenderHero(); }, NotifyReady, Status, () => QuitAsync(restart: true));
         InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
@@ -187,7 +189,7 @@ public partial class MainWindow : Window
                 else CheckReminders();
             }
             else if (IsVisible) await Task.WhenAll(RefreshPartyAsync(), RefreshTasksAsync());
-            else if (notifications.RunsInTray && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
+            else if (reminders.Settings.RunsInTray && ++hiddenTicks % 4 == 0) await RefreshPartyAsync();
         });
         link.Heartbeat.Tick += async (_, _) => await Guarded("The heartbeat", PulseAsync);
         npcapTimer.Tick += async (_, _) => await Guarded("The Npcap check", NpcapTickAsync);
@@ -350,7 +352,7 @@ public partial class MainWindow : Window
         // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
         // restricted, a capture that failed. It reads again: the next problem is told again.
         if (state == ReaderState.Live) problemNoticed = "";
-        else if (state == ReaderState.Problem && !IsVisible && notifications.Where.Tray && message != problemNoticed)
+        else if (state == ReaderState.Problem && !IsVisible && reminders.Settings.Where.Tray && message != problemNoticed)
         {
             problemNoticed = message; Notify(T("Odyle cannot read the game"), message);
         }
@@ -960,11 +962,11 @@ public partial class MainWindow : Window
             ShowAnnouncement(news.Announcement); RenderHero();
         }
         // Notification settings saved on the dashboard apply at once.
-        if (news.Notifications is { } saved) { notifications = saved; CheckReminders(); }
+        if (news.Notifications is { } saved) { reminders.Settings = saved; CheckReminders(); }
         // Cap alerts of the account's characters (the server checked the quiet hours).
-        if (notifications.RunsInTray) foreach (var invite in news.Invites) { var (title, text) = invite.Notice(); Notify(title, text); Log.Info(invite.Now ? $"Called to run {invite.RunId}." : $"Invited to run {invite.RunId}."); }
-        if (notifications.ReadyInTray) foreach (var party in news.PartyReady) { var (title, text) = party.Notice(); Notify(title, text); Log.Info($"Told that the party of run {party.RunId} is ready."); }
-        if (notifications.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
+        if (reminders.Settings.RunsInTray) foreach (var invite in news.Invites) { var (title, text) = invite.Notice(); Notify(title, text); Log.Info(invite.Now ? $"Called to run {invite.RunId}." : $"Invited to run {invite.RunId}."); }
+        if (reminders.Settings.ReadyInTray) foreach (var party in news.PartyReady) { var (title, text) = party.Notice(); Notify(title, text); Log.Info($"Told that the party of run {party.RunId} is ready."); }
+        if (reminders.Settings.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
         if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await updates.CheckAsync(manual: false); }
         // Versions the operators hold back (#19): a downloaded one is dropped, and this build moves off one it runs.
         if (news.HeldBack is { } held) await updates.HeldBackAsync(held);
@@ -1115,51 +1117,17 @@ public partial class MainWindow : Window
         // Windows keeps 63 characters of a notification title and 255 of its text.
         if (tray.Visible) tray.ShowBalloonTip(10000, title.Length > 63 ? title[..62] + "…" : title, text.Length > 255 ? text[..254] + "…" : text, Forms.ToolTipIcon.Info);
     }
-    // The account's notification settings from the rooms answer. A backend without them keeps
-    // the old local switch; with them, an old "off" moves to the account once (only while the
-    // account never saved any), and Settings links to the dashboard from then on.
-    private async Task FollowNotificationsAsync(NotificationSettings? listed)
-    {
-        if (listed is null) { notifications = NotificationSettings.Default with { Channels = new(Tray: preferences.RemindRuns) }; return; }
-        notifications = listed;
-        if (preferences.RemindRunsMoved || api is not { } current) return;
-        if (!listed.Saved && !preferences.RemindRuns)
-        {
-            try { notifications = await current.SaveNotificationsAsync(listed with { Channels = listed.Where with { Tray = false } }); Log.Info("Moved the local choice to show no run reminders to the account's notification settings."); }
-            catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException) { Log.Warn("Could not move the run reminder choice to the account yet: " + error.Message); return; }
-        }
-        PreferencesStore.Save(preferences = preferences with { RemindRunsMoved = true });
-    }
-    // Planned runs the account joined on the dashboard: a notification at each of the account's
-    // reminder times before each start (Account & data → Notifications on the dashboard), with the
-    // dungeon, room, local time and note, unless the tray is off for them or it is quiet hours.
-    // Reminded runs are kept in preferences.json, so a restart does not repeat them; a run moved
-    // to another time reminds again.
-    private void CheckReminders()
-    {
-        if (!notifications.RunsInTray || accountId.Length == 0) return;
-        var now = DateTimeOffset.UtcNow + serverOffset; var reminded = new HashSet<string>(preferences.RemindedRuns ?? []);
-        var due = Reminders.Due(snapshots, accountId, now, reminded, notifications.Leads);
-        if (due.Length == 0) return;
-        var quiet = notifications.QuietAt(now);
-        foreach (var run in due)
-        {
-            foreach (var key in run.Marks ?? [run.Key]) reminded.Add(key);
-            if (quiet) { Log.Info($"Skipped the reminder of the planned run {run.Run.Id} in the account's quiet hours."); continue; }
-            var minutes = Math.Max(1, (long)Math.Ceiling((run.StartsAt - now).TotalMinutes));
-            var details = T("{0} · starts at {1:t}", run.Room.Name, run.StartsAt.ToLocalTime().DateTime) + (run.Run.Note.Length > 0 ? "\n" + run.Run.Note : "");
-            Notify(Tn(minutes, "{1} starts in {0} minute", "{1} starts in {0} minutes", run.Run.Dungeon), details);
-            Log.Info($"Reminded of the planned run {run.Run.Id} ({run.Run.Dungeon}) at {run.StartsAt:u}, {run.Lead} minutes ahead.");
-        }
-        PreferencesStore.Save(preferences = preferences with { RemindedRuns = Reminders.Prune(reminded, now) });
-    }
+    // The account's notification settings from the rooms answer (TrayReminders.FollowAsync).
+    private Task FollowNotificationsAsync(NotificationSettings? listed) => reminders.FollowAsync(listed, api);
+    // Planned runs the account joined on the dashboard, reminded in the tray (TrayReminders.Runs).
+    private void CheckReminders() => reminders.Runs(snapshots, accountId, DateTimeOffset.UtcNow + serverOffset);
     // Two hours before each daily and weekly reset, the tasks of that cadence still open, in the
     // tray (Account & data → Notifications on the dashboard), unless it is quiet hours. Near a
     // reset the checklist is fetched every 10 minutes, also while its panel is closed; reminded
     // resets are kept in preferences.json, so a restart does not repeat them.
     private async Task TaskRemindersAsync()
     {
-        if (!notifications.TasksInTray || api is not { } current || accountId.Length == 0) return;
+        if (!reminders.Settings.TasksInTray || api is not { } current || accountId.Length == 0) return;
         var now = DateTimeOffset.UtcNow + serverOffset;
         if (!ResetReminders.Near(now, resets)) return;
         if (!tasksLoaded || DateTimeOffset.UtcNow - tasksFetchedAt > TimeSpan.FromMinutes(10))
@@ -1171,20 +1139,7 @@ public partial class MainWindow : Window
             finally { refreshingTasks = false; }
             now = DateTimeOffset.UtcNow + serverOffset;
         }
-        var reminded = new HashSet<string>(preferences.RemindedResets ?? []);
-        var due = ResetReminders.Due(tasks, resets, now, reminded);
-        if (due.Length == 0) return;
-        var quiet = notifications.QuietAt(now);
-        foreach (var notice in due)
-        {
-            reminded.Add(notice.Key);
-            if (quiet) { Log.Info($"Skipped the {notice.Cadence} reset reminder in the account's quiet hours."); continue; }
-            var left = Checklist.Remaining(notice.ResetAt - now);
-            var title = notice.Cadence == "weekly" ? Tn(notice.Open.Length, "Weekly reset in {1} · {0} task open", "Weekly reset in {1} · {0} tasks open", left) : Tn(notice.Open.Length, "Daily reset in {1} · {0} task open", "Daily reset in {1} · {0} tasks open", left);
-            Notify(title, T("Still open: {0}", ResetReminders.Summary(notice.Open)));
-            Log.Info($"Reminded of {notice.Open.Length} open {notice.Cadence} tasks before the reset at {notice.ResetAt:u}.");
-        }
-        PreferencesStore.Save(preferences = preferences with { RemindedResets = Reminders.Prune(reminded, now) });
+        reminders.Resets(tasks, resets, now);
     }
     private void OpenLink(string url)
     {
