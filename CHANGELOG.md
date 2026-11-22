@@ -2,6 +2,22 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 0.37.0 · 2026-11-22
+
+### New
+- Odyle now reads the game when your PC connects to it over IPv6.
+- An installer for Windows on ARM (`odyle-<version>-win-arm64-setup.exe`): Odyle installed with it runs and updates as ARM64 instead of emulated x64.
+
+### Changed
+- Reading the game takes less CPU and memory beside it, and while the game is closed Odyle looks at the list of running programs far less often.
+- The Czech notice in Settings and the installer now speaks to you informally, like the rest of the app.
+
+### Fixed
+- Updates found when Odyle starts, the ones your server asks for with **Update all apps now**, and moving off a held-back version now install right away instead of at the next start.
+- Uninstalling always closes a running Odyle first, also when it runs silently or you keep the pairing.
+- The log no longer loses lines when another program has the previous log file open.
+- While Odyle retries a saved pairing, the dashboard links and **Copy diagnostics** use your pairing's server, not what is typed in the address box.
+
 ## 0.36.1 · 2026-11-21
 
 ### Fixed
