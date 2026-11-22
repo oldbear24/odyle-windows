@@ -69,7 +69,7 @@ public sealed record GameIdentity(ulong Id, string CharacterName, ushort ServerI
         if (bytes.Length is < 1 or > 36) return false;
         string text;
         try { text = Utf8.GetString(bytes); } catch (DecoderFallbackException) { return false; }
-        if (text.Length > 40 || !text.Any(char.IsLetter) || text.Any(c => !char.IsLetterOrDigit(c))) return false;
+        if (!text.Any(char.IsLetter) || text.Any(c => !char.IsLetterOrDigit(c))) return false;
         name = text; return true;
     }
     // The name and region of a Global server id (1000 to 2999), null where this build does not know them.

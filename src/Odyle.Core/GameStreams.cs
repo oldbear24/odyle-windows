@@ -3,8 +3,6 @@ using static Odyle.Core.Localizer;
 namespace Odyle.Core;
 // Resyncing: a connection lost bytes and waits for the next heartbeat; Resumed: it is read again.
 public enum CaptureStatus { Waiting, Listening, Midstream, Resumed, Problem, Resyncing, TwoClients }
-// One TCP connection of the game as this PC receives it: Local is this PC, Remote the game server.
-public sealed record TcpFlow(string Local, ushort LocalPort, string Remote, ushort RemotePort);
 // The game's connections seen on one capture interface: reassembly and decoding per
 // connection. Feed answers how many payload bytes reached a decoder, and only those
 // count as game traffic, so 20 seconds without decodable bytes mark a value stale.
@@ -24,6 +22,8 @@ public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<
         public readonly ExperimentalOdyleDecoder Decoder = new(aligned);
         public readonly Queue<DateTimeOffset> Resyncs = new();
         public bool Blocked, Resyncing;
+        // Bytes of the current segment that reached the decoder.
+        public int Decoded;
     }
     private readonly Dictionary<TcpFlow, Stream> streams = new();
     public int Count => streams.Count;
@@ -51,17 +51,20 @@ public sealed class GameStreams(Action<ExperimentalOdyleDecoder> attach, Action<
         if (stream.Blocked) return 0;
         // The SYN itself takes one sequence number; data sent with it follows that.
         if ((flags & 2) != 0) sequence = unchecked(sequence + 1);
-        var decoded = 0;
-        try { foreach (var chunk in stream.Tcp.Feed(sequence, payload)) { stream.Decoder.Feed(chunk); decoded += chunk.Length; } }
+        stream.Decoded = 0;
+        try { stream.Tcp.Feed(sequence, payload, stream, Deliver); }
         catch (InvalidDataException)
         {
             // Only the damaged connection resyncs; the game's other connections keep being read.
             Resync(stream, DateTimeOffset.UtcNow, T("Unreadable game packets · resyncing with the game…"));
-            return decoded;
+            return stream.Decoded;
         }
+        var decoded = stream.Decoded;
         if (stream.Resyncing && stream.Decoder.Synchronized) { stream.Resyncing = false; status(CaptureStatus.Resumed, T("Back in sync with the game · the value updates at the next Odyle change.")); }
         return decoded;
     }
+    // A chunk counts once the decoder has read it whole, as before: a chunk that does not frame counts nothing.
+    private static readonly System.Buffers.ReadOnlySpanAction<byte, Stream> Deliver = static (chunk, stream) => { stream.Decoder.Feed(chunk); stream.Decoded += chunk.Length; };
     // Every two seconds: connections the game no longer has are dropped, and one whose
     // missing segment did not arrive within three seconds resyncs at the next segment.
     public void Maintain(IEnumerable<TcpFlow> live, DateTimeOffset now)

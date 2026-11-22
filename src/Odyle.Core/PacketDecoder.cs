@@ -1,9 +1,11 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using K4os.Compression.LZ4;
 
 namespace Odyle.Core;
 
 // Bounded, receive-only TCP reassembly. Gaps never become guessed bytes.
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711", Justification = "It reassembles one TCP stream; it is not a System.IO.Stream, and the decoder's names stay as they are.")]
 public sealed class TcpReceiveStream
 {
     // Held segments are bounded by their bytes (PendingLimit); the count limit only guards
@@ -34,12 +36,27 @@ public sealed class TcpReceiveStream
         if (next is not null) return;
         next = unchecked(initialSequence + 1); resume = null;
     }
+    // The in-order bytes of one segment as copies, for the checks; the capture uses the Feed below.
     public IEnumerable<byte[]> Feed(uint sequence, ReadOnlySpan<byte> payload)
     {
-        if (payload.Length == 0) return Array.Empty<byte[]>();
+        var chunks = new List<byte[]>();
+        Feed(sequence, payload, chunks, static (chunk, list) => list.Add(chunk.ToArray()));
+        return chunks;
+    }
+    // Held segments that one Feed made contiguous, and where their new bytes start; reused, so a
+    // segment allocates nothing unless it has to be held.
+    private readonly List<uint> ready = new();
+    private readonly List<(byte[] Bytes, int Start)> released = new();
+    // One segment: hands `deliver` the bytes that are now in order, chunk by chunk (the segment's
+    // new part, then each held segment it joined), each a span valid only during the call. The
+    // stream has taken every chunk before the first is delivered, so a deliver that throws leaves
+    // it where it would be had all been read.
+    public void Feed<TState>(uint sequence, ReadOnlySpan<byte> payload, TState state, System.Buffers.ReadOnlySpanAction<byte, TState> deliver)
+    {
+        if (payload.Length == 0) return;
         if (next is null && resume is { } delivered)
         {
-            if (unchecked((int)(sequence + (uint)payload.Length - delivered)) <= 0) return Array.Empty<byte[]>();
+            if (unchecked((int)(sequence + (uint)payload.Length - delivered)) <= 0) return;
             // A segment reaching past the last delivered byte resumes right after it, without repeating it.
             next = unchecked((int)(sequence - delivered)) < 0 ? delivered : sequence;
         }
@@ -50,25 +67,35 @@ public sealed class TcpReceiveStream
         if (distance > 0)
         {
             if (distance > PendingLimit || pending.Count >= PendingSegments || pendingBytes + payload.Length > PendingLimit) throw new InvalidDataException("TCP gap exceeds buffer limit.");
-            if (pending.TryGetValue(sequence, out var old)) { if (old.Length >= payload.Length) return Array.Empty<byte[]>(); pendingBytes -= old.Length; }
-            pending[sequence] = payload.ToArray(); pendingBytes += payload.Length; GapSince ??= DateTimeOffset.UtcNow; return Array.Empty<byte[]>();
+            if (pending.TryGetValue(sequence, out var old)) { if (old.Length >= payload.Length) return; pendingBytes -= old.Length; }
+            pending[sequence] = payload.ToArray(); pendingBytes += payload.Length; GapSince ??= DateTimeOffset.UtcNow; return;
         }
-        var chunks = new List<byte[]>();
-        Append(sequence, payload, chunks);
-        while (true)
+        var first = Take(sequence, payload);
+        // In the dictionary's order, as before: the held segments the stream has reached.
+        while (pending.Count > 0)
         {
-            var available = pending.Keys.Where(k => unchecked((int)(k - next!.Value)) <= 0).ToArray();
-            if (available.Length == 0) break;
-            foreach (var key in available) { var bytes = pending[key]; pending.Remove(key); pendingBytes -= bytes.Length; Append(key, bytes, chunks); }
+            ready.Clear();
+            foreach (var key in pending.Keys) if (unchecked((int)(key - next!.Value)) <= 0) ready.Add(key);
+            if (ready.Count == 0) break;
+            foreach (var key in ready) { var bytes = pending[key]; pending.Remove(key); pendingBytes -= bytes.Length; var start = Take(key, bytes); if (start >= 0) released.Add((bytes, start)); }
         }
+        ready.Clear();
         if (pending.Count == 0) GapSince = null;
-        return chunks;
+        try
+        {
+            if (first >= 0) deliver(payload[first..], state);
+            foreach (var (bytes, start) in released) deliver(bytes.AsSpan(start), state);
+        }
+        finally { released.Clear(); }
     }
-    private void Append(uint seq, ReadOnlySpan<byte> data, List<byte[]> chunks)
+    // Moves past the new part of a segment and keeps it in the history: where that part starts in
+    // data, or -1 when the segment has nothing new.
+    private int Take(uint seq, ReadOnlySpan<byte> data)
     {
         var skip = unchecked((int)(next!.Value - seq));
-        if (skip >= data.Length) return;
-        var bytes = data[Math.Max(0, skip)..].ToArray(); chunks.Add(bytes); next += (uint)bytes.Length; Retain(bytes);
+        if (skip >= data.Length) return -1;
+        var start = Math.Max(0, skip); var bytes = data[start..];
+        next += (uint)bytes.Length; Retain(bytes); return start;
     }
     private void Retain(ReadOnlySpan<byte> bytes)
     {
@@ -223,7 +250,9 @@ public sealed class ExperimentalOdyleDecoder
             }
             if (length == 0) { Drop(1); continue; }
             if (data.Length < length) return;
-            var frame = data.Slice(position, length - position).ToArray();
+            // The frame is read in place: dropping only moves start, and nothing writes the buffer
+            // until the next Feed. What must outlive the frame (a held roster) is copied.
+            var frame = data.Slice(position, length - position);
             Drop(length);
             if (probation && frame is [0, 0x36, ..]) probation = false;
             DecodeFrame(frame, 0);
@@ -278,18 +307,25 @@ public sealed class ExperimentalOdyleDecoder
             if (size < 1 || size > (frame.Length - 6) * 256L + 64) throw new InvalidDataException("Invalid LZ4 size.");
             // A bundle above 8 MB is skipped whole; the frames after it are read as usual.
             if (size > BundleLimit) return;
-            var restored = new byte[size];
-            if (LZ4Codec.Decode(frame[6..], restored) != size) throw new InvalidDataException("Incomplete LZ4 block.");
-            var offset = 0;
-            while (offset < restored.Length)
+            // The restored bytes live in a pooled array (bundles reach megabytes), returned once the
+            // bundle's frames are read; nothing keeps a span of them.
+            var rented = ArrayPool<byte>.Shared.Rent(size);
+            try
             {
-                var start = offset;
-                if (!TryVarint(restored, ref offset, out var encoded)) throw new InvalidDataException("Incomplete inner frame.");
-                if (encoded == 0) continue;
-                var length = (long)encoded + offset - start - 4;
-                if (length < offset - start + 2 || length > restored.Length - start) throw new InvalidDataException("Invalid inner frame.");
-                DecodeFrame(restored.AsSpan(offset, (int)length - offset + start), depth + 1); offset = start + (int)length;
+                var restored = rented.AsSpan(0, size);
+                if (LZ4Codec.Decode(frame[6..], restored) != size) throw new InvalidDataException("Incomplete LZ4 block.");
+                var offset = 0;
+                while (offset < restored.Length)
+                {
+                    var start = offset;
+                    if (!TryVarint(restored, ref offset, out var encoded)) throw new InvalidDataException("Incomplete inner frame.");
+                    if (encoded == 0) continue;
+                    var length = (long)encoded + offset - start - 4;
+                    if (length < offset - start + 2 || length > restored.Length - start) throw new InvalidDataException("Invalid inner frame.");
+                    DecodeFrame(restored.Slice(offset, (int)length - offset + start), depth + 1); offset = start + (int)length;
+                }
             }
+            finally { ArrayPool<byte>.Shared.Return(rented); }
             return;
         }
         FrameObserved?.Invoke(BinaryPrimitives.ReadUInt16BigEndian(frame), frame.Length - 2);

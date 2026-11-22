@@ -1,10 +1,8 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -16,7 +14,8 @@ using static Odyle.Core.Localizer;
 namespace Odyle.Reader;
 
 // Passive capture of the game's incoming traffic through Npcap. A supervisor keeps one
-// worker per capture interface: a worker that stops (adapter reset or removed, capture
+// worker per capture interface, each on its own thread that waits in Npcap until a packet
+// arrives or the 200 ms read timeout passes: a worker that stops (adapter reset or removed, capture
 // broken) is opened again after a short delay that grows while it keeps failing, the
 // interface list is scanned again every 30 seconds for new adapters (VPN, accelerator,
 // a reset network card), and everything restarts after the PC resumes from sleep. The
@@ -76,6 +75,8 @@ public sealed class PacketCapture : IAsyncDisposable
             return handle;
         });
     }
+    // The signatures Npcap has always been called with: other string marshalling would change what reaches it.
+#pragma warning disable CA2101, CA1838
     [DllImport("kernel32", CharSet = CharSet.Unicode, EntryPoint = "LoadLibraryExW")] private static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_findalldevs(out IntPtr devices, StringBuilder error);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern void pcap_freealldevs(IntPtr devices);
@@ -83,11 +84,11 @@ public sealed class PacketCapture : IAsyncDisposable
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern void pcap_close(IntPtr handle);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_next_ex(IntPtr handle, out IntPtr header, out IntPtr bytes);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_datalink(IntPtr handle);
-    [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_setnonblock(IntPtr handle, int enabled, StringBuilder error);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)] private static extern int pcap_compile(IntPtr handle, out Filter filter, string expression, int optimize, uint netmask);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern int pcap_setfilter(IntPtr handle, ref Filter filter);
     [DllImport("wpcap", CallingConvention = CallingConvention.Cdecl)] private static extern void pcap_freecode(ref Filter filter);
     [DllImport("iphlpapi")] private static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool sorted, int family, int tableClass, uint reserved);
+#pragma warning restore CA2101, CA1838
 
     // Fails at once without Npcap or without any interface, so the window can say so;
     // after that the supervisor only adds, re-opens and restarts.
@@ -145,8 +146,18 @@ public sealed class PacketCapture : IAsyncDisposable
         if (!workers.TryGetValue(name, out var worker)) workers[name] = worker = new Worker();
         else if (!worker.Task.IsCompleted || worker.Unsupported || now < worker.RetryAt) return;
         worker.Stop?.Dispose(); worker.Stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-        var stop = worker.Stop.Token;
-        worker.Task = Task.Run(() => Receive(name, worker, stop));
+        var stop = worker.Stop.Token; var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        worker.Task = done.Task;
+        // A dedicated thread, not the thread pool: it spends its life waiting in pcap_next_ex. It
+        // sees a stop within the read timeout, and its task completes once the handle is closed.
+        // As a background thread it never keeps the process alive.
+        var thread = new Thread(() =>
+        {
+            try { Receive(name, worker, stop); }
+            catch (Exception failure) { Log.Warn($"Capture interface {name} failed: {failure.Message}"); }
+            finally { done.TrySetResult(); }
+        }) { IsBackground = true, Name = "Odyle capture" };
+        thread.Start();
     }
     private async Task StopWorkersAsync()
     {
@@ -189,21 +200,26 @@ public sealed class PacketCapture : IAsyncDisposable
         if (reportedTwoClients) return;
         if (connected != reportedConnected)
         {
-            reportedConnected = connected; explainAt = now + ExplainAfter; explained = null;
+            reportedConnected = connected; explainAt = now + ExplainAfter; explained = null; explainEvery = ExplainFirst;
             if (connected) Status?.Invoke(CaptureStatus.Listening, T("Listening to AION2 · waiting for the Odyle snapshot."));
             else Status?.Invoke(CaptureStatus.Waiting, T("Waiting for the AION2 game connection…"));
             return;
         }
         // About a minute without the game's connection while AION2 runs: the connection table
-        // may say why (IPv6, an accelerator, other ports). Looked at again every 15 seconds.
+        // may say why (an accelerator, other ports). Looking lists every process, so it is
+        // done again after 15 seconds, then less often while the answer stays the same: after
+        // 30 s, then every minute, so a reason still shows within a minute of the game starting.
+        // Another answer, or the connection coming or going, starts over at 15 seconds.
         if (connected || now < explainAt) return;
-        explainAt = now.AddSeconds(15);
         var reason = ExplainMissingConnection();
+        explainEvery = reason == explained ? TimeSpan.FromTicks(Math.Min(explainEvery.Ticks * 2, ExplainAtMost.Ticks)) : ExplainFirst;
+        explainAt = now + explainEvery;
         if (reason == explained) return;
         explained = reason;
         Status?.Invoke(CaptureStatus.Waiting, reason ?? T("Waiting for the AION2 game connection…"));
     }
-    private static readonly TimeSpan ExplainAfter = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ExplainAfter = TimeSpan.FromMinutes(1), ExplainFirst = TimeSpan.FromSeconds(15), ExplainAtMost = TimeSpan.FromMinutes(1);
+    private TimeSpan explainEvery = ExplainFirst;
     private DateTimeOffset explainAt;
     private string? explained;
     // Null while no AION2 process runs or the table does not say (GameConnection.Explain). A
@@ -262,7 +278,7 @@ public sealed class PacketCapture : IAsyncDisposable
     // address family at a time: IPv4 (2) with 24-byte rows or IPv6 (23) with 56-byte rows.
     private static void ReadTcpTable(int family, int rowSize, Action<IntPtr> each)
     {
-        var size = 0; GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, 4, 0);
+        var size = 0; _ = GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, 4, 0);
         if (size < 4 || size > 4194304) return;
         var table = Marshal.AllocHGlobal(size);
         try
@@ -274,7 +290,7 @@ public sealed class PacketCapture : IAsyncDisposable
         }
         finally { Marshal.FreeHGlobal(table); }
     }
-    private static byte[] Address(IntPtr row, int offset) { var bytes = new byte[16]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, 16); return bytes; }
+    private static byte[] Address(IntPtr row, int offset, int length = 16) { var bytes = new byte[length]; Marshal.Copy(IntPtr.Add(row, offset), bytes, 0, length); return bytes; }
     private static ushort PortAt(IntPtr row, int offset) => (ushort)((Marshal.ReadByte(row, offset) << 8) | Marshal.ReadByte(row, offset + 1));
     private static TcpFlow[] GameFlows(out int clients)
     {
@@ -288,18 +304,17 @@ public sealed class PacketCapture : IAsyncDisposable
             if (result.Count >= 32 || PortAt(row, 16) != GameConnection.Port || Marshal.ReadInt32(row) is not (3 or 4 or 5)) return;
             var owner = Marshal.ReadInt32(row, 20);
             if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
-            var local = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 4))).ToString();
-            var remote = new IPAddress(BitConverter.GetBytes(Marshal.ReadInt32(row, 12))).ToString();
-            result.Add(new(local, PortAt(row, 8), remote, PortAt(row, 16))); owners.Add(owner);
+            result.Add(new(FlowAddress.FromIPv4(Address(row, 4, 4)), PortAt(row, 8), FlowAddress.FromIPv4(Address(row, 12, 4)), PortAt(row, 16))); owners.Add(owner);
         });
-        // A dual-mode socket to an IPv4 server is listed in the IPv6 table with IPv4-mapped
-        // addresses; its packets are IPv4 and are read like the rows above.
+        // The IPv6 table: connections over IPv6, and dual-mode sockets to an IPv4 server, listed
+        // with IPv4-mapped addresses (::ffff:a.b.c.d). FlowAddress keeps IPv4 in that mapped form,
+        // so such a row matches the connection's IPv4 packets.
         ReadTcpTable(23, 56, row =>
         {
             if (result.Count >= 32 || PortAt(row, 44) != GameConnection.Port || Marshal.ReadInt32(row, 48) is not (3 or 4 or 5)) return;
             var owner = Marshal.ReadInt32(row, 52);
-            if (GameConnection.MappedIPv4(Address(row, 0)) is not { } local || GameConnection.MappedIPv4(Address(row, 24)) is not { } remote || !GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
-            result.Add(new(local.ToString(), PortAt(row, 20), remote.ToString(), PortAt(row, 44))); owners.Add(owner);
+            if (!GameConnection.IsGameProcess(ProcessName(owner, processes))) return;
+            result.Add(new(FlowAddress.FromIPv6(Address(row, 0)), PortAt(row, 20), FlowAddress.FromIPv6(Address(row, 24)), PortAt(row, 44))); owners.Add(owner);
         });
         clients = owners.Count;
         return result.ToArray();
@@ -330,6 +345,19 @@ public sealed class PacketCapture : IAsyncDisposable
         decoder.TeammatesObserved += value => TeammatesObserved?.Invoke(value);
         decoder.ReadPvp = () => readPvp; decoder.PvpObserved += value => PvpObserved?.Invoke(value); decoder.PvpFrameObserved += value => PvpFrameObserved?.Invoke(value);
     }
+    // The game server's packets, over IPv4 and IPv6. The port test of a BPF filter reads the TCP
+    // header right after the fixed IPv6 header, so IPv6 packets whose TCP header follows extension
+    // headers (hop-by-hop 0, routing 43, fragment 44, authentication 51, destination options 60) pass
+    // as well; TcpPacket and the port check in Receive sort them out, and such packets are rare.
+    private const string GamePortFilter = "tcp and src port 13328";
+    private const string GameFilter = "(" + GamePortFilter + ") or (ip6 and (ip6[6] == 0 or ip6[6] == 43 or ip6[6] == 44 or ip6[6] == 51 or ip6[6] == 60))";
+    private volatile bool filterRefused;
+    private static bool SetFilter(IntPtr handle, string expression)
+    {
+        if (pcap_compile(handle, out var filter, expression, 1, uint.MaxValue) != 0) return false;
+        try { return pcap_setfilter(handle, ref filter) == 0; }
+        finally { pcap_freecode(ref filter); }
+    }
     // Each game connection is decoded on one interface only, the first to deliver it (FlowOwners).
     private readonly FlowOwners owners = new(TimeSpan.FromSeconds(10));
     private void Receive(string name, Worker worker, CancellationToken token)
@@ -338,46 +366,48 @@ public sealed class PacketCapture : IAsyncDisposable
         worker.OpenedAt = DateTimeOffset.UtcNow;
         if (handle == IntPtr.Zero) { Stopped(name, worker, token, "cannot be opened: " + error); return; }
         var streams = new GameStreams(Attach, (kind, message) => Status?.Invoke(kind, message));
-        var flows = Array.Empty<TcpFlow>(); var nextRefresh = DateTimeOffset.MinValue; var reason = "";
+        var flows = Array.Empty<TcpFlow>(); var nextRefresh = DateTimeOffset.MinValue; var reason = ""; var packet = new byte[65536];
         try
         {
-            if (pcap_setnonblock(handle, 1, error) != 0) throw new InvalidOperationException("Nonblocking capture is unavailable.");
             var linkType = pcap_datalink(handle);
-            if (linkType is not (1 or 0 or 108 or 12 or 101)) { worker.Unsupported = true; return; }
+            if (!TcpPacket.IsSupportedLink(linkType)) { worker.Unsupported = true; return; }
             // Keep discovery open across reconnects. Every packet must still match a
-            // connection owned by AION2 before decoding.
-            if (pcap_compile(handle, out var filter, "tcp and src port 13328", 1, uint.MaxValue) != 0) throw new InvalidOperationException("Unable to configure game-only capture filter.");
-            try { if (pcap_setfilter(handle, ref filter) != 0) throw new InvalidOperationException("Unable to apply capture filter."); }
-            finally { pcap_freecode(ref filter); }
+            // connection owned by AION2 before decoding. Should Npcap refuse the filter with
+            // IPv6 extension headers, the game-port filter alone still reads IPv4 and plain IPv6.
+            if (!SetFilter(handle, GameFilter))
+            {
+                if (!SetFilter(handle, GamePortFilter)) throw new InvalidOperationException("Unable to configure game-only capture filter.");
+                if (!filterRefused) { filterRefused = true; Log.Warn("Npcap refused the capture filter for IPv6 extension headers; IPv6 packets that carry them are not read."); }
+            }
             worker.Capturing = true;
             if (worker.Announced) { worker.Announced = false; Log.Info($"Capture interface {name} works again."); }
             while (!token.IsCancellationRequested)
             {
                 if (DateTimeOffset.UtcNow >= nextRefresh) { nextRefresh = DateTimeOffset.UtcNow.AddSeconds(2); flows = CurrentFlows(immediate: false); owners.Keep(flows); streams.Maintain(flows, DateTimeOffset.UtcNow); }
+                // Blocking: 0 means the read timeout passed without a packet, so the loop still sees
+                // a stop and refreshes the connections while nothing arrives. An adapter that answers
+                // 0 at once instead of waiting would spin a core, so such an answer waits 50 ms.
+                var asked = Environment.TickCount64;
                 var received = pcap_next_ex(handle, out var header, out var pointer);
-                if (received == 0) { Thread.Sleep(50); continue; }
+                if (received == 0) { if (Environment.TickCount64 - asked < 20) Thread.Sleep(50); continue; }
                 if (received < 0) throw new InvalidOperationException("Packet capture disconnected.");
                 Interlocked.Increment(ref receivedPackets);
                 var length = Marshal.ReadInt32(header, 8);
                 if (length < 1 || length > 65536 || length != Marshal.ReadInt32(header, 12)) continue;
-                var bytes = new byte[length]; Marshal.Copy(pointer, bytes, 0, length);
+                // One buffer per worker for every packet: the reassembly and the decoder copy what they keep.
+                Marshal.Copy(pointer, packet, 0, length);
                 try
                 {
-                    var ip = linkType == 1 ? 14 : linkType is 0 or 108 ? 4 : 0;
-                    if (linkType == 1) { if (length < 14) continue; var type = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(12)); if (type is 0x8100 or 0x88a8) { if (length < 18) continue; type = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(16)); ip += 4; } if (type != 0x0800) continue; }
-                    if (length < ip + 20 || bytes[ip] >> 4 != 4 || bytes[ip + 9] != 6 || (BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(ip + 6)) & 0x3fff) != 0) continue;
-                    var ipLength = (bytes[ip] & 15) * 4; var total = BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(ip + 2)); var tcp = ip + ipLength;
-                    if (ipLength < 20 || total < ipLength + 20 || ip + total > length) continue;
-                    var tcpLength = (bytes[tcp + 12] >> 4) * 4; if (tcpLength < 20 || ipLength + tcpLength > total) continue;
-                    var source = new IPAddress(bytes.AsSpan(ip + 12, 4)).ToString(); var destination = new IPAddress(bytes.AsSpan(ip + 16, 4)).ToString();
-                    var flow = new TcpFlow(destination, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp + 2)), source, BinaryPrimitives.ReadUInt16BigEndian(bytes.AsSpan(tcp)));
-                    var flags = bytes[tcp + 13];
-                    if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true, opening: (flags & 2) != 0); if (!flows.Contains(flow)) continue; }
+                    if (!TcpPacket.TryParse(packet.AsSpan(0, length), linkType, out var segment)) continue;
+                    var flow = segment.Flow;
+                    // The filter cannot see the port of an IPv6 packet with extension headers.
+                    if (flow.RemotePort != GameConnection.Port) continue;
+                    if (!flows.Contains(flow)) { flows = CurrentFlows(immediate: true, opening: (segment.Flags & 2) != 0); if (!flows.Contains(flow)) continue; }
                     if (!owners.Claim(flow, name, DateTimeOffset.UtcNow)) continue;
-                    var decoded = streams.Feed(flow, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(tcp + 4)), flags, bytes.AsSpan(tcp + tcpLength, total - ipLength - tcpLength));
+                    var decoded = streams.Feed(flow, segment.Sequence, segment.Flags, packet.AsSpan(segment.PayloadOffset, segment.PayloadLength));
                     if (decoded > 0) Interlocked.Add(ref gameBytes, decoded);
                 }
-                finally { Array.Clear(bytes); }
+                finally { packet.AsSpan(0, length).Clear(); }
             }
         }
         catch (Exception failure) { reason = failure.Message; }
@@ -386,6 +416,7 @@ public sealed class PacketCapture : IAsyncDisposable
     // A worker that ended without being asked to is opened again after 5 s, then 10, 20,
     // 40 and at most 60 seconds while it keeps failing; a minute of capturing resets that.
     // Only the first failure of a series is logged.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "A private helper; its parameters follow the capture loop that calls it.")]
     private static void Stopped(string name, Worker worker, CancellationToken token, string reason)
     {
         if (token.IsCancellationRequested) return;

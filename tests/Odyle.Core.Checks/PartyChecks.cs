@@ -27,7 +27,7 @@ static class PartyChecks
         {
             var name = one.GetProperty("name").GetString()!; var expect = one.GetProperty("expect");
             var got = PartyReadiness.Character(one.GetProperty("character").Deserialize<PartyEntry>(Web)!, now, one.GetProperty("cost").GetInt32());
-            Check(got.State.ToString().ToLowerInvariant() == expect.GetProperty("state").GetString() && got.Known == expect.GetProperty("known").GetBoolean() && got.Cubes == expect.GetProperty("cubes").GetInt32() && got.Ready == expect.GetProperty("ready").GetBoolean(), name);
+            Check(string.Equals(got.State.ToString(), expect.GetProperty("state").GetString(), StringComparison.OrdinalIgnoreCase), got.Known == expect.GetProperty("known").GetBoolean(), got.Cubes == expect.GetProperty("cubes").GetInt32(), got.Ready == expect.GetProperty("ready").GetBoolean(), name);
             cases++;
         }
         Check(PartyReadiness.Party([], now, 40) is { Characters.Length: 0, Players.Length: 0, Lowest: null, Cubes: 0, Uncounted.Length: 0 }, "an empty room");
@@ -46,20 +46,20 @@ static class PartyChecks
         var mine = new PlannedRun("r1", "Fire Temple", "2026-10-15 13:30:00.000Z", "", "u", ["u", "l"]);
         var other = new PlannedRun("r2", "Ice Cave", "2026-10-15 12:30:00.000Z", "", "l", ["l"]);
         var next = RunChip.Pick([WithRuns(other, mine)], "u", now)!;
-        Check(next is { Going: true, Attendees: 2, Run.Id: "r1" } && RunChip.Line(next, now) == "Fire Temple · in 1h 30m · 2 going · Evening", "a run you go to comes first, with a countdown");
+        Check(next is { Going: true, Attendees: 2, Run.Id: "r1" }, RunChip.Line(next, now) == "Fire Temple · in 1h 30m · 2 going · Evening", "a run you go to comes first, with a countdown");
         var crowded = mine with { Attendees = ["u", "l", "k"], Waiting = ["k"] };
-        Check(RunChip.Pick([WithRuns(crowded)], "u", now) is { Going: true, Attendees: 2 } && RunChip.Pick([WithRuns(crowded with { Waiting = null })], "u", now) is { Attendees: 3 }, "players waiting for a place are not counted as going");
-        Check(RunChip.Pick([WithRuns(other)], "u", now) is { Going: false, Run.Id: "r2" } && RunChip.Pick([WithRuns(other)], "", now) is null, "else the soonest run of your rooms");
-        Check(RunChip.Line(next, now.AddMinutes(89.5)) == "Fire Temple · starting now · 2 going · Evening" && RunChip.Pick([WithRuns(mine)], "u", now.AddMinutes(106)) is null, "starting now, gone 15 minutes after the start");
+        Check(RunChip.Pick([WithRuns(crowded)], "u", now) is { Going: true, Attendees: 2 }, RunChip.Pick([WithRuns(crowded with { Waiting = null })], "u", now) is { Attendees: 3 }, "players waiting for a place are not counted as going");
+        Check(RunChip.Pick([WithRuns(other)], "u", now) is { Going: false, Run.Id: "r2" }, RunChip.Pick([WithRuns(other)], "", now) is null, "else the soonest run of your rooms");
+        Check(RunChip.Line(next, now.AddMinutes(89.5)) == "Fire Temple · starting now · 2 going · Evening", RunChip.Pick([WithRuns(mine)], "u", now.AddMinutes(106)) is null, "starting now, gone 15 minutes after the start");
         Check(RunChip.Pick([WithRuns(mine with { StartsAt = "2026-10-16 13:00:00.000Z" })], "u", now) is null, "only the next 24 hours");
         // A run you were going to that was cancelled or moved says so.
-        Check(RunChip.Change(next, [WithRuns()], now)!.StartsWith("Fire Temple at ") && RunChip.Change(next, [WithRuns()], now)!.EndsWith(" was cancelled"), "a cancelled run");
-        Check(RunChip.Change(next, [WithRuns(mine with { StartsAt = "2026-10-15 14:00:00.000Z" })], now)!.StartsWith("Fire Temple moved to "), "a moved run");
-        Check(RunChip.Change(next, [WithRuns(mine)], now) is null && RunChip.Change(next with { Going = false }, [WithRuns()], now) is null, "nothing for an unchanged run or one you were not going to");
+        Check(RunChip.Change(next, [WithRuns()], now)!.StartsWith("Fire Temple at ", StringComparison.Ordinal), RunChip.Change(next, [WithRuns()], now)!.EndsWith(" was cancelled", StringComparison.Ordinal), "a cancelled run");
+        Check(RunChip.Change(next, [WithRuns(mine with { StartsAt = "2026-10-15 14:00:00.000Z" })], now)!.StartsWith("Fire Temple moved to ", StringComparison.Ordinal), "a moved run");
+        Check(RunChip.Change(next, [WithRuns(mine)], now) is null, RunChip.Change(next with { Going = false }, [WithRuns()], now) is null, "nothing for an unchanged run or one you were not going to");
         try
         {
             Localizer.Use("cs");
-            Check(RunChip.Line(next, now) == "Fire Temple · za 1 h 30 min · jde 2 · Evening" && RunChip.PartyLine(mates, "u") == "Parta · 1 kostka · nejnižší Kaelen · 1 není živě", "the run and party lines in Czech");
+            Check(RunChip.Line(next, now) == "Fire Temple · za 1 h 30 min · jde 2 · Evening", RunChip.PartyLine(mates, "u") == "Parta · 1 kostka · nejnižší Kaelen · 1 není živě", "the run and party lines in Czech");
         }
         finally { Localizer.Use("en"); }
         // Class and level as the dashboard keeps them from PLAYNC (#25); older backends send neither.
@@ -76,5 +76,4 @@ static class PartyChecks
             if (Directory.Exists(Path.Combine(directory.FullName, "src", "Odyle.Reader"))) return directory.FullName;
         throw new Exception("Party check: the repository root was not found.");
     }
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Party check failed: " + message); }
 }

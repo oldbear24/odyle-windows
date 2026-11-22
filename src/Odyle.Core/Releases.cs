@@ -19,16 +19,17 @@ public sealed record AppRelease(Version Version, string Tag, string Url, DateTim
 // publishes a release tagged v<Version>, a semantic version (AGENTS.md); releases before
 // that were v0.6.0.<run number>, and missing parts compare as zero. Only full versions count
 // as releases, so a tag like "nightly" or a pre-release is never offered as an update.
-public static class ReleaseFeed
+public static partial class ReleaseFeed
 {
     public const string Repository = "oldbear24/odyle-windows";
     public static readonly Uri Latest = new($"https://api.github.com/repos/{Repository}/releases/latest");
     public static readonly Uri ReleasesPage = new($"https://github.com/{Repository}/releases/latest");
-    private static readonly Regex Package = new(@"^odyle-(?<version>\d+(?:\.\d+){1,3})-(?<runtime>win-(?:x64|arm64))(?<bundled>-self-contained)?\.zip$", RegexOptions.CultureInvariant);
-    private static readonly Regex Hash = new(@"^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"^odyle-(?<version>\d+(?:\.\d+){1,3})-(?<runtime>win-(?:x64|arm64))(?<bundled>-self-contained)?\.zip$", RegexOptions.CultureInvariant)] private static partial Regex PackageName();
+    [GeneratedRegex(@"^[0-9a-f]{64}$", RegexOptions.CultureInvariant)] private static partial Regex HashText();
+    [GeneratedRegex(@"^\d+(\.\d+){1,3}$")] private static partial Regex VersionText();
     public static PackageKind? Describe(string assetName)
     {
-        var match = Package.Match(assetName);
+        var match = PackageName().Match(assetName);
         return match.Success && Version.TryParse(match.Groups["version"].Value, out var version) ? new PackageKind(Normalize(version), match.Groups["runtime"].Value, match.Groups["bundled"].Success) : null;
     }
     // Which release this build installs (#19): the latest one when it is newer and has this
@@ -52,7 +53,7 @@ public static class ReleaseFeed
         version = Normalize(null);
         var text = tag?.Trim() ?? "";
         if (text.StartsWith('v') || text.StartsWith('V')) text = text[1..];
-        if (!Regex.IsMatch(text, @"^\d+(\.\d+){1,3}$") || !Version.TryParse(text, out var parsed)) return false;
+        if (!VersionText().IsMatch(text) || !Version.TryParse(text, out var parsed)) return false;
         version = Normalize(parsed); return true;
     }
     // Parses GitHub's "latest release" JSON; null for drafts, pre-releases and tags that are not versions.
@@ -91,7 +92,7 @@ public static class ReleaseFeed
         foreach (var line in checksumFile.Split('\n'))
         {
             var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2 && parts[1].TrimStart('*') == assetName && Hash.IsMatch(parts[0].ToLowerInvariant())) return parts[0].ToLowerInvariant();
+            if (parts.Length == 2 && parts[1].TrimStart('*') == assetName && HashText().IsMatch(parts[0].ToLowerInvariant())) return parts[0].ToLowerInvariant();
         }
         return null;
     }

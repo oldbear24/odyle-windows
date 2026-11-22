@@ -36,7 +36,7 @@ static class GroupChecks
         (string, GameGroup?)[] room = [P("Anna", "p1", "f1"), P("Bram"), P("Cleo", "p1", "f1"), P("Dax", "p2", "f1")];
         Check(Shape(Arrange(null, room)) == "Anna:p1/f1 Cleo:p1/f1 Dax:/f1 Bram", "a party stands together inside its force, the force's other players after it");
         Check(Shape(Arrange(null, room[1], room[3], room[0], room[2])) == "Bram Dax:/f1 Anna:p1/f1 Cleo:p1/f1", "a band takes the place of its first row");
-        Check(Shape(Arrange(null, room[..3])) == "Anna:p1/ Cleo:p1/ Bram" && Shape(Arrange(null, room[0], room[1])) == "Anna Bram", "a force whose players all share one party is that party; one player alone makes no band");
+        Check(Shape(Arrange(null, room[..3])) == "Anna:p1/ Cleo:p1/ Bram", Shape(Arrange(null, room[0], room[1])) == "Anna Bram", "a force whose players all share one party is that party; one player alone makes no band");
         Check(Shape(Arrange(null, P("Anna", "p1"), P("Cleo", "p1", "f1"), P("Dax", force: "f1"))) == "Anna:p1/f1 Cleo:p1/f1 Dax:/f1", "a party without a force yet takes the force one of its players reported");
         Check(Shape(Arrange(null, P("Anna", "p1"), P("Cleo"), P("Cleo", "p1"))) == "Anna:p1/ Cleo:p1/ Cleo" && Shape(Arrange(null, P("Cleo", "p1"), P("Cleo", "p2"), P("Anna", "p2"))) == "Cleo Cleo Anna",
             "a player's first row with a group speaks for them");
@@ -45,12 +45,12 @@ static class GroupChecks
         Check(Shape(yours) == "Anna:p1/f1 Dax:/f1 Bram Zed" && yours.Own == new Band("p1", "f1", true, true) && yours.Rows[0].Band is { YourParty: true, YourForce: true } && yours.Rows[1].Band is { YourParty: false, YourForce: true },
             "your party and force come first and are marked yours");
         var others = Arrange(new("p1"), P("Bram"), P("Tor", "p3"), P("Vex", "p3"));
-        Check(Shape(others) == "Bram Tor:p3/ Vex:p3/" && others.Own == Band.None && !others.Rows[1].Band.YourParty, "others' party is a band that is not yours");
-        Check(Shape(Arrange(null, P("me", "p1"), P("Anna", "p1"))) == "me Anna" && Arrange(null).Rows.Length == 0, "your own rows never speak for you");
+        Check(Shape(others) == "Bram Tor:p3/ Vex:p3/", others.Own == Band.None, !others.Rows[1].Band.YourParty, "others' party is a band that is not yours");
+        Check(Shape(Arrange(null, P("me", "p1"), P("Anna", "p1"))) == "me Anna", Arrange(null).Rows.Length == 0, "your own rows never speak for you");
         // The lists frame them: a force around its parties and its other players, a party around its players (* yours).
         string Frames(Nested<(string, GameGroup?)>[] nested) => string.Join(" ", nested.Select(n => n.IsBand ? $"{n.Kind}{(n.Yours ? "*" : "")}[{Frames(n.Children!)}]" : n.Item.Item1));
         var framed = GameBands.Nest(Arrange(null, room).Rows);
-        Check(Frames(framed) == "force[party[Anna Cleo] Dax] Bram" && framed[0].Rows == 3 && framed[1].Rows == 1, "a party's frame sits inside its force's, with the force's other players");
+        Check(Frames(framed) == "force[party[Anna Cleo] Dax] Bram", framed[0].Rows == 3, framed[1].Rows == 1, "a party's frame sits inside its force's, with the force's other players");
         Check(Frames(GameBands.Nest(yours.Rows)) == "force*[party*[Anna] Dax] Bram Zed" && Frames(GameBands.Nest(others.Rows)) == "Bram party[Tor Vex]" && GameBands.Nest(Arrange(null).Rows).Length == 0,
             "your frames lead and say so; others' parties are framed too");
         // The character's gameGroup as room snapshots and realtime news carry it.
@@ -67,7 +67,7 @@ static class GroupChecks
         var (mates, _, own) = CompactStrip.Mates(rooms, "u", moment, 40);
         Check(mates.Select(m => (m.Name, m.Band.Party, m.Band.Force)).SequenceEqual([("Lumina", "p1", "f1"), ("Nyx", "", "f1"), ("Zed", "", ""), ("Kael", "", "")]) && own == new Band("p1", "f1", true, true),
             "compact mode puts your party and force first across your rooms; a stale character's group says nothing");
-        Check(CompactStrip.Mates(rooms, "u", moment.AddHours(3), 40) is { Own.Any: false } && GameBands.Own(rooms, "u", moment.AddHours(3)) is null, "without a live character you are in no band");
+        Check(CompactStrip.Mates(rooms, "u", moment.AddHours(3), 40) is { Own.Any: false }, GameBands.Own(rooms, "u", moment.AddHours(3)) is null, "without a live character you are in no band");
     }
     static void Frames()
     {
@@ -77,7 +77,7 @@ static class GroupChecks
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
         Check(seen.Count == 0, "a roster before the own identity waits");
         decoder.Feed(Frame(Identity(Own, "Hero")));
-        Check(seen.Single() == new GameGroupEvent(GroupChange.Party, Party, OwnCharacter, Own) && order.SequenceEqual(["group", "identity"]), "the held roster is read once the own id is known, before the name");
+        Check(seen.Single() == new GameGroupEvent(GroupChange.Party, Party, OwnCharacter, Own), order.SequenceEqual(["group", "identity"]), "the held roster is read once the own id is known, before the name");
         // A roster of the updates' layout (flag 08 and a block before the members), and one inside a bundle.
         decoder.Feed(Frame(PartyRoster(8, (Own, OwnCharacter, "Hero"))));
         Check(seen.Last() == new GameGroupEvent(GroupChange.Party, Party, OwnCharacter, Own), "an updated roster is read");
@@ -127,13 +127,13 @@ static class GroupChecks
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"))));
         Check(names.Count == 0, "a roster before the own identity names nobody yet");
         decoder.Feed(Frame(Identity(Own, "Hero")));
-        Check(groups == 1 && names.Single().SequenceEqual(["Mate"]), "the held roster names the other member, not the own character");
+        Check(groups == 1, names.Single().SequenceEqual(["Mate"]), "the held roster names the other member, not the own character");
         // A force roster names every other member once, whatever the case; a roster with the own
         // character alone names nobody.
         decoder.Feed(Frame(ForceRoster((Mate, MateCharacter, "Mate"), (Own, OwnCharacter, "Hero"), (Third, ThirdCharacter, "Ållan"), (Third + 1, ThirdCharacter + 1, "MATE"))));
         Check(names.Last().SequenceEqual(["Mate", "Ållan"]), "a force roster names the others once each");
         decoder.Feed(Frame(PartyRoster(8, (Own, OwnCharacter, "Hero"))));
-        Check(names.Count == 2 && groups == 3, "a roster of the own character alone names nobody");
+        Check(names.Count == 2, groups == 3, "a roster of the own character alone names nobody");
         // Names that are not character names, and rosters without the own entity, give none.
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "Ma te"), (Own, OwnCharacter, "Hero"))));
         decoder.Feed(Frame(PartyRoster(0, (Mate, MateCharacter, "1234"), (Own, OwnCharacter, "Hero"))));
@@ -159,23 +159,23 @@ static class GroupChecks
     static void Tracking()
     {
         var tracker = new GroupTracker();
-        Check(tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own)) && tracker is { Party: Party, Force: "", Owner: Own }, "a party roster sets the party");
+        Check(tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own)), tracker is { Party: Party, Force: "", Owner: Own }, "a party roster sets the party");
         Check(!tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own)), "the same party again is no change");
-        Check(tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own)) && tracker is { Party: Party, Force: Force }, "a force roster sets the force");
-        Check(!tracker.Observe(new(GroupChange.ForceLeft, Party, MateCharacter)) && tracker.Force == Force, "another player leaving changes nothing");
-        Check(!tracker.Observe(new(GroupChange.ForceEnded, "0000000000000001")) && tracker.Force == Force, "another force ending changes nothing");
-        Check(tracker.Observe(new(GroupChange.ForceLeft, Party, OwnCharacter)) && tracker is { Party: Party, Force: "" }, "leaving the force clears it");
+        Check(tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own)), tracker is { Party: Party, Force: Force }, "a force roster sets the force");
+        Check(!tracker.Observe(new(GroupChange.ForceLeft, Party, MateCharacter)), tracker.Force == Force, "another player leaving changes nothing");
+        Check(!tracker.Observe(new(GroupChange.ForceEnded, "0000000000000001")), tracker.Force == Force, "another force ending changes nothing");
+        Check(tracker.Observe(new(GroupChange.ForceLeft, Party, OwnCharacter)), tracker is { Party: Party, Force: "" }, "leaving the force clears it");
         tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own));
-        Check(tracker.Observe(new(GroupChange.ForceEnded, Force)) && tracker is { Party: Party, Force: "" }, "the force ending clears it");
+        Check(tracker.Observe(new(GroupChange.ForceEnded, Force)), tracker is { Party: Party, Force: "" }, "the force ending clears it");
         tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own));
-        Check(tracker.Observe(new(GroupChange.PartyEnded)) && tracker is { Party: "", Force: "" }, "leaving the party leaves the force too");
+        Check(tracker.Observe(new(GroupChange.PartyEnded)), tracker is { Party: "", Force: "" }, "leaving the party leaves the force too");
         Check(!tracker.Observe(new(GroupChange.PartyEnded)), "ending no party is no change");
         // The rosters belong to the entity they listed.
         tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own));
         tracker.Named(Own); Check(tracker.Party == Party, "naming the same entity keeps its party");
         tracker.Named(Mate); Check(tracker is { Party: "", Force: "", Owner: 0 }, "naming another entity forgets the party");
         tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own)); tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own));
-        Check(tracker.Observe(new(GroupChange.Party, "1122334455667788", MateCharacter, Mate)) && tracker is { Party: "1122334455667788", Force: "", Owner: Mate }, "another entity's roster starts over");
+        Check(tracker.Observe(new(GroupChange.Party, "1122334455667788", MateCharacter, Mate)), tracker is { Party: "1122334455667788", Force: "", Owner: Mate }, "another entity's roster starts over");
         tracker.Reset(); Check(tracker is { Party: "", Force: "", Owner: 0 }, "a reset forgets everything");
     }
     static async Task Wire()
@@ -195,7 +195,7 @@ static class GroupChecks
                 && root.GetProperty("adapter").GetString() == "global-group-v1" && root.GetProperty("party").GetString() == Party && root.GetProperty("force").GetString() == Force, "the party and force wire contract");
         }
         await api.GameGroupAsync("s", "c", "", "");
-        using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("party").ValueKind == JsonValueKind.Null && sent.RootElement.GetProperty("force").ValueKind == JsonValueKind.Null, "outside a party and force both are null");
+        using (var sent = JsonDocument.Parse(requests.Last().Body)) Check(sent.RootElement.GetProperty("party").ValueKind == JsonValueKind.Null, sent.RootElement.GetProperty("force").ValueKind == JsonValueKind.Null, "outside a party and force both are null");
         // An older backend answers without `shared`: the names were taken (#81).
         Check(await api.TeammatesAsync("s", "c", ["Mate", "Ållan"]), "an answer without shared means the names were taken");
         answer = """{"shared":true,"queued":2,"serverNow":"x"}""";
@@ -250,24 +250,4 @@ static class GroupChecks
         return [3, slot, .. entityBytes, 0, 9, 0, 9, 36, .. id, .. U64(character), (byte)text.Length, .. text, 24, 0, 0, 0, .. new byte[24], 7, 6, .. "Legion"u8, 2, 0, 0, 0];
     }
     static byte[] U64(ulong value) { var b = new byte[8]; BinaryPrimitives.WriteUInt64LittleEndian(b, value); return b; }
-    static byte[] Identity(ulong id, string name)
-    {
-        var text = Encoding.UTF8.GetBytes(name); var tail = new byte[6]; BinaryPrimitives.WriteUInt16LittleEndian(tail, 2304); BinaryPrimitives.WriteUInt32LittleEndian(tail.AsSpan(2), 25);
-        return [0x33, 0x36, .. Varint(id), 0, 0, 0, 0, 1, (byte)text.Length, .. text, .. tail];
-    }
-    static byte[] Bundle(byte[] frames)
-    {
-        var encoded = new byte[LZ4Codec.MaximumOutputSize(frames.Length)]; var length = LZ4Codec.Encode(frames, encoded);
-        var bundle = new byte[6 + length]; bundle[0] = bundle[1] = 255;
-        BinaryPrimitives.WriteInt32LittleEndian(bundle.AsSpan(2), frames.Length); encoded.AsSpan(0, length).CopyTo(bundle.AsSpan(6));
-        return bundle;
-    }
-    static byte[] Varint(ulong value)
-    {
-        var bytes = new List<byte>();
-        do { var b = (byte)(value & 127); value >>= 7; bytes.Add((byte)(b | (value > 0 ? 128 : 0))); } while (value > 0);
-        return bytes.ToArray();
-    }
-    static byte[] Frame(byte[] content) => [.. Varint((ulong)content.Length + 4), .. content];
-    static void Check(bool condition, string message) { if (!condition) throw new Exception("Group check failed: " + message); }
 }

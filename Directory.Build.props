@@ -1,0 +1,16 @@
+<Project>
+  <!-- Every project here (src/ and tests/) builds with the .NET analyzers at their recommended level, and
+       any warning fails the build. Rule-wide exceptions live in .editorconfig (tests/.editorconfig for the
+       checks), each with its reason; single ones sit beside the code they excuse. -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- Pinned to .NET 10's rule set: "latest" would turn on every rule of whatever newer SDK builds
+         the app (the dashboard's companion checks build it outside global.json), failing builds
+         without a code change. Raise it together with the target framework. -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- A new NuGet advisory (NuGet audit) stays a warning: it must not fail every build, a hotfix's
+         included, before the package has a fixed version. Dependabot raises those updates. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+  </PropertyGroup>
+</Project>

@@ -7,9 +7,10 @@ namespace Odyle.Core;
 // write; a full or locked disk never breaks the caller. Callers never pass credentials,
 // and Redact masks anything shaped like an account token, device key or pairing code that
 // could still slip in with a message (a server answer, an exception).
-public sealed class RotatingLog(string path, long limit = 1024 * 1024)
+public sealed partial class RotatingLog(string path, long limit = 1024 * 1024)
 {
     private readonly object sync = new();
+    private DateTimeOffset rotateAfter = DateTimeOffset.MinValue;
     public string FilePath => path;
     public string PreviousPath => Path.ChangeExtension(path, null) + ".previous.log";
     public void Write(string level, string message)
@@ -21,7 +22,13 @@ public sealed class RotatingLog(string path, long limit = 1024 * 1024)
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-                if (File.Exists(path) && new FileInfo(path).Length + bytes.Length > limit) File.Move(path, PreviousPath, overwrite: true);
+                if (File.Exists(path) && new FileInfo(path).Length + bytes.Length > limit && DateTimeOffset.UtcNow >= rotateAfter)
+                {
+                    // Another program holding the previous file (an editor, a sync client) blocks the rotation:
+                    // the line is written anyway, and the rotation is tried again a minute later, not on every line.
+                    try { File.Move(path, PreviousPath, overwrite: true); }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException) { rotateAfter = DateTimeOffset.UtcNow.AddMinutes(1); }
+                }
                 using var file = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
                 file.Write(bytes);
             }
@@ -46,13 +53,18 @@ public sealed class RotatingLog(string path, long limit = 1024 * 1024)
             }
         return lines.Skip(Math.Max(0, lines.Count - count)).ToArray();
     }
+    [GeneratedRegex(@"eyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}", RegexOptions.CultureInvariant)] private static partial Regex Token();
+    [GeneratedRegex(@"(?i)\bbearer\s+\S+", RegexOptions.CultureInvariant)] private static partial Regex BearerToken();
+    [GeneratedRegex(@"odyle-pair=[^\s&#""']+", RegexOptions.CultureInvariant)] private static partial Regex PairLink();
+    [GeneratedRegex(@"\b[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(?:[\s-]?[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){3}\b", RegexOptions.CultureInvariant)] private static partial Regex PairCode();
+    // Device keys are long random letters and digits; long names in stack traces have no digits.
+    [GeneratedRegex(@"\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{32,}\b", RegexOptions.CultureInvariant)] private static partial Regex DeviceKey();
     private static readonly (Regex Pattern, string Mask)[] Secrets = [
-        (new(@"eyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]{6,}", RegexOptions.CultureInvariant), "[token]"),
-        (new(@"(?i)\bbearer\s+\S+", RegexOptions.CultureInvariant), "Bearer [token]"),
-        (new(@"odyle-pair=[^\s&#""']+", RegexOptions.CultureInvariant), "odyle-pair=[code]"),
-        (new(@"\b[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(?:[\s-]?[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){3}\b", RegexOptions.CultureInvariant), "[code]"),
-        // Device keys are long random letters and digits; long names in stack traces have no digits.
-        (new(@"\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{32,}\b", RegexOptions.CultureInvariant), "[secret]")];
+        (Token(), "[token]"),
+        (BearerToken(), "Bearer [token]"),
+        (PairLink(), "odyle-pair=[code]"),
+        (PairCode(), "[code]"),
+        (DeviceKey(), "[secret]")];
     public static string Redact(string text)
     {
         foreach (var (pattern, mask) in Secrets) text = pattern.Replace(text, mask);

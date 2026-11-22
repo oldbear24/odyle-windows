@@ -14,7 +14,7 @@ public sealed record DiscordActivity(string Details, string State, DateTimeOffse
 // Discord's local RPC (the discord-ipc-N pipe of the Discord app on this PC): frames of an opcode
 // and a length, both 32-bit little-endian, then UTF-8 JSON. A handshake names the Discord
 // application, SET_ACTIVITY sets the status, and closing the pipe clears it.
-public static class DiscordPresence
+public static partial class DiscordPresence
 {
     public const int Handshake = 0, Message = 1, Close = 2, Ping = 3, Pong = 4;
     // Discord drops texts shorter than 2 characters and longer than 128.
@@ -87,12 +87,12 @@ public static class DiscordPresence
         };
     }
     // The armory page of a character, as the dashboard's src/armory.js builds and accepts it.
-    private static readonly System.Text.RegularExpressions.Regex ArmoryRoute = new(@"^/armory(?:/find/GLOBAL_(?:NAW?|EU|SA|ASIA)/[A-Za-z]{2,20}/[^/]{1,60}|/(?:nae|naw|eu|la|as)/[12]\d{3}/[A-Za-z0-9_-]{8,90}={0,2})$");
+    [System.Text.RegularExpressions.GeneratedRegex(@"^/armory(?:/find/GLOBAL_(?:NAW?|EU|SA|ASIA)/[A-Za-z]{2,20}/[^/]{1,60}|/(?:nae|naw|eu|la|as)/[12]\d{3}/[A-Za-z0-9_-]{8,90}={0,2})$")] private static partial System.Text.RegularExpressions.Regex ArmoryRoute();
     public static string? ArmoryPath(Character c)
     {
         var path = c is { OfficialId.Length: > 0, OfficialRegion.Length: > 0, OfficialServerId: > 0 } ? $"/armory/{c.OfficialRegion}/{c.OfficialServerId}/{c.OfficialId}" : "";
-        if (!ArmoryRoute.IsMatch(path)) path = $"/armory/find/{c.Region}/{c.Server}/{Uri.EscapeDataString(c.CharacterName)}";
-        return ArmoryRoute.IsMatch(path) ? path : null;
+        if (!ArmoryRoute().IsMatch(path)) path = $"/armory/find/{c.Region}/{c.Server}/{Uri.EscapeDataString(c.CharacterName)}";
+        return ArmoryRoute().IsMatch(path) ? path : null;
     }
     // Discord takes image addresses of at most 256 characters, button labels of at most 32 and links of at most 512.
     private const int MaxImage = 256, MaxLabel = 32, MaxLink = 512;

@@ -1,0 +1,60 @@
+using System.ComponentModel;
+using System.Linq;
+using System.Windows;
+using System.Windows.Media;
+using Odyle.Core;
+using static Odyle.Core.Localizer;
+
+namespace Odyle.Reader;
+// The rows the window's lists show (W#90: moved out of MainWindow.xaml.cs): records equal when they show the same,
+// so a render that changes nothing keeps a list's items (MainWindow.ShowRows).
+public sealed record CharacterSharing(string Title, string Rooms);
+public sealed record LanguageChoice(string Code, string Name);
+// Gap is the room above the row and Pad the room around it: a row right inside a force's frame in
+// compact mode sits in by as much as a party's frame, so the text of every row stays in line.
+public sealed record CompactMate(string Name, string Value, string Cubes, Brush Dot, string Hint)
+{
+    public Thickness Gap { get; init; }
+    public Thickness Pad { get; init; }
+}
+// Place: where the character was last seen while its player shares their location, "" otherwise; it
+// follows the detail with a map pin, in place of the server.
+public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint, string Place = "")
+{
+    public string PlaceGap => Place.Length > 0 && Detail.Length > 0 ? " · " : "";
+    public string Pin => Place.Length > 0 ? "\uE707 " : "";
+}
+// The players of one party (blue) or force (violet) in the game, framed together (GameBands.Nest):
+// its label, player count and icon (the party list shows them), Items its rows and, in a force, its
+// parties' frames; Gap is the room around the frame, Pad the room inside it.
+public sealed record MateBand(string Label, string Count, string Icon, Brush Accent, Brush Edge, Brush Fill, object[] Items, Thickness Gap, Thickness Pad);
+// Summary is the room's party line (RunChip.PartyLine), mint while the party can do a cube. Shown is
+// what the list shows: the cards, with the players the game put together framed (Entries).
+public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = "", Brush? SummaryBrush = null, object[]? Entries = null)
+{
+    public string Header => Name.ToUpper(Culture);
+    public string Online => T("{0} online", Mates.Length);
+    public object[] Shown => Entries ?? Mates;
+}
+// One checklist task as the panel shows it: done within the current reset period or not.
+public sealed record TaskItem(UserTask Task, bool Done, string Hint)
+{
+    public string Id => Task.Id;
+    public string Title => Task.Title;
+}
+// The daily or weekly list; Reset counts down while the window is open.
+public sealed class TaskGroup(string cadence, TaskItem[] tasks) : INotifyPropertyChanged
+{
+    private string reset = "", resetAt = "";
+    public string Cadence => cadence;
+    public TaskItem[] Tasks => tasks;
+    public string Header => cadence == "daily" ? T("DAILY") : T("WEEKLY");
+    public string Progress => $"  {tasks.Count(t => t.Done)} / {tasks.Length}";
+    public double Percent => tasks.Length == 0 ? 0 : tasks.Count(t => t.Done) * 100.0 / tasks.Length;
+    public string Empty => cadence == "daily" ? T("No daily tasks yet · add them on the dashboard.") : T("No weekly tasks yet · add them on the dashboard.");
+    public Visibility EmptyVisibility => tasks.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+    public string Reset { get => reset; set => Set(ref reset, value, nameof(Reset)); }
+    public string ResetAt { get => resetAt; set => Set(ref resetAt, value, nameof(ResetAt)); }
+    public event PropertyChangedEventHandler? PropertyChanged;
+    private void Set(ref string field, string value, string name) { if (field == value) return; field = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
+}

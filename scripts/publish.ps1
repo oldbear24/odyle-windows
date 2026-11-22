@@ -1,7 +1,7 @@
 param([ValidateSet('win-x64','win-arm64')][string]$Runtime = 'win-x64', [switch]$SelfContained, [switch]$Installer, [string]$Version)
 $ErrorActionPreference = 'Stop'
 $odyleRoot = Split-Path $PSScriptRoot -Parent
-if ($Installer -and (!$SelfContained -or $Runtime -ne 'win-x64')) { throw '-Installer packages the self-contained win-x64 build: use it with -SelfContained.' }
+if ($Installer -and !$SelfContained) { throw '-Installer packages the self-contained build: use it with -SelfContained.' }
 $packageKind = if ($SelfContained) { 'self-contained' } else { 'small' }
 # A fresh staging folder prevents stale runtime files from inflating a package.
 $output = Join-Path $odyleRoot ('artifacts/staging/' + $packageKind + '-' + $Runtime + '-' + [guid]::NewGuid().ToString('N'))
@@ -53,8 +53,10 @@ if ($Installer) {
     if (!$iscc) { throw 'Inno Setup was installed, but ISCC.exe was not found.' }
   }
   $appVersion = if ($Version) { $Version } else { (Select-Xml -Path (Join-Path $odyleRoot 'src/Odyle.Reader/Odyle.Reader.csproj') -XPath '/Project/PropertyGroup/Version' | Select-Object -First 1).Node.InnerText }
-  $setupName = "$prefix-win-x64-setup"
-  & $iscc /Qp "/DAppVersion=$appVersion" "/DPublishDir=$([System.IO.Path]::GetFullPath($output))" "/DOutputDir=$([System.IO.Path]::GetFullPath($artifacts))" "/DOutputName=$setupName" (Join-Path $odyleRoot 'installer/odyle.iss')
+  # One installer per CPU architecture: odyle-<version>-win-x64-setup.exe and odyle-<version>-win-arm64-setup.exe.
+  # An ARM64 install runs the ARM64 build, which then updates itself with the ARM64 package (Updater.Runtime).
+  $setupName = "$prefix-$Runtime-setup"
+  & $iscc /Qp "/DAppVersion=$appVersion" "/DRuntime=$Runtime" "/DPublishDir=$([System.IO.Path]::GetFullPath($output))" "/DOutputDir=$([System.IO.Path]::GetFullPath($artifacts))" "/DOutputName=$setupName" (Join-Path $odyleRoot 'installer/odyle.iss')
   if ($LASTEXITCODE -ne 0) { throw 'Building the installer failed.' }
   Write-Checksum (Join-Path $artifacts "$setupName.exe")
 }

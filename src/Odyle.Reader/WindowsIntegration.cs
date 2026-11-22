@@ -64,6 +64,7 @@ public static class PairProtocol
 }
 // A second start with --pair hands its link to the running Odyle through a pipe that only this
 // Windows account can open (PipeOptions.CurrentUserOnly), then ends.
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "Stop cancels the listener once at exit; a token source without a timer holds nothing that needs disposing.")]
 public sealed class PairPipe
 {
     private readonly CancellationTokenSource stop = new();

@@ -7,11 +7,11 @@ namespace Odyle.Core;
 // backend marks its page with <meta name="odyle-routes" content="paths">. An older backend answers
 // any path with its page, whose files are relative to it, so a deep path loads blank there: those
 // links keep the #/ form. Invite links (#/join/<code>) are never built here: a code never reaches a server.
-public static class DashboardPages
+public static partial class DashboardPages
 {
-    private static readonly Regex Mark = new("""<meta\s+name\s*=\s*["']odyle-routes["']\s+content\s*=\s*["']paths["']""", RegexOptions.IgnoreCase);
+    [GeneratedRegex("""<meta\s+name\s*=\s*["']odyle-routes["']\s+content\s*=\s*["']paths["']""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)] private static partial Regex Mark();
     // Whether the backend's page (its answer to GET /) says it serves paths.
-    public static bool ServesPaths(string page) => Mark.IsMatch(page);
+    public static bool ServesPaths(string page) => Mark().IsMatch(page);
     // The address of a page (path like "/tasks", "/" for the start page) on the server at home.
     public static string Url(string home, string path, bool paths)
     {

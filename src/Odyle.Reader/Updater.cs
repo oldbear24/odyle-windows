@@ -33,16 +33,20 @@ public static class Updater
     public static readonly bool SelfContained = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "SelfContained" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase));
     public static readonly string Runtime = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
     public static readonly string? Executable = Environment.ProcessPath;
-    // Built by the release workflow (scripts/publish.ps1 -Version marks it OdyleRelease). Builds from
-    // before semantic versions were told apart by the run number in their version (0.6.0.18); the
-    // semantic ones, 0.7.0 and 0.8.0, had neither and took themselves for development builds.
-    public static readonly bool Released = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "OdyleRelease" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase)) || Current.Revision > 0;
+    // Built by the release workflow (scripts/publish.ps1 -Version marks it OdyleRelease); every other
+    // build is a development build that never replaces itself. (0.7.0 and 0.8.0 lacked the mark and
+    // could not update; scripts/version.ps1 refuses the four-part versions of the builds before them.)
+    public static readonly bool Released = typeof(Updater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a => a.Key == "OdyleRelease" && string.Equals(a.Value, "true", StringComparison.OrdinalIgnoreCase));
     public static bool IsReleaseBuild => Released && Executable is not null;
     public static string Staging { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Odyle", "updates");
     // Why the last automatic installation at start did not happen, shown in settings.
     public static string? LastFailure { get; set; }
-    private const long PackageLimit = 512L * 1024 * 1024;
-    private static readonly HttpClient Http = new(new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }) { Timeout = Timeout.InfiniteTimeSpan };
+    // The largest package a download takes; the checks lower it.
+    public static long PackageLimit { get; set; } = 512L * 1024 * 1024;
+    private static HttpClient Http = NewClient(new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }, disposeHandler: true);
+    // The checks pass a handler that answers like GitHub, as PartyApi takes one; the app always uses the network.
+    public static void UseHandler(HttpMessageHandler handler) => Http = NewClient(handler, disposeHandler: false);
+    private static HttpClient NewClient(HttpMessageHandler handler, bool disposeHandler) => new(handler, disposeHandler) { Timeout = Timeout.InfiniteTimeSpan };
 
     // The newest published release, whatever its version; null when there is none yet.
     public static async Task<AppRelease?> FetchLatestAsync(CancellationToken token)

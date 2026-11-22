@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.0.x
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -41,6 +41,10 @@ jobs:
       - run: npm run build
       - run: npm run backend:build
       # Built ahead: the integration tests give each check a minute to run.
+      # The app's global.json picks the SDK only below odyle-windows; every dotnet call here, the
+      # integration tests' included, runs from the dashboard's folder, so it gets a copy.
+      - run: cp odyle-windows/global.json global.json
+        shell: bash
       - run: dotnet build odyle-windows/tests/Odyle.Core.Checks -c Release
       - run: dotnet build odyle-windows/tests/Odyle.Reader.Checks -c Release
       - run: npm run test:integration
