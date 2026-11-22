@@ -134,9 +134,9 @@ static partial class ReaderChecks
         await (Task)Call(window, "PublishLatestAsync")!;
         Check(server.Reports == 1 && Conn(window).AdapterOutdated && Control<TextBlock>(window, "StateText").Text == "Not saved" && Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · it looks for one every hour." && Control<TextBlock>(window, "PacketStateLabel").Text == "The server no longer accepts readings from this Odyle version.", "a refused adapter asks for an update");
         Check((DateTimeOffset)Field("publishBlockedUntil").GetValue(window)! > DateTimeOffset.UtcNow.AddMinutes(9) && DateTimeOffset.UtcNow - (DateTimeOffset)Field("outdatedCheckAt").GetValue(window)! < TimeSpan.FromMinutes(1), "the reading is tried again in ten minutes and the update check ran at once");
-        Field("staged").SetValue(window, new StagedUpdate(new Version(9, 9, 9, 9), Path.GetTempPath(), "https://github.com/oldbear24/odyle-windows/releases")); Call(window, "RenderHero");
+        window.Updates.Staged = new StagedUpdate(new Version(9, 9, 9, 9), Path.GetTempPath(), "https://github.com/oldbear24/odyle-windows/releases"); Call(window, "RenderHero");
         Check(Control<TextBlock>(window, "ReadingLabel").Text == "Odyle needs an update to keep reading · Restart to update installs it.", "a downloaded update is offered");
-        Field("staged").SetValue(window, null);
+        window.Updates.Staged = null;
         server.Refusal = null; Field("publishBlockedUntil").SetValue(window, DateTimeOffset.MinValue); await (Task)Call(window, "PublishLatestAsync")!;
         Check(server.Reports == 2 && !Conn(window).AdapterOutdated && Control<TextBlock>(window, "StateText").Text == "Live" && Control<TextBlock>(window, "ReadingLabel").Visibility == Visibility.Collapsed, "once the server accepts the adapter again the card is live");
         // A live reading says no more than that: the value is on the card, so neither the reader line nor an age repeats it.

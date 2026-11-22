@@ -61,7 +61,7 @@ static partial class ReaderChecks
         Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Visible && Control<TextBlock>(window, "AnnouncementText").Text == "Servers restart at 08:00 UTC" && notice?.Text == "Servers restart at 08:00 UTC", "an announcement the server pushes shows at once, a warning also as a notification");
         await News("""{"announcement":null}""");
         await News("""{"release":{"version":"0.0.0.1"}}""");
-        Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed && !(bool)Field("updating").GetValue(window)!, "a cleared announcement disappears at once; an older release starts no update check");
+        Check(Control<Border>(window, "AnnouncementBar").Visibility == Visibility.Collapsed && !window.Updates.Checking, "a cleared announcement disappears at once; an older release starts no update check");
     }
     static void RunRemindersScenario(MainWindow window)
     {

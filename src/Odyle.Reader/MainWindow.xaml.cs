@@ -171,16 +171,11 @@ public partial class MainWindow : Window
     // The account's notification settings (the dashboard's Account & data → Notifications).
     private NotificationSettings notifications = NotificationSettings.Default;
     private readonly DispatcherTimer partyTimer = new() { Interval = TimeSpan.FromSeconds(15) };
-    // An update check a few seconds after every start that installs what it finds, then once a
-    // day while the app runs (UpdateSchedule). The timer looks every hour, so a day spent asleep
-    // catches up within the hour.
-    private readonly DispatcherTimer updateTimer = new() { Interval = UpdateSchedule.First };
-    private readonly UpdateSchedule updateSchedule = new();
+    // When and how this build updates itself (UpdateFlow); Settings and the card show it (RenderUpdate).
+    private readonly UpdateFlow updates;
+    internal UpdateFlow Updates => updates;
     // The window's position is remembered a second after it last moved.
     private readonly DispatcherTimer positionTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private StagedUpdate? staged;
-    private bool updating;
-    private string updateNote = "";
     private readonly Forms.NotifyIcon tray;
     // The last tray notification, kept for the checks (the tray icon is off there).
     private (string Title, string Text)? LastNotice { get; set; }
@@ -193,6 +188,7 @@ public partial class MainWindow : Window
     {
         // Starting over also forgets where the named character was and the party it was in.
         attribution = new(publishDelay, () => { locations.Reset(); groups.Reset(); });
+        updates = new(() => api, () => quitting, () => busy, card => { RenderUpdate(); if (card) RenderHero(); }, NotifyReady, Status, () => QuitAsync(restart: true));
         InitializeComponent(); Translation.Apply(this); gameInFront = GameWindowInFront;
         tray = new Forms.NotifyIcon { Icon = TrayIcon(null), Text = T("Odyle · Not connected"), Visible = enableTray };
         var menu = new Forms.ContextMenuStrip(); menu.Items.Add(trayStatusItem); menu.Items.Add(new Forms.ToolStripSeparator());
@@ -209,8 +205,8 @@ public partial class MainWindow : Window
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
         settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => DarkFrame(settings);
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
-        settings.CheckUpdateButton.Click += async (_, _) => await Guarded("Check for updates", () => CheckForUpdatesAsync(manual: true)); settings.InstallUpdateButton.Click += Install_Click;
-        settings.ReleaseNotesButton.Click += (_, _) => OpenLink(staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
+        settings.CheckUpdateButton.Click += async (_, _) => await Guarded("Check for updates", () => updates.CheckAsync(manual: true)); settings.InstallUpdateButton.Click += Install_Click;
+        settings.ReleaseNotesButton.Click += (_, _) => OpenLink(updates.Staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
         settings.WhatsNewButton.Click += (_, _) => OpenWhatsNew();
         settings.StayOnTopToggle.Click += (_, _) => SetStayOnTop(settings.StayOnTopToggle.IsChecked == true, persist: true);
         settings.TasksToggle.Click += (_, _) => SetTasksShown(settings.TasksToggle.IsChecked == true, persist: true);
@@ -229,7 +225,7 @@ public partial class MainWindow : Window
             if (busy) { link.RetryTimer.Interval = TimeSpan.FromSeconds(2); link.RetryTimer.Start(); return; }
             await ExecuteAsync(RestoreAsync);
         });
-        updateTimer.Tick += async (_, _) => await Guarded("The update timer", UpdateTickAsync);
+        updates.Timer.Tick += async (_, _) => await Guarded("The update timer", updates.TickAsync);
         // With realtime the party and the checklist follow the news, and every 20th tick (five
         // minutes) fetches them in case some was missed; run reminders are checked every tick.
         // Without it, open, they refresh every 15 seconds (showing the window refreshes at once)
@@ -591,7 +587,7 @@ public partial class MainWindow : Window
     }
     // Paired, but the server has not confirmed the pairing yet: it is tried again by itself (retryAt).
     private bool Offline => link.Offline;
-    private string OutdatedHint => staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
+    private string OutdatedHint => updates.Staged is not null ? T("Odyle needs an update to keep reading · Restart to update installs it.") : T("Odyle needs an update to keep reading · it looks for one every hour.");
     // Cube cost of the first room the character is shared in, else the first room.
     private int HeroCost(Character? character) => HeroRoom(character)?.Cost is > 0 and var cost ? cost : odylePerCube;
     // The room whose cost the card counts cubes with: the first one the character is shared in.
@@ -836,7 +832,7 @@ public partial class MainWindow : Window
     {
         // The update check does not wait for the server. (The Odyle.exe.old of the build that installed
         // this one is removed once this start proved healthy: App, Updater start health.)
-        if (Updater.IsReleaseBuild && !App.Headless) updateTimer.Start();
+        if (updates.IsRelease() && !App.Headless) updates.Timer.Start();
         // Npcap missing shows in the reader row from the start, also before the app is paired.
         if (!Npcap.Probe()) ShowNpcapProblem(null);
         await ExecuteAsync(RestoreAsync);
@@ -1034,10 +1030,10 @@ public partial class MainWindow : Window
         if (notifications.RunsInTray) foreach (var invite in news.Invites) { var (title, text) = invite.Notice(); Notify(title, text); Log.Info(invite.Now ? $"Called to run {invite.RunId}." : $"Invited to run {invite.RunId}."); }
         if (notifications.ReadyInTray) foreach (var party in news.PartyReady) { var (title, text) = party.Notice(); Notify(title, text); Log.Info($"Told that the party of run {party.RunId} is ready."); }
         if (notifications.CapInTray) foreach (var alert in news.CapAlerts) { var (title, text) = alert.Notice(); Notify(title, text); Log.Info($"Told of the natural pool of {alert.CharacterId}: {alert.State}."); }
-        if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await CheckForUpdatesAsync(manual: false); }
+        if (news.Release is { } release && release > Updater.Current) { Log.Info($"The server says Odyle {release} is out; looking for it now."); await updates.CheckAsync(manual: false); }
         // Versions the operators hold back (#19): a downloaded one is dropped, and this build moves off one it runs.
-        if (news.HeldBack is { } held) await HeldBackAsync(held);
-        if (news.UpdateNow is { } asked) await UpdateNowAsync(asked);
+        if (news.HeldBack is { } held) await updates.HeldBackAsync(held);
+        if (news.UpdateNow is { } asked) await updates.UpdateNowAsync(asked);
         if (!news.Refresh && news.Characters.Length > 0)
         {
             var mine = PartyNews.WithCharacters(characters, news.Characters, out var complete);
@@ -2037,7 +2033,7 @@ public partial class MainWindow : Window
             if (!connection.AdapterOutdated) Log.Warn($"The server does not accept the adapter {reading.ParserVersion}; Odyle {Updater.Current} needs an update to keep reading.");
             connection.AdapterOutdated = true; publishFailure = OutdatedHint; publishBlockedUntil = now.AddMinutes(10);
             SetReaderState(ReaderState.Problem, T("The server no longer accepts readings from this Odyle version."));
-            if (now - outdatedCheckAt >= TimeSpan.FromHours(1)) { outdatedCheckAt = now; _ = CheckForUpdatesAsync(manual: false); }
+            if (now - outdatedCheckAt >= TimeSpan.FromHours(1)) { outdatedCheckAt = now; _ = updates.CheckAsync(manual: false); }
         }
         // A reading the build before an update decoded with another adapter, handed over by the restart,
         // that the server no longer takes: it is dropped, and this build reads the next Odyle change.
@@ -2353,126 +2349,23 @@ public partial class MainWindow : Window
     private void RenderUpdate()
     {
         var build = Updater.SelfContained ? T("Odyle {0} · self-contained", Updater.Current) : T("Odyle {0}", Updater.Current);
-        settings.UpdateLabel.Text = !Updater.IsReleaseBuild ? T("{0} · development build. Released builds update themselves from GitHub releases.", build)
-            : staged is not null ? T("{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start.", build, staged.Version)
-            : updateNote.Length > 0 ? $"{build} · {updateNote}"
+        settings.UpdateLabel.Text = !updates.IsRelease() ? T("{0} · development build. Released builds update themselves from GitHub releases.", build)
+            : updates.Staged is not null ? T("{0} · Odyle {1} is downloaded and verified. Restart to install it; otherwise it installs at the next start.", build, updates.Staged.Version)
+            : updates.Note.Length > 0 ? $"{build} · {updates.Note}"
             : Updater.LastFailure is { } failure ? T("{0} · the downloaded update could not be installed: {1}", build, T(failure))
             : T("{0} · installs new releases at every start and looks for them once a day.", build);
-        settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = staged is not null ? Visibility.Visible : Visibility.Collapsed;
-        settings.CheckUpdateButton.Visibility = Updater.IsReleaseBuild && staged is null ? Visibility.Visible : Visibility.Collapsed;
-        settings.CheckUpdateButton.IsEnabled = !updating;
-        UpdateButton.ToolTip = staged is null ? null : T("Install Odyle {0} and start it · the reader stops for a moment", staged.Version);
+        settings.InstallUpdateButton.Visibility = UpdateButton.Visibility = updates.Staged is not null ? Visibility.Visible : Visibility.Collapsed;
+        settings.CheckUpdateButton.Visibility = updates.IsRelease() && updates.Staged is null ? Visibility.Visible : Visibility.Collapsed;
+        settings.CheckUpdateButton.IsEnabled = !updates.Checking;
+        UpdateButton.ToolTip = updates.Staged is null ? null : T("Install Odyle {0} and start it · the reader stops for a moment", updates.Staged.Version);
     }
-    // The versions the paired backend holds back (#19), asked before each update check; none
-    // without a pairing or from an older backend, which leaves the check as GitHub says.
-    private async Task<Version[]> HeldBackVersionsAsync()
+    private async void Install_Click(object sender, RoutedEventArgs e) => await Guarded("Installing the update", () => updates.InstallAsync(automatic: false));
+    // A package found later than the start's check: the player hears of it once per version, also in the tray.
+    private void NotifyReady(StagedUpdate ready)
     {
-        if (api is not { } current) return heldBack;
-        try { heldBack = await current.GetHeldBackAsync(); }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or ObjectDisposedException or System.Text.Json.JsonException) { Log.Info($"Held-back versions not known: {error.Message}"); }
-        return heldBack;
-    }
-    private Version[] heldBack = [];
-    private async Task HeldBackAsync(Version[] held)
-    {
-        // Off the UI thread: Forget waits for a package being copied in (#87).
-        heldBack = held; await Task.Run(() => Updater.Forget(held));
-        if (staged is { } waiting && held.Contains(waiting.Version)) { Log.Info($"Odyle {waiting.Version} is held back; its download is dropped."); staged = null; RenderUpdate(); RenderHero(); }
-        if (held.Contains(Updater.Current)) { Log.Info($"Odyle {Updater.Current} is held back; looking for the latest release."); await CheckForUpdatesAsync(manual: false); }
-    }
-    // The update timer's tick. It always starts the timer again (unless Odyle is quitting), also
-    // after a failure nobody expected, so update checks never stop for the rest of the session.
-    private async Task UpdateTickAsync()
-    {
-        updateTimer.Stop();
-        try { if (staged is null && updateSchedule.Due(DateTimeOffset.UtcNow)) { await Task.Run(Updater.CleanUp); await CheckForUpdatesAsync(manual: false); } }
-        finally { if (!quitting) { updateTimer.Interval = updateSchedule.Next; updateTimer.Start(); } }
-    }
-    // "Update all apps now" on the dashboard's admin pages: a build older than the latest release
-    // installs it at once and restarts, handing its live character over (QuitAsync). The release is
-    // checked and verified like any update, so a held-back version is never installed.
-    private bool updateNow;
-    private async Task UpdateNowAsync(UpdateRequest asked)
-    {
-        if (!Updater.IsReleaseBuild || quitting) return;
-        if (!asked.Needed(Updater.Current)) { Log.Info($"The server's operators asked every app to update; Odyle {Updater.Current} is up to date."); return; }
-        Log.Info($"The server's operators asked every app to update{(asked.Version is { } latest ? $" to {latest}" : "")}; updating now.");
-        updateNow = true;
-        if (staged is not null) await InstallUpdateAsync(automatic: true);
-        else await CheckForUpdatesAsync(manual: false);
-    }
-    private async Task CheckForUpdatesAsync(bool manual)
-    {
-        if (updating || staged is not null || !Updater.IsReleaseBuild) return;
-        updating = true; updateNote = T("checking GitHub for a newer release…"); RenderUpdate();
-        var install = false;
-        try
-        {
-            // The package's files are read, checked, extracted and removed off the UI thread, so the card keeps
-            // ticking meanwhile (#87); the progress reaches it once per whole percent.
-            var held = await HeldBackVersionsAsync(); await Task.Run(() => Updater.Forget(held));
-            var release = await Updater.CheckAsync(held, CancellationToken.None);
-            // What the first automatic check of this start to reach GitHub finds is installed right away.
-            install = updateSchedule.AtStart && !manual; updateSchedule.Reached(DateTimeOffset.UtcNow, upToDate: release is null);
-            // Moving off a held-back version is installed at once: the next start would not install an older package.
-            if (release is not null && release.Version < Updater.Current) { install = true; Log.Info($"Odyle {Updater.Current} is held back; going back to {release.Version}."); }
-            if (release is null) { updateNote = T("up to date · checked {0:HH:mm}", DateTime.Now); Log.Info($"Update check: Odyle {Updater.Current} is up to date."); updateNow = false; return; }
-            // A package an earlier start downloaded but could not install is not fetched again.
-            // (Not when going back: a staged package is always newer than this build.)
-            if (release.Version > Updater.Current && await Task.Run(Updater.Staged) is { } ready && ready.Version >= release.Version && !heldBack.Contains(ready.Version)) staged = ready;
-            else
-            {
-                Log.Info($"Update check: downloading Odyle {release.Version} ({Updater.Runtime}, {(Updater.SelfContained ? "self-contained" : "small")}).");
-                updateNote = T("downloading Odyle {0}…", release.Version); RenderUpdate();
-                var progress = new Progress<double>(part => { updateNote = T("downloading Odyle {0} · {1:P0}", release.Version, part); RenderUpdate(); });
-                staged = await Task.Run(() => Updater.DownloadAsync(release, progress, CancellationToken.None));
-            }
-            updateNote = ""; Log.Info($"Odyle {staged.Version} is downloaded, verified and waiting in {staged.Directory}.");
-            if (install || updateNow) return;
-            // Once per version, also from the tray.
-            if (preferences.NotifiedUpdate != staged.Version.ToString())
-            {
-                Notify(T("Odyle {0} is ready", staged.Version), T("Restart Odyle to update, or it installs at the next start."));
-                PreferencesStore.Save(preferences = preferences with { NotifiedUpdate = staged.Version.ToString() });
-            }
-        }
-        // An answer that is not GitHub's release data (a proxy's page, say) is a failed check too (ReleaseFeed.Parse).
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
-        {
-            updateSchedule.Failed(); Log.Warn($"Update check failed: {error.Message}");
-            updateNote = manual ? T("update check failed: {0}", T(error.Message)) : T("could not check for updates: {0}", T(error.Message));
-        }
-        // The card's hint for an outdated adapter names a downloaded update.
-        finally { updating = false; RenderUpdate(); RenderHero(); }
-        // A request to update now that came while this check ran is honoured here too.
-        if ((install || updateNow) && staged is not null) await InstallUpdateAsync(automatic: true);
-        else updateNow = false;
-    }
-    private async void Install_Click(object sender, RoutedEventArgs e) => await Guarded("Installing the update", () => InstallUpdateAsync(automatic: false));
-    // The files are swapped while this build still runs; only then does it stop and
-    // start the new one. A swap that fails leaves everything as it was. An installation
-    // at start does not wait for a running operation to finish: quitting waits for it.
-    // The files are copied off the UI thread (#87); installing is one at a time (a click while the server's
-    // operators ask every app to update, say).
-    private bool installing;
-    // The copy on its way, which quitting waits for: a swap cut short would leave no Odyle.exe.
-    private Task installRun = Task.CompletedTask;
-    // The copy succeeded: a quit asked for meanwhile restarts into the new build (QuitAsync).
-    private volatile bool installed;
-    private async Task InstallUpdateAsync(bool automatic)
-    {
-        if (staged is not { } update || quitting || installing || (busy && !automatic)) return;
-        Log.Info($"Installing Odyle {update.Version}{(updateNow ? " as the server's operators asked" : automatic ? " found at start" : "")} and restarting.");
-        installing = true;
-        try { await (installRun = Task.Run(() => { Updater.Apply(update); installed = true; })); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            Log.Error($"Odyle {update.Version} could not be installed", error);
-            Status(T("Could not install the update: {0} Download it from the release page instead.", T(error.Message))); return;
-        }
-        finally { installing = false; }
-        Status(T("Installing Odyle {0} · restarting…", update.Version));
-        await QuitAsync(restart: true);
+        if (preferences.NotifiedUpdate == ready.Version.ToString()) return;
+        Notify(T("Odyle {0} is ready", ready.Version), T("Restart Odyle to update, or it installs at the next start."));
+        PreferencesStore.Save(preferences = preferences with { NotifiedUpdate = ready.Version.ToString() });
     }
 
     // ----- Session upkeep -----
@@ -2597,11 +2490,11 @@ public partial class MainWindow : Window
         if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged -= Resumed;
         // A restart from the tray (an update at start with Windows) stays in the tray.
         var hidden = !IsVisible;
-        SavePosition(); link.Heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updateTimer.Stop(); positionTimer.Stop(); link.RetryTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace();
+        SavePosition(); link.Heartbeat.Stop(); clock.Stop(); publishDelay.Stop(); partyTimer.Stop(); updates.Timer.Stop(); positionTimer.Stop(); link.RetryTimer.Stop(); npcapTimer.Stop(); traceTimer?.Stop(); WriteTrace();
         // An update being installed finishes first (its failure is the installer's to report).
-        try { await installRun; } catch (Exception) { }
+        try { await updates.InstallRun; } catch (Exception) { }
         // A quit that came while an update was copied in restarts into it, handing the live character over.
-        if (installed && !restart) { restart = true; Log.Info("An update was installed while quitting; Odyle restarts into it."); }
+        if (updates.Installed && !restart) { restart = true; Log.Info("An update was installed while quitting; Odyle restarts into it."); }
         await operations.WaitAsync();
         // A restart hands the live character to the next start (TakeOverAsync) instead of marking it stale.
         var handover = restart ? LiveHandover() : null;
