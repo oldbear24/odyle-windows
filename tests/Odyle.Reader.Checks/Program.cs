@@ -599,7 +599,7 @@ static partial class ReaderChecks
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · installs new releases at every start and looks for them once a day.";
         ((Button)settings.FindName("CheckUpdateButton")).Visibility = Visibility.Visible;
         Snapshot(window, Path.Combine(directory, "connect-preview.png"));
-        Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), 320);
+        Snapshot(settings, Path.Combine(directory, "settings-connect-preview.png"), (int)settings.Width);
         Field("accountName").SetValue(window, "Sample account");
         window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         var stamp = DateTime.UtcNow.AddSeconds(-40).ToString("yyyy-MM-dd HH:mm:ss.fffZ");
@@ -609,8 +609,11 @@ static partial class ReaderChecks
         ((TextBlock)settings.FindName("AccountDetail")).Text = "Signed in as Sample account via Discord · odyle.example";
         ((TextBlock)settings.FindName("UpdateLabel")).Text = "Odyle 0.5.0.2 · up to date · checked 20:14";
         Call(window, "ShowConnected", true); Call(window, "RenderRooms");
-        Snapshot(settings, Path.Combine(directory, "settings-preview.png"), 320);
-        Call(window, "SetDiscordStatus", true, false); Snapshot(settings, Path.Combine(directory, "settings-discord-preview.png"), 320); Call(window, "SetDiscordStatus", false, false);
+        Snapshot(settings, Path.Combine(directory, "settings-preview.png"), (int)settings.Width);
+        // All of Settings at once, unscrolled (the window scrolls past 680 px).
+        var settingsHeight = settings.MaxHeight; settings.MaxHeight = double.PositiveInfinity;
+        Snapshot(settings, Path.Combine(directory, "settings-full-preview.png"), (int)settings.Width); settings.MaxHeight = settingsHeight;
+        Call(window, "SetDiscordStatus", true, false); Snapshot(settings, Path.Combine(directory, "settings-discord-preview.png"), (int)settings.Width); Call(window, "SetDiscordStatus", false, false);
         var inert = new PacketCapture(); Field("capture").SetValue(window, inert);
         Call(window, "RenderReaderButton");
         window.Attribution.DetectedKey = "TestHero|2304"; window.Attribution.GameKey = "TestHero|2304";

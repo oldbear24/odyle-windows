@@ -142,7 +142,7 @@ public partial class MainWindow : Window
             Quit: () => Guarded("Quit from the tray", QuitAskedAsync)));
         settings.PasteButton.Click += PasteConnect_Click; settings.JoinButton.Click += Pair_Click; settings.RetryButton.Click += Retry_Click;
         settings.DashboardButton.Click += (_, _) => OpenDashboard(""); settings.ManageButton.Click += (_, _) => OpenDashboard("/"); settings.LogoutButton.Click += Logout_Click;
-        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => NativeWindows.DarkFrame(settings);
+        settings.NpcapButton.Click += (_, _) => OpenLink(Npcap.DownloadPage); settings.KeyDown += Settings_KeyDown; settings.SourceInitialized += (_, _) => SettingsFrame();
         settings.DiagnosticsButton.Click += (_, _) => CopyDiagnostics();
         settings.CheckUpdateButton.Click += async (_, _) => await Guarded("Check for updates", () => updates.CheckAsync(manual: true)); settings.InstallUpdateButton.Click += Install_Click;
         settings.ReleaseNotesButton.Click += (_, _) => OpenLink(updates.Staged?.ReleaseUrl ?? ReleaseFeed.ReleasesPage.ToString());
@@ -262,6 +262,19 @@ public partial class MainWindow : Window
         backdrop.Use(new WindowInteropHelper(this).Handle, on, transparent: compactMode);
         NativeWindows.Floating(this, compactMode);
         RootBorder.BorderThickness = new Thickness(!compactMode && Environment.OSVersion.Version.Build < 22000 ? 1 : 0);
+        // Settings, in the card's style, wear the same background (it has no compact mode).
+        settings.Background = on ? new SolidColorBrush(Color.FromArgb((byte)Math.Round(preferences.AcrylicOpacity * 2.55), solid.R, solid.G, solid.B)) : Brush("Bg");
+        settingsBackdrop.Use(new WindowInteropHelper(settings).Handle, on);
+    }
+    // The settings window is frameless like the card: its rounded corners and dark border, the plain blur while it is
+    // dragged, and the background again each time it shows (Windows may drop a backdrop set before a window is shown).
+    private readonly NativeWindows.Backdrop settingsBackdrop = new();
+    private void SettingsFrame()
+    {
+        NativeWindows.DarkFrame(settings); NativeWindows.RoundCorners(settings);
+        HwndSource.FromHwnd(new WindowInteropHelper(settings).Handle)?.AddHook(settingsBackdrop.Hook);
+        settings.IsVisibleChanged += (_, _) => { if (settings.IsVisible) RenderBackdrop(); };
+        RenderBackdrop();
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     // A second start of Odyle signals this one (App) to show its window in front.
@@ -1541,7 +1554,7 @@ public partial class MainWindow : Window
     private void Window_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (!IsVisible) return;
-        GuardedTick("Showing the window", () => { RenderHero(); RenderParty(); TickTasks(); RenderRetry(); RenderBusy(); });
+        GuardedTick("Showing the window", () => { RenderHero(); RenderParty(); TickTasks(); RenderRetry(); RenderBusy(); RenderBackdrop(); });
         Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, FitWindow);
     }
     private void Window_StateChanged(object? sender, EventArgs e) { if (WindowState == WindowState.Normal) Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, FitWindow); }
