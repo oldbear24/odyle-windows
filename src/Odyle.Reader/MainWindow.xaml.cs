@@ -156,6 +156,16 @@ public partial class MainWindow : Window
         settings.DiscordToggle.Click += (_, _) => SetDiscordStatus(settings.DiscordToggle.IsChecked == true, persist: true); discord.Changed += () => Dispatcher.BeginInvoke(RenderDiscordNote);
         gameFocusTimer.Tick += (_, _) => RenderFade(); MouseEnter += (_, _) => RenderFade(); MouseLeave += (_, _) => RenderFade();
         settings.NotificationsButton.Click += (_, _) => OpenDashboard("/account");
+        // The acrylic background: the toggle at once, the opacity as the slider moves, saved once it rests.
+        settings.AcrylicToggle.Click += (_, _) => SetAcrylic(settings.AcrylicToggle.IsChecked == true, preferences.AcrylicOpacity, persist: true);
+        acrylicSave.Tick += (_, _) => { acrylicSave.Stop(); SetAcrylic(preferences.Acrylic, preferences.AcrylicOpacity, persist: true); };
+        settings.AcrylicOpacityInput.ValueChanged += (_, e) =>
+        {
+            var chosen = (int)Math.Round(e.NewValue);
+            if (chosen == preferences.AcrylicOpacity) return;
+            SetAcrylic(preferences.Acrylic, chosen, persist: false); acrylicSave.Stop(); acrylicSave.Start();
+        };
+        settings.QuitButton.Click += Quit_Click;
         positionTimer.Tick += (_, _) => { positionTimer.Stop(); SavePosition(); };
         settings.LogButton.Click += (_, _) => { try { System.IO.Directory.CreateDirectory(Log.Folder); } catch (IOException) { } OpenLink(Log.Folder); };
         link.RetryTimer.Tick += async (_, _) => await Guarded("Reconnecting the saved account", async () =>
@@ -189,7 +199,7 @@ public partial class MainWindow : Window
         if (!App.Headless) Microsoft.Win32.SystemEvents.PowerModeChanged += Resumed;
         ShowConnected(false); RenderRooms(); RenderParty(); RenderHero(); RenderUpdate();
         preferences = saved ?? PreferencesStore.Load(); hiddenAnnouncement = preferences.HiddenAnnouncement; settings.ConfirmQuitToggle.IsChecked = preferences.ConfirmQuit; SetStayOnTop(preferences.StayOnTop, persist: false);
-        settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetDiscordStatus(preferences.DiscordStatus, persist: false); SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RestorePosition();
+        settings.FollowGameToggle.IsChecked = preferences.FollowGame; SetDiscordStatus(preferences.DiscordStatus, persist: false); SetFadeInGame(preferences.FadeInGame, persist: false); SetTasksShown(preferences.ShowTasks, persist: false); RenderBackdrop(); RestorePosition();
         if (preferences.CompactMode) SetCompact(true, persist: false);
         // After an update the card says so once. A first start begins at this version; a PC that ran
         // Odyle before (it is paired) hears of this one.
@@ -211,8 +221,48 @@ public partial class MainWindow : Window
         PreferencesStore.Save(preferences = preferences with { Language = choice });
         settings.LanguageRestartPanel.Visibility = Resolve(choice, System.Globalization.CultureInfo.CurrentUICulture) != Localizer.Language ? Visibility.Visible : Visibility.Collapsed;
     }
-    protected override void OnSourceInitialized(EventArgs e) { base.OnSourceInitialized(e); NativeWindows.DarkFrame(this); HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(layering.Hook); }
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e); NativeWindows.DarkFrame(this); NativeWindows.RoundCorners(this);
+        var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle); source?.AddHook(layering.Hook); source?.AddHook(backdrop.Hook);
+        // Windows 11 draws a border around the frameless window; Windows 10 does not, so the card draws its own.
+        RenderBackdrop();
+    }
     private readonly NativeWindows.Layering layering = new();
+    private readonly NativeWindows.Backdrop backdrop = new();
+    private readonly DispatcherTimer acrylicSave = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    // The frameless card is moved by its header, and in compact mode by any of it.
+    private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => Drag(e);
+    private void Drag(MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || e.ButtonState != MouseButtonState.Pressed) return;
+        try { DragMove(); } catch (InvalidOperationException) { }
+    }
+    // ✕ closes to the tray like the old title bar's close button (Window_Closing hides the window).
+    private void Hide_Click(object sender, RoutedEventArgs e) => Close();
+    // The see-through background (Settings → Window): Windows blurs what is behind the card, and the card's
+    // background is drawn over it at the chosen opacity (100 % looks as without it).
+    private void SetAcrylic(bool on, int opacity, bool persist)
+    {
+        preferences = preferences with { Acrylic = on, AcrylicOpacity = Math.Clamp(opacity, 0, 100) };
+        if (persist) { PreferencesStore.Save(preferences); Log.Info(on ? $"The acrylic background is on at {preferences.AcrylicOpacity} %." : "The acrylic background is off."); }
+        RenderBackdrop();
+    }
+    private void RenderBackdrop()
+    {
+        var supported = NativeWindows.Backdrop.Supported; var on = preferences.Acrylic && supported;
+        settings.AcrylicToggle.IsChecked = preferences.Acrylic; settings.AcrylicToggle.IsEnabled = supported;
+        settings.AcrylicOpacityPanel.IsEnabled = on; settings.AcrylicOpacityLabel.Text = $"{preferences.AcrylicOpacity} %";
+        if (Math.Abs(settings.AcrylicOpacityInput.Value - preferences.AcrylicOpacity) > 0.5) settings.AcrylicOpacityInput.Value = preferences.AcrylicOpacity;
+        settings.AcrylicNoteLabel.Visibility = supported ? Visibility.Collapsed : Visibility.Visible;
+        // Compact mode's chips float over the game (variant C): the window is clear around them, with no blur, border,
+        // corners or shadow; the card is the frosted (or solid) panel. Windows 11 draws the card's border, Windows 10 not.
+        var solid = ((SolidColorBrush)Brush("Bg")).Color;
+        Background = compactMode ? Brushes.Transparent : on ? new SolidColorBrush(Color.FromArgb((byte)Math.Round(preferences.AcrylicOpacity * 2.55), solid.R, solid.G, solid.B)) : Brush("Bg");
+        backdrop.Use(new WindowInteropHelper(this).Handle, on, transparent: compactMode);
+        NativeWindows.Floating(this, compactMode);
+        RootBorder.BorderThickness = new Thickness(!compactMode && Environment.OSVersion.Version.Build < 22000 ? 1 : 0);
+    }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
     // A second start of Odyle signals this one (App) to show its window in front.
     // Open in Odyle on the dashboard (odyle://pair?link=…). The link names the server, and any page could
@@ -275,6 +325,7 @@ public partial class MainWindow : Window
         ReportButton.Content = capture is not null ? T("Stop") : api is not null || Offline ? T("Start") : T("Connect");
         if (capture is not null) ReportButton.Style = (Style)FindResource("Secondary"); else ReportButton.ClearValue(StyleProperty);
         ReportButton.IsEnabled = !busy && !(readerPaused && api is not null && capture is null);
+        RenderChip();
     }
 
     // ----- Presentation -----
@@ -298,6 +349,21 @@ public partial class MainWindow : Window
             _ => ("Rose", "Rose"),
         };
         ReaderDot.Fill = Brush(dot); PacketStateLabel.Foreground = Brush(text);
+        // Variant C: the reader's tile says it in a word, and the line under the tiles only shows while it is not live.
+        ReaderChipDot.Fill = Brush(dot);
+        ReaderChipText.Text = state switch
+        {
+            ReaderState.Live => T("On"),
+            ReaderState.Listening or ReaderState.Midstream => T("Listening"),
+            ReaderState.Waiting => T("Waiting"),
+            ReaderState.Stale => T("Stale"),
+            ReaderState.Paused => T("Paused"),
+            ReaderState.Problem => T("Problem"),
+            _ => T("Off"),
+        };
+        ReaderChipText.Foreground = Brush(state == ReaderState.Live ? "Text" : text);
+        ReaderLine.Visibility = state == ReaderState.Problem ? Visibility.Visible : Visibility.Collapsed;
+        RenderChip();
         tray.ShowState(state == ReaderState.Stopped ? null : dot);
         if (PacketStateLabel.Text != message) { PacketStateLabel.Text = message; Translation.Announce(PacketStateLabel); }
         // In the tray, a reader that cannot read says so once (odyle-dashboard#48): Npcap missing or
@@ -315,9 +381,43 @@ public partial class MainWindow : Window
             readerHistory.Enqueue($"{DateTime.Now:HH:mm:ss} {state} · {message}"); while (readerHistory.Count > 10) readerHistory.Dequeue();
         }
     }
-    private void SetPill(string dot, string text, string background, string label)
+    private void SetPill(string dot, string text, string label)
     {
-        StateDot.Fill = Brush(dot); StateText.Foreground = Brush(text); StatePill.Background = Brush(background); StateText.Text = label;
+        // The state as a word under the name, in its colour, and the dot beside the name.
+        StateDot.Fill = Brush(dot); StateText.Foreground = Brush(text); StateText.Text = label;
+        StateCaps.Text = label.ToLower(Culture); StateCaps.Foreground = Brush(text);
+    }
+    // The reader's tile: its tooltip is the reader line, and a click starts or stops the reader like the line's button.
+    private void RenderChip()
+    {
+        var line = PacketStateLabel.Text;
+        ReaderChip.ToolTip = capture is not null ? T("{0} · click to stop the reader", line) : api is not null || Offline ? T("{0} · click to start the reader", line) : line;
+        System.Windows.Automation.AutomationProperties.SetName(ReaderChip, capture is not null ? T("Stop reader") : T("Start reader"));
+        ReaderChip.IsEnabled = ReportButton.IsEnabled;
+    }
+    // "TestHero · Lumiel" with the server quieter; heroTitle keeps the whole line (Text does not, once it is in runs).
+    private string heroTitle = "";
+    private void ShowHeroTitle(string title)
+    {
+        if (heroTitle == title && HeroTitle.Inlines.Count > 0) return;
+        heroTitle = title;
+        var at = title.IndexOf(" · ", StringComparison.Ordinal);
+        HeroTitle.Inlines.Clear();
+        if (at <= 0) { HeroTitle.Inlines.Add(new System.Windows.Documents.Run(title)); return; }
+        HeroTitle.Inlines.Add(new System.Windows.Documents.Run(title[..at]));
+        HeroTitle.Inlines.Add(new System.Windows.Documents.Run(title[at..]) { FontWeight = FontWeights.Normal, FontSize = 11, Foreground = Brush("Muted") });
+    }
+    // A shorter countdown for compact mode's pill: hours and minutes, 1:12 (0:04 under an hour).
+    private static string Hours(TimeSpan left)
+    {
+        if (left < TimeSpan.Zero) left = TimeSpan.Zero;
+        return $"{(int)left.TotalHours}:{left.Minutes:00}";
+    }
+    // A countdown to the second for the card's HUD lines: 1:12:04, or 4:05 under an hour.
+    private static string Countdown(TimeSpan left)
+    {
+        if (left < TimeSpan.Zero) left = TimeSpan.Zero;
+        return left.TotalHours >= 1 ? $"{(int)left.TotalHours}:{left.Minutes:00}:{left.Seconds:00}" : $"{left.Minutes}:{left.Seconds:00}";
     }
     // The tray menu as it opens: the reader's state, Start or Stop reader, whether the tasks show,
     // and the account's characters, the fullest first (equal ones: the longest unread first), each
@@ -411,22 +511,26 @@ public partial class MainWindow : Window
         int? value = reading?.Total ?? (character is { Confirmed: true } ? character.Value : null);
         // The header keeps room for its buttons: it names a state, not the account (Settings does).
         AccountLabel.Text = offline ? T("OFFLINE") : !connected ? T("NOT CONNECTED") : accountName.Length > 0 ? "" : T("CONNECTING…");
-        AccountLabel.Visibility = AccountLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        HeroTitle.Text = !connected && !offline ? T("Not connected")
+        AccountLabel.Visibility = AccountLabel.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed; RenderChip();
+        ShowHeroTitle(!connected && !offline ? T("Not connected")
             : offline && reading is not null ? (attribution.GameName.Length > 0 && attribution.OwnerKey == attribution.GameKey ? T("{0} · offline", attribution.GameName) : T("Detecting character…"))
             : reading is not null && !owned ? (attribution.GameName.Length > 0 && attribution.GameKey != attribution.DetectedKey && attribution.OwnerKey == attribution.GameKey ? T("{0} · not saved", attribution.GameName) : T("Detecting character…"))
-            : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet");
+            : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet"));
         ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
         EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
-        EnergyTrack.Visibility = CubeLabel.Visibility = connected || offline ? Visibility.Visible : Visibility.Collapsed;
-        CubeLabel.Text = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        EnergyTrack.Visibility = connected || offline ? Visibility.Visible : Visibility.Hidden;
+        // Variant C: the cubes large with their word beside the ring, and how far to the next one under them.
+        var cubesLine = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
+        CubeLabel.Text = value is { } whole ? (whole / cost).ToString("N0", Culture) : connected || offline ? "—" : "";
+        CubeWord.Text = value is { } count ? Tn(count / cost, "cube", "cubes") : connected || offline ? T("cubes") : "";
+        RefillCaption.Text = value is { } part ? T("{0}/{1} to the next cube", part % cost, cost) : cubesLine;
         // With several rooms the count is at the cost of the first one the character is shared in; the tooltip names it.
-        CubeLabel.ToolTip = CubeLabel.Text.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", CubeLabel.Text, costRoom.Name) : CubeLabel.Text;
+        CubeLabel.ToolTip = RefillCaption.ToolTip = cubesLine.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", cubesLine, costRoom.Name) : cubesLine;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
         var split = (connected || offline) && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
-        SplitLabel.Text = split; SplitLabel.Visibility = split.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SplitLabel.Text = split; ToolTipService.SetIsEnabled(RingBox, split.Length > 0);
         if (tasksLoaded && CurrentCharacter?.Id != renderedTasksCharacter) RenderTasks();
         // A character your rooms cannot see: you might think the party sees you when it does not.
         var unseen = connected && character is { Id.Length: > 0 } && rooms.Length > 0 && !rooms.Any(r => r.Shares(character.Id));
@@ -458,16 +562,16 @@ public partial class MainWindow : Window
     {
         var character = CurrentCharacter; var reading = capture is not null ? attribution.Latest : null;
         var owned = reading is not null && attribution.OwnerSaved;
-        if (api is null) SetPill("Faint", "Muted", "PillNeutral", T("Offline"));
-        else if (readerPaused) SetPill("Amber", "Amber", "PillAmber", T("Paused"));
-        else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", "PillRose", T("Not saved"));
-        else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", "PillLive", T("Live"));
+        if (api is null) SetPill("Faint", "Muted", T("Offline"));
+        else if (readerPaused) SetPill("Amber", "Amber", T("Paused"));
+        else if (reading is not null && publishFailure is not null) SetPill("Rose", "Rose", T("Not saved"));
+        else if (owned && activeCharacterId.Length > 0) SetPill("Mint", "Mint", T("Live"));
         // A snapshot waits for the loading screen to end before the game names its character.
-        else if (reading is not null) SetPill("Amber", "Amber", "PillAmber", DateTimeOffset.UtcNow - attribution.LatestAt < TimeSpan.FromSeconds(attribution.NameDue ? 30 : 6) ? T("Sending") : T("Stale"));
-        else if (capture is not null) SetPill("MintSoft", "MintSoft", "PillNeutral", T("Listening"));
-        else if (character is null) SetPill("Muted", "Muted", "PillNeutral", T("No character"));
-        else if (character.Confirmed) SetPill("Muted", "Muted", "PillNeutral", T("Saved"));
-        else SetPill("Muted", "Muted", "PillNeutral", T("No reading"));
+        else if (reading is not null) SetPill("Amber", "Amber", DateTimeOffset.UtcNow - attribution.LatestAt < TimeSpan.FromSeconds(attribution.NameDue ? 30 : 6) ? T("Sending") : T("Stale"));
+        else if (capture is not null) SetPill("MintSoft", "MintSoft", T("Listening"));
+        else if (character is null) SetPill("Muted", "Muted", T("No character"));
+        else if (character.Confirmed) SetPill("Muted", "Muted", T("Saved"));
+        else SetPill("Muted", "Muted", T("No reading"));
     }
     // Paired, but the server has not confirmed the pairing yet: it is tried again by itself (retryAt).
     private bool Offline => link.Offline;
@@ -509,7 +613,8 @@ public partial class MainWindow : Window
             .Where(g => g.Party.Characters.Length > 0).Select(g => g.Room).ToArray();
         ShowRows(PartyList, groups);
         PartyPanel.Visibility = api is not null && rooms.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        PartyEmptyLabel.Visibility = groups.All(g => g.Mates.Length == 0) ? Visibility.Visible : Visibility.Collapsed;
+        // A room listed with "0 online" says it already; the line is for when no room has anyone to list.
+        PartyEmptyLabel.Visibility = groups.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         // Live updates are the rule and go unmentioned; only a party fetched every 15 seconds says so.
         var live = realtime?.IsConnected == true;
         PartyModeLabel.Visibility = live ? Visibility.Collapsed : Visibility.Visible; PartyModeLabel.Text = T("refreshed every 15 s");
@@ -525,6 +630,8 @@ public partial class MainWindow : Window
         if (RunChip.Change(chipRun, snapshots, now) is { } change) { chipNotice = change; chipNoticeUntil = now.AddMinutes(30); }
         var next = api is null ? null : RunChip.Pick(snapshots, accountId, now);
         chipRun = next;
+        // Variant C: the RUN tile counts down to it to the second.
+        RunCountdown.Text = next is null ? "—" : next.StartsAt > now ? Countdown(next.StartsAt - now) : T("now");
         var notice = now < chipNoticeUntil ? chipNotice : "";
         RunChipBox.Visibility = next is not null || notice.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         RunChipLabel.Text = next is null ? "" : RunChip.Line(next, now); RunChipLabel.Visibility = next is null ? Visibility.Collapsed : Visibility.Visible;
@@ -532,6 +639,8 @@ public partial class MainWindow : Window
         var viewer = next is not null && next.Room.Role == "viewer";
         RunGoingButton.Visibility = next is null || viewer ? Visibility.Collapsed : Visibility.Visible;
         RunGoingButton.Content = next is { Going: true } ? T("Going ✓") : T("Join");
+        // Join stands out in mint; once you go, the button quietens.
+        if (next is { Going: true }) RunGoingButton.Style = (Style)FindResource("Secondary"); else RunGoingButton.ClearValue(StyleProperty);
         RunGoingButton.ToolTip = next is { Going: true } ? T("You are going · click to leave this run") : T("Go to this run");
     }
     private async void RunGoing_Click(object sender, RoutedEventArgs e) => await Guarded("Going to a planned run", async () =>
@@ -553,9 +662,26 @@ public partial class MainWindow : Window
         var place = PlaceLine(c.Location);
         var where = place.Length > 0 ? "" : c.CharacterName == member.DisplayName ? c.ServerLine : $"{member.DisplayName} · {c.Server}";
         var detail = string.Join(" · ", new[] { c.ClassLine, where }.Where(part => part.Length > 0));
+        var key = c.Id.Length > 0 ? c.Id : member.User + "|" + c.CharacterName; var open = openMates.Contains(key);
         return new PartyMate(c.CharacterName, live ? detail : T("stale") + seen + (detail.Length > 0 ? " · " + detail : ""),
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes"), Brush(live ? "Mint" : "Amber"),
-            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)) + BandHint(band), place);
+            (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)) + BandHint(band), place)
+        {
+            Key = key, Open = open, Progress = c.Value % cost * 100.0 / cost, Bar = Brush(live ? "Mint" : "StaleFill"),
+            // Who the game put with you, or how long ago a stale one was seen, after the name.
+            Tag = !live ? (Readiness.Parse(c.LastSeenAt) is { } lastSeen ? Age(lastSeen) : T("stale")) : band.YourParty ? T("party") : band.YourForce ? T("force") : "",
+            TagBrush = Brush(!live ? "Amber" : band.YourParty ? "PartyBand" : "ForceBand"),
+            ToNext = T("{0}/{1} to the next cube", c.Value % cost, cost), Toggle = open ? T("{0} · hide the details", c.CharacterName) : T("{0} · show the details", c.CharacterName),
+        };
+    }
+    // A party row opens its details in place on a click and closes them on the next; nothing pops up. Which
+    // bars are open is kept by character while the window runs.
+    private readonly HashSet<string> openMates = [];
+    private void Mate_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string key } || key.Length == 0) return;
+        if (!openMates.Remove(key)) openMates.Add(key);
+        RenderParty();
     }
     // ----- The players the game put together -----
     // Framed as on the dashboard's room page (GameBands.Nest): a party in a blue frame, a force in a
@@ -619,12 +745,25 @@ public partial class MainWindow : Window
         var line = OdyleClock.Line(state, DateTimeOffset.UtcNow, reading is not null);
         // Orange two days before the natural pool is full, red once it is or within the hour.
         var flag = OdyleClock.Flag(state, DateTimeOffset.UtcNow); var level = OdyleClock.Level(state, DateTimeOffset.UtcNow);
-        OdyleClockLabel.Text = flag.Length > 0 ? $"{flag} · {line}" : line; OdyleClockLabel.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        OdyleClockLabel.Foreground = CapBrush(level, "Mint"); ValueLabel.Foreground = CompactValue.Foreground = CapBrush(level, "Text");
+        var full = flag.Length > 0 ? $"{flag} · {line}" : line;
+        // Variant C: the first tile counts down to the next tick to the second (or says the natural pool is full), and
+        // under the tiles the rest of the clock's line (when the pool is full, or that it is and loses each tick).
+        var now = DateTimeOffset.UtcNow;
+        NextLabel.Text = state is { Full: true } ? T("NATURAL POOL") : T("NEXT +{0}", state?.Tick ?? (clockRules ?? ClockRules.Default).Tick);
+        RefillCountdown.Text = state is { Full: true } ? T("full") : state is { Next: { } next } ? Countdown(next - now) : "—";
+        var rest = state is null ? "" : OdyleClock.Line(state with { Next = null }, now, reading is not null);
+        OdyleClockLabel.Text = flag.Length > 0 && rest.Length > 0 ? $"{flag} · {rest}" : flag.Length > 0 ? flag : rest;
+        // Shown on the card only while the pool is nearly full or full; otherwise the first tile's tooltip has the whole line.
+        OdyleClockLabel.Visibility = OdyleClockLabel.Text.Length > 0 && (level != CapLevel.None || state is { Full: true }) ? Visibility.Visible : Visibility.Collapsed;
+        NextTile.ToolTip = full.Length > 0 ? full : null;
+        OdyleClockLabel.Foreground = CapBrush(level, "Muted"); RefillCountdown.Foreground = CapBrush(level, "Mint");
+        ValueLabel.Foreground = CompactValue.Foreground = CapBrush(level, "Text");
+        // The rings turn orange and red with the clock.
+        EnergyTrack.Fill = CompactTrack.Fill = CapBrush(level, "Mint");
         OdyleClockLabel.FontWeight = level == CapLevel.None ? FontWeights.Normal : FontWeights.SemiBold;
         var mismatch = api is not null && character is not null ? OdyleClock.Mismatch(character.NaturalMax, character.AnsweredCap) : "";
         CapMismatchLabel.Text = mismatch; CapMismatchLabel.Visibility = mismatch.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        RenderTaskbar(state, level, OdyleClockLabel.Text);
+        RenderTaskbar(state, level, full);
     }
     // The clock of the card's character: from the reading on screen once it is that character's, else
     // from its last saved one; null without either.
@@ -664,6 +803,9 @@ public partial class MainWindow : Window
         // A live reading needs no age; a saved value says how old it is.
         AgeLabel.Text = (capture is null || attribution.Latest is null) && character is { Confirmed: true } && Readiness.Parse(character.LastReadingAt) is { } saved ? T("saved {0}", Age(saved)) : "";
         AgeLabel.Visibility = AgeLabel.Text.Length > 0 && (api is not null || Offline) ? Visibility.Visible : Visibility.Collapsed;
+        // "saved 40s ago" says the state already: the word beside it would repeat it.
+        StateCaps.Visibility = AgeLabel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        AgeLabel.Margin = new Thickness(StateCaps.Visibility == Visibility.Visible ? 6 : 0, 0, 0, 0);
         if (capture is { } running)
             CaptureStatsLabel.Text = T("{0:N0} packets · {1:N0} KB from the game", running.ReceivedPackets, running.GameBytes / 1024.0);
         RenderOdyleClock(); RenderPlace();
@@ -1202,7 +1344,7 @@ public partial class MainWindow : Window
     private void SetStayOnTop(bool on, bool persist)
     {
         Topmost = on; tray.Pin.Checked = on; settings.StayOnTopToggle.IsChecked = on;
-        PinButton.Foreground = Brush(on ? "Mint" : "Muted");
+        PinButton.Foreground = Brush(on ? "Mint" : "Muted"); PinButton.Background = on ? Brush("MintFill") : Brushes.Transparent;
         PinButton.ToolTip = on ? T("Pinned above other windows · click to unpin") : T("Stay on top of other windows, for example the game in windowed mode");
         if (persist) PreferencesStore.Save(preferences = preferences with { StayOnTop = on });
     }
@@ -1264,9 +1406,9 @@ public partial class MainWindow : Window
         if (on == compactMode) return;
         compactMode = on;
         Card.Visibility = on ? Visibility.Collapsed : Visibility.Visible; CompactPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
-        CardColumn.Width = new GridLength(on ? CompactStrip.Width : 280);
+        CardColumn.Width = new GridLength(on ? CompactStrip.Width : CardWidth);
         TasksPanel.Visibility = !on && preferences.ShowTasks ? Visibility.Visible : Visibility.Collapsed;
-        RenderCompact(); Log.Info(on ? "Switched to compact mode." : "Switched back to the full card.");
+        RenderBackdrop(); RenderCompact(); Log.Info(on ? "Switched to compact mode." : "Switched back to the full card.");
     }
     private void Compact_Click(object sender, RoutedEventArgs e) => SetCompact(true, persist: true);
     // What's new: the line on the card after an update, until opened or hidden, and the window.
@@ -1290,7 +1432,9 @@ public partial class MainWindow : Window
         if (!App.Headless) { whatsNew.Show(); whatsNew.WindowState = WindowState.Normal; whatsNew.Activate(); }
     }
     private void Expand_Click(object sender, RoutedEventArgs e) => SetCompact(false, persist: true);
-    private void CompactPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) SetCompact(false, persist: true); }
+    // The card's width (variant C; compact mode is CompactStrip.Width, a little narrower).
+    internal const double CardWidth = 310;
+    private void CompactPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.ClickCount == 2) SetCompact(false, persist: true); else Drag(e); }
     private void ToggleCompact() { SetCompact(!compactMode, persist: true); if (!IsVisible) ShowWindow(); }
     // Your row (the card's character, value, cubes and state dot), then the other members'
     // characters online in your rooms (CompactStrip.Mates), the players of one party or force in
@@ -1299,13 +1443,27 @@ public partial class MainWindow : Window
     {
         if (!compactMode) return;
         var now = DateTimeOffset.UtcNow + serverOffset; var connected = api is not null;
-        CompactName.Text = connected && CurrentCharacter is { } character ? character.CharacterName : HeroTitle.Text;
+        CompactName.Text = connected && CurrentCharacter is { } character ? character.CharacterName : heroTitle;
         CompactValue.Text = ValueLabel.Text; CompactDot.Fill = StateDot.Fill;
         CompactCubes.Text = connected && heroValue is { } value ? Tn(value / heroCost, "{0} cube", "{0} cubes") : "";
+        CompactTrack.Value = EnergyTrack.Value; CompactTrack.Visibility = EnergyTrack.Visibility;
         var (mates, more, own) = connected ? CompactStrip.Mates(snapshots, accountId, now, odylePerCube) : ([], 0, Band.None);
-        CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", HeroTitle.Text, StateText.Text) + BandHint(own);
-        CompactMate Row(CompactStrip.Mate m) => new(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "Amber"),
-            (m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player)) + (PlaceLine(m.Location) is { Length: > 0 } place ? " · " + place : "") + BandHint(m.Band));
+        CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", heroTitle, StateText.Text) + BandHint(own);
+        CompactMate Row(CompactStrip.Mate m) => new(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "StaleFill"),
+            (m.Live ? T("{0} · live from the game", m.Player) : T("{0} · last value; their reader stopped reporting", m.Player)) + (PlaceLine(m.Location) is { Length: > 0 } place ? " · " + place : "") + BandHint(m.Band))
+        { Edge = Brush(m.Band.Party.Length > 0 ? "PartyChipEdge" : m.Band.Force.Length > 0 ? "ForceChipEdge" : "ChipEdge") };
+        // Variant C: "+15 1:12:04" in your pill, and "RUN 2:10:00" under the chips, ticking with the clock.
+        var clock = connected ? CardClock() : null;
+        static void Line(TextBlock line, string lead, Brush accent, string rest)
+        {
+            line.Inlines.Clear();
+            if (lead.Length == 0) return;
+            line.Inlines.Add(new System.Windows.Documents.Run(lead) { Foreground = accent, FontWeight = FontWeights.Bold }); line.Inlines.Add(new System.Windows.Documents.Run(" " + rest));
+        }
+        Line(CompactRefill, clock is { Full: false, Next: not null } ? $"+{clock.Tick}" : "", CapBrush(OdyleClock.Level(clock, DateTimeOffset.UtcNow), "Mint"), clock?.Next is { } tick ? Hours(tick - DateTimeOffset.UtcNow) : "");
+        Line(CompactRun, chipRun is { } planned && planned.StartsAt > now ? T("RUN") : "", Brush("Amber"), chipRun is { } soon ? Countdown(soon.StartsAt - now) : "");
+        CompactRefill.Visibility = CompactRefill.Inlines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        CompactClock.Visibility = CompactRun.Inlines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Your force and party come first (GameBands.Arrange): your row goes into their frames, which
         // take the divider's place, and the rest follow.
         var rest = GameBands.Nest(mates.Select(m => (m, m.Band)).ToArray());
@@ -1316,19 +1474,19 @@ public partial class MainWindow : Window
         if (ownParty is not null) { if (ownForce is null) rest = rest[1..]; else inForce = inForce[1..]; }
         void Own(Border box, Nested<CompactStrip.Mate>? band, bool top)
         {
-            var (margin, pad) = band is null ? default : CompactFrame(band.Kind, top, 0);
-            box.Margin = margin; box.Padding = pad; box.BorderThickness = new(band is null ? 0 : 1); box.ToolTip = band is null ? null : BandLabel(band);
-            box.BorderBrush = band is null ? null : Brush(band.Kind == "force" ? "ForceEdge" : "PartyEdge"); box.Background = band is null ? null : Brush(band.Kind == "force" ? "ForceTint" : "PartyTint");
+            // Variant C draws no frame around floating chips: the chips of the players the game put with you carry the
+            // party's or force's colour on their edge, and the frame's name stays in the tooltip.
+            _ = top; box.ToolTip = band is null ? null : BandLabel(band);
         }
         Own(CompactOwnForce, ownForce, top: true); Own(CompactOwnParty, ownParty, top: ownForce is null);
-        CompactOwnRow.Padding = ownForce is not null && ownParty is null ? new(5, 0, 1, 0) : default;
         ShowRows(CompactOwnPartyMates, ownParty is null ? Array.Empty<object>() : CompactEntries(ownParty.Children!, "party", "row", Row));
         ShowRows(CompactOwnForceMates, ownForce is null ? Array.Empty<object>() : CompactEntries(inForce, "force", ownParty is null ? "row" : "frame", Row));
         ShowRows(CompactMates, CompactEntries(rest, "", ownForce is null && ownParty is null ? "" : "frame", Row));
         CompactNote.Text = !connected ? T("Open settings to pair with the dashboard.")
             : readerPaused ? T("Paused by the server")
             : more > 0 ? T("+{0} more online", more)
-            : mates.Length == 0 ? (rooms.Length == 0 ? T("No rooms yet · create or join one on the dashboard.") : T("No one else is online in your rooms.")) : "";
+            // Nobody else online needs no chip: your pill alone says it.
+            : mates.Length == 0 && rooms.Length == 0 ? T("No rooms yet · create or join one on the dashboard.") : "";
         CompactNote.Visibility = CompactNote.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         CompactDivider.Visibility = rest.Length > 0 && ownForce is null && ownParty is null ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -1357,7 +1515,7 @@ public partial class MainWindow : Window
     {
         preferences = preferences with { ShowTasks = on };
         TasksPanel.Visibility = on && !compactMode ? Visibility.Visible : Visibility.Collapsed; settings.TasksToggle.IsChecked = on;
-        TasksButton.Foreground = Brush(on ? "Mint" : "Muted");
+        TasksButton.Foreground = Brush(on ? "Mint" : "Muted"); TasksButton.Background = on ? Brush("MintFill") : Brushes.Transparent;
         TasksButton.ToolTip = on ? T("Hide the daily & weekly tasks") : T("Show your daily & weekly tasks beside the card");
         if (persist) PreferencesStore.Save(preferences);
         RenderTasks(); if (on) _ = RefreshTasksAsync();

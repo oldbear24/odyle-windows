@@ -14,7 +14,11 @@ static partial class ReaderChecks
     {
         var saved = new Preferences(); var told = new List<(string Title, string Text)>();
         var reminders = new TrayReminders(() => saved, next => saved = next, (title, text) => told.Add((title, text)));
-        var resets = new TaskResets(); var now = Checklist.NextReset("daily", DateTimeOffset.UtcNow, resets).AddHours(-1);
+        // The weekly reset falls three days after the next daily one, so neither that daily reset nor the one a day
+        // later (in quiet hours below) comes an hour before a weekly reset too: on the day before the default
+        // Wednesday reset the weekly task was reminded as well, and the check failed for a day each week.
+        var due = Checklist.NextReset("daily", DateTimeOffset.UtcNow, new TaskResets());
+        var resets = new TaskResets(WeeklyResetDay: Checklist.Days[(int)due.AddDays(3).DayOfWeek]); var now = Checklist.NextReset("daily", DateTimeOffset.UtcNow, resets).AddHours(-1);
         UserTask[] tasks = [new("t1", "u", "Daily dungeon", "daily"), new("t2", "u", "Weekly raid", "weekly")];
         reminders.Resets(tasks, resets, now);
         Check(told is [{ Title: var title, Text: "Still open: Daily dungeon" }] && title.StartsWith("Daily reset in ", StringComparison.Ordinal) && title.EndsWith(" · 1 task open", StringComparison.Ordinal) && saved.RemindedResets is [_], "an open daily task is told an hour before the reset: " + string.Join(" | ", told));

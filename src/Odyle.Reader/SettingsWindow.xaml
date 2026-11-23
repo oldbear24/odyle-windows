@@ -55,6 +55,15 @@
    <!-- While you play (W#18) -->
    <CheckBox x:Name="FadeInGameToggle" Content="Fade the card while the game is in front" Margin="0,8,0,0" ToolTip="The card turns see-through while you play; point at it to see it fully"/>
    <CheckBox x:Name="FollowGameToggle" Content="Show the card with the game, hide it after" Margin="0,8,0,0" ToolTip="The card comes up when the game starts, without taking the focus, and goes to the tray when the game closes"/>
+   <!-- The see-through background, as Windows Terminal's acrylic: Windows blurs what is behind the card (it stays while
+        the game has the focus), and the card's own background lies over it at the chosen opacity -->
+   <CheckBox x:Name="AcrylicToggle" Content="See-through blurred background (acrylic)" Margin="0,8,0,0" ToolTip="Windows blurs what is behind the card, as in Windows Terminal; the card stays readable over the game"/>
+   <DockPanel x:Name="AcrylicOpacityPanel" Margin="22,6,0,0">
+    <TextBlock x:Name="AcrylicOpacityLabel" DockPanel.Dock="Right" Text="70 %" FontSize="11" Foreground="{StaticResource Muted}" Width="36" TextAlignment="Right" VerticalAlignment="Center"/>
+    <TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Opacity" VerticalAlignment="Center" Margin="0,0,10,0"/>
+    <Slider x:Name="AcrylicOpacityInput" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10" Value="70" VerticalAlignment="Center" ToolTip="How much of the card's colour lies over the blur · 100 % looks as without acrylic" AutomationProperties.Name="Acrylic opacity"/>
+   </DockPanel>
+   <TextBlock x:Name="AcrylicNoteLabel" Style="{StaticResource Hint}" Text="The acrylic background needs Windows 10 version 1803 or later." Visibility="Collapsed" Margin="22,2,0,0"/>
    <!-- The Discord status: through the Discord app on this PC, off unless chosen -->
    <CheckBox x:Name="DiscordToggle" Content="Show my Odyle in my Discord status" Margin="0,8,0,0" ToolTip="While you play, Discord shows your character, its Odyle and your cubes or next run; your Discord friends and servers see it"/>
    <TextBlock x:Name="DiscordNoteLabel" Style="{StaticResource Hint}" TextWrapping="Wrap" Visibility="Collapsed" Margin="22,2,0,0"/>
@@ -88,6 +97,8 @@
    <TextBlock Style="{StaticResource Section}" Text="TROUBLESHOOTING"/>
    <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard. Tokens, device keys, pairing codes, your account id, this PC's name and your Windows user name are left out; character names and the server address stay in." Margin="2,0,0,4"/>
    <DockPanel><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><Button x:Name="DiagnosticsButton" HorizontalAlignment="Left" Style="{StaticResource Ghost}" Content="Copy diagnostics" Margin="-6,0,0,0" VerticalAlignment="Center" ToolTip="A short report for a bug report · nothing is sent until you paste it somewhere"/></DockPanel>
+   <!-- The card's ✕ closes to the tray; quitting is here and in the tray menu -->
+   <Button x:Name="QuitButton" Style="{StaticResource GhostDanger}" Content="Quit Odyle" HorizontalAlignment="Left" Margin="-6,12,0,0" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/>
   </StackPanel>
  </ScrollViewer>
 </Window>

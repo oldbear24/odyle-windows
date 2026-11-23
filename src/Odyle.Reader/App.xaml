@@ -32,6 +32,16 @@
 <SolidColorBrush x:Key="ForceTint" Color="#14B9A7EE"/>
 <SolidColorBrush x:Key="PartyWash" Color="#128FC3EA"/>
 <SolidColorBrush x:Key="ForceWash" Color="#10B9A7EE"/>
+<!-- Short captions in a monospaced face; rows barely raised, washed on hover; the rings' track; dividers; stale players -->
+<FontFamily x:Key="Mono">Cascadia Mono, Consolas, Segoe UI</FontFamily>
+<SolidColorBrush x:Key="RowFill" Color="#08FFFFFF"/>
+<SolidColorBrush x:Key="RowEdge" Color="#17FFFFFF"/>
+<SolidColorBrush x:Key="RowHover" Color="#12FFFFFF"/>
+<SolidColorBrush x:Key="CellTrack" Color="#1CFFFFFF"/>
+<SolidColorBrush x:Key="Divider" Color="#14FFFFFF"/>
+<SolidColorBrush x:Key="StaleFill" Color="#8CE6CB8B"/>
+<SolidColorBrush x:Key="MintFill" Color="#29B5F2CD"/>
+<Style x:Key="Caps" TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource Mono}"/><Setter Property="FontSize" Value="9.5"/><Setter Property="Foreground" Value="{StaticResource Muted}"/></Style>
 
 <!-- Text -->
 <Style x:Key="Eyebrow" TargetType="TextBlock"><Setter Property="FontSize" Value="10"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{StaticResource Faint}"/></Style>
@@ -59,6 +69,11 @@
 <!-- Header toggles drawn with Windows' own icon font; mint while active -->
 <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource Ghost}"><Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="12"/><Setter Property="Padding" Value="6,3"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
 
+<!-- The card's controls: small square icon buttons, lit while on (their Background is set by the window) -->
+<Style x:Key="HeaderButton" TargetType="Button" BasedOn="{StaticResource IconButton}"><Setter Property="Width" Value="24"/><Setter Property="Height" Value="22"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="1,0,0,0"/></Style>
+<!-- Join / Going on the next run: a small mint button with monospaced bold words -->
+<Style x:Key="AccentSmall" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="FontFamily" Value="{StaticResource Mono}"/><Setter Property="FontWeight" Value="Bold"/><Setter Property="FontSize" Value="10.5"/><Setter Property="MinHeight" Value="22"/><Setter Property="Padding" Value="9,0"/></Style>
+
 <!-- Inputs -->
 <Style TargetType="TextBox">
  <Setter Property="Background" Value="{StaticResource Field}"/><Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="BorderBrush" Value="{StaticResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="9,5"/><Setter Property="FontSize" Value="12"/><Setter Property="CaretBrush" Value="{StaticResource Mint}"/><Setter Property="SelectionBrush" Value="{StaticResource MintSoft}"/><Setter Property="MinHeight" Value="30"/>
@@ -82,26 +97,6 @@
  </ControlTemplate></Setter.Value></Setter>
 </Style>
 
-<!-- Checklist tick: a small box that fills mint once the task is done -->
-<Style x:Key="Tick" TargetType="CheckBox">
- <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="FontSize" Value="11.5"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="4,3"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
- <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
-  <Border x:Name="Row" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
-   <DockPanel>
-    <Border x:Name="Box" DockPanel.Dock="Left" Width="15" Height="15" CornerRadius="4" Background="{StaticResource Field}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,8,0">
-     <Path x:Name="Mark" Data="M3,7 L5.8,9.8 L11,4" Stroke="{StaticResource MintInk}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Opacity="0"/>
-    </Border>
-    <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
-   </DockPanel>
-  </Border>
-  <ControlTemplate.Triggers>
-   <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource Panel}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
-   <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{StaticResource Mint}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/><Setter TargetName="Mark" Property="Opacity" Value="1"/></Trigger>
-   <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
-   <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
-  </ControlTemplate.Triggers>
- </ControlTemplate></Setter.Value></Setter>
-</Style>
 
 <!-- Progress track -->
 <Style TargetType="ProgressBar">
@@ -111,6 +106,78 @@
 
 <!-- Tooltip -->
 <Style TargetType="ToolTip"><Setter Property="Background" Value="{StaticResource Raised}"/><Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="BorderBrush" Value="{StaticResource LineStrong}"/><Setter Property="Padding" Value="9,6"/><Setter Property="FontSize" Value="11"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border></ControlTemplate></Setter.Value></Setter></Style>
+
+<!-- A whole row that opens and closes on a click (the party list): no chrome, a light wash on hover and a mint edge with the keyboard -->
+<Style x:Key="RowButton" TargetType="Button">
+ <Setter Property="Background" Value="{StaticResource RowFill}"/><Setter Property="BorderBrush" Value="{StaticResource RowEdge}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Foreground" Value="{StaticResource Text}"/>
+ <Setter Property="Padding" Value="9,6,6,7"/><Setter Property="Cursor" Value="Hand"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="FontSize" Value="12"/>
+ <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+  <Grid><Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"/><Border x:Name="Wash" Background="{StaticResource RowHover}" CornerRadius="8" Opacity="0"/><Border x:Name="Focus" BorderBrush="{StaticResource Mint}" BorderThickness="1.5" CornerRadius="8" Opacity="0"/><ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/></Grid>
+  <ControlTemplate.Triggers>
+   <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Wash" Property="Opacity" Value="1"/></Trigger>
+   <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="Opacity" Value="0.8"/></Trigger>
+  </ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
+
+<!-- Variant C (HUD): glass tiles, the panel's mint edge, party rows without chrome and round ticks -->
+<SolidColorBrush x:Key="TileFill" Color="#0AFFFFFF"/>
+<SolidColorBrush x:Key="TileEdge" Color="#12FFFFFF"/>
+<!-- Compact mode's floating chips: dark enough to read over any game, edged faintly, in blue for a party, violet for a force -->
+<SolidColorBrush x:Key="ChipFill" Color="#F2182220"/>
+<SolidColorBrush x:Key="ChipEdge" Color="#17FFFFFF"/>
+<SolidColorBrush x:Key="PartyChipEdge" Color="#998FC3EA"/>
+<SolidColorBrush x:Key="ForceChipEdge" Color="#99B9A7EE"/>
+<!-- A floating chip: a capsule a shade lighter than dark game scenes, a hairline edge and a soft shadow beneath -->
+<Style x:Key="FloatChip" TargetType="Border">
+ <Setter Property="Background" Value="{StaticResource ChipFill}"/><Setter Property="BorderBrush" Value="{StaticResource ChipEdge}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="999"/>
+ <Setter Property="Effect"><Setter.Value><DropShadowEffect BlurRadius="10" ShadowDepth="2" Direction="270" Opacity="0.45" Color="Black"/></Setter.Value></Setter>
+</Style>
+<Style x:Key="Tile" TargetType="Border"><Setter Property="Background" Value="{StaticResource TileFill}"/><Setter Property="BorderBrush" Value="{StaticResource TileEdge}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/><Setter Property="Padding" Value="9,6,9,7"/></Style>
+<Style x:Key="TileButton" TargetType="Button">
+ <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="9,6,9,7"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+ <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+  <Grid><Border Background="{StaticResource TileFill}" BorderBrush="{StaticResource TileEdge}" BorderThickness="1" CornerRadius="10"/><Border x:Name="Wash" Background="{StaticResource RowHover}" CornerRadius="10" Opacity="0"/><Border x:Name="Focus" BorderBrush="{StaticResource Mint}" BorderThickness="1.5" CornerRadius="10" Opacity="0"/><ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/></Grid>
+  <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Wash" Property="Opacity" Value="1"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Focus" Property="Opacity" Value="0.8"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger></ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
+<Style x:Key="HudRow" TargetType="Button" BasedOn="{StaticResource RowButton}"><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="7,5,8,5"/></Style>
+<Style x:Key="RoundTick" TargetType="CheckBox">
+ <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="FontSize" Value="12"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="6,5"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+ <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+  <Border x:Name="Row" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+   <DockPanel>
+    <Border x:Name="Box" DockPanel.Dock="Left" Width="16" Height="16" CornerRadius="8" Background="Transparent" BorderBrush="#4DFFFFFF" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,10,0">
+     <Path x:Name="Mark" Data="M3.5,8 L6.5,11 L12.5,5" Stroke="{StaticResource MintInk}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Opacity="0"/>
+    </Border>
+    <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/>
+   </DockPanel>
+  </Border>
+  <ControlTemplate.Triggers>
+   <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource RowHover}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
+   <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="{StaticResource Mint}"/><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/><Setter TargetName="Mark" Property="Opacity" Value="1"/></Trigger>
+   <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Mint}"/></Trigger>
+   <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+  </ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
+
+<!-- Slider (the acrylic opacity): a thin track filled in mint up to a round thumb -->
+<Style x:Key="SliderThumb" TargetType="Thumb"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb"><Grid Width="14" Height="14" Background="Transparent"><Ellipse x:Name="Knob" Fill="{StaticResource Mint}" Stroke="{StaticResource Bg}" StrokeThickness="2"/></Grid><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Knob" Property="Fill" Value="{StaticResource Text}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+<Style TargetType="Slider">
+ <Setter Property="Focusable" Value="True"/><Setter Property="Cursor" Value="Hand"/><Setter Property="IsMoveToPointEnabled" Value="True"/><Setter Property="MinHeight" Value="20"/>
+ <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+  <Grid VerticalAlignment="Center" Background="Transparent">
+   <Border Height="4" CornerRadius="2" Background="#2A3A30"/>
+   <Track x:Name="PART_Track">
+    <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="4" CornerRadius="2" Background="{StaticResource Mint}"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+    <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+    <Track.Thumb><Thumb Style="{StaticResource SliderThumb}"/></Track.Thumb>
+   </Track>
+  </Grid>
+  <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
+ </ControlTemplate></Setter.Value></Setter>
+</Style>
 
 <!-- Scrollbar -->
 <Style x:Key="ScrollStep" TargetType="RepeatButton"><Setter Property="Focusable" Value="False"/><Setter Property="Background" Value="Transparent"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="{TemplateBinding Background}"/></ControlTemplate></Setter.Value></Setter></Style>

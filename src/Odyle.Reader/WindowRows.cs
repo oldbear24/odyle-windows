@@ -10,17 +10,29 @@ namespace Odyle.Reader;
 // so a render that changes nothing keeps a list's items (MainWindow.ShowRows).
 public sealed record CharacterSharing(string Title, string Rooms);
 public sealed record LanguageChoice(string Code, string Name);
-// Gap is the room above the row and Pad the room around it: a row right inside a force's frame in
-// compact mode sits in by as much as a party's frame, so the text of every row stays in line.
+// Gap is the room above the row and Pad the room around it (the frames' nesting, GameBands.Nest); Edge is the
+// chip's edge in compact mode (variant C's floating chips): blue in a party, violet in a force, else faint.
 public sealed record CompactMate(string Name, string Value, string Cubes, Brush Dot, string Hint)
 {
     public Thickness Gap { get; init; }
     public Thickness Pad { get; init; }
+    public Brush? Edge { get; init; }
 }
 // Place: where the character was last seen while its player shares their location, "" otherwise; it
-// follows the detail with a map pin, in place of the server.
+// follows the detail with a map pin, in place of the server. Key names the row, which a click opens to show
+// its details under it (Open) and closes again; Progress and Bar draw its ring towards the next cube, ToNext
+// says how far; Tag follows the name ("party", "force", or how long ago a stale one was seen) in TagBrush.
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint, string Place = "")
 {
+    public string Key { get; init; } = "";
+    public double Progress { get; init; }
+    public Brush? Bar { get; init; }
+    public string ToNext { get; init; } = "";
+    public string Tag { get; init; } = "";
+    public Brush? TagBrush { get; init; }
+    public string Toggle { get; init; } = "";
+    public bool Open { get; init; }
+    public Visibility DetailsVisibility => Open ? Visibility.Visible : Visibility.Collapsed;
     public string PlaceGap => Place.Length > 0 && Detail.Length > 0 ? " · " : "";
     public string Pin => Place.Length > 0 ? "\uE707 " : "";
 }
@@ -34,6 +46,8 @@ public sealed record PartyRoom(string Name, PartyMate[] Mates, string Summary = 
 {
     public string Header => Name.ToUpper(Culture);
     public string Online => T("{0} online", Mates.Length);
+    // The party line only while others are online: "nobody live" beside "0 online" says nothing new.
+    public Visibility SummaryVisibility => Mates.Length > 0 && Summary.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     public object[] Shown => Entries ?? Mates;
 }
 // One checklist task as the panel shows it: done within the current reset period or not.

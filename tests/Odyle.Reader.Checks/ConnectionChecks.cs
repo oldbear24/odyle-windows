@@ -72,7 +72,7 @@ static partial class ReaderChecks
         Call(window, "OnCandidate", offlineCapture, new PacketCandidate(420, OdyleDecoder.Version, CandidateSource.Snapshot) { Base = 120, Bonus = 300 });
         await (Task)Call(window, "SaveDetectedCharacterAsync", offlineCapture, new GameIdentity(7, "OfflineHero", 2304, "Lumiel", "GLOBAL_EU"))!;
         Check(Field("pendingIdentity").GetValue(window) is not null && window.Attribution.OwnerKey == "OfflineHero|2304", "the named character is followed and kept for the server");
-        Check(Control<TextBlock>(window, "HeroTitle").Text == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");
+        Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "OfflineHero · offline" && Control<TextBlock>(window, "ValueLabel").Text == "420" && Control<TextBlock>(window, "ReadingLabel").Text == "Offline · 420 Odyle read here, sent when the server is back.", "the card shows the local reading while offline");
         // A switch while offline drops the reading of the character left, as online.
         await (Task)Call(window, "CharacterChangedAsync", offlineCapture, 99UL)!;
         Check(window.Attribution.Latest is null && window.Attribution.OwnerKey == "", "a switch offline never moves the reading to the next character");

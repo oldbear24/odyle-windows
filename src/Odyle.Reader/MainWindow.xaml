@@ -1,154 +1,214 @@
 <Window x:Class="Odyle.Reader.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Odyle.Reader"
- Title="Odyle" SizeToContent="WidthAndHeight" ResizeMode="CanMinimize" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
+ Title="Odyle" SizeToContent="WidthAndHeight" ResizeMode="CanMinimize" WindowStyle="None" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
  Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" SizeChanged="Window_SizeChanged" LocationChanged="Window_LocationChanged" IsVisibleChanged="Window_IsVisibleChanged" StateChanged="Window_StateChanged"
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
- <!-- The compact 280 px card; the checklist opens beside it and the window grows to the right -->
+ <!-- Variant C, the HUD: a frameless glass card over the game. The ring holds your Odyle and fills towards the next cube;
+      three tiles count down to the next +15 and the next run and show the reader; your rooms' players follow with small
+      rings. The controls light up while the pointer is on the card. The glass frame reaches over the whole window, so the
+      acrylic background (Settings → Window) shows wherever the window's background lets it through. -->
+ <WindowChrome.WindowChrome><WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="-1" CornerRadius="0" UseAeroCaptionButtons="False"/></WindowChrome.WindowChrome>
+ <Border x:Name="RootBorder" BorderBrush="#26352C" BorderThickness="0">
  <Grid>
-  <Grid.ColumnDefinitions><ColumnDefinition x:Name="CardColumn" Width="280"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-  <!-- Compact mode: in place of the card, in the same window and place, your Odyle and your party's, one tight row each.
-       The header's compact button, the tray or the shortcut switch it; a double-click or ⤢ brings the card back. -->
-  <Border x:Name="CompactPanel" Visibility="Collapsed" Padding="10,6,6,7" Background="Transparent" MouseLeftButtonDown="CompactPanel_MouseLeftButtonDown" ToolTip="Double-click for the full card">
-   <StackPanel Grid.IsSharedSizeScope="True">
-    <!-- The players the game put together (GameBands.Nest), framed as on the dashboard's room page: a party in blue, a
-         force in violet around its parties. The frames reach into the window's margin, so every row's text stays in line. -->
+  <Grid.ColumnDefinitions><ColumnDefinition x:Name="CardColumn" Width="310"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+  <!-- Compact mode, as floating chips: your pill (ring, name, Odyle, cubes and the next +15), then a chip for each
+       player online in your rooms. The header's compact button, the tray or the shortcut switch it; a double-click or
+       the expand button brings the card back; drag it anywhere to move the window. -->
+  <Border x:Name="CompactPanel" Visibility="Collapsed" Padding="6,6,6,10" Background="Transparent" MouseLeftButtonDown="CompactPanel_MouseLeftButtonDown" ToolTip="Double-click for the full card">
+   <StackPanel>
+    <!-- A chip per player: a dot (mint live, amber saved earlier), the name and the Odyle, the edge blue for a party and
+         violet for a force the game put together. Bands nest without frames: their names are in the tooltips. -->
     <StackPanel.Resources>
      <DataTemplate DataType="{x:Type local:CompactMate}">
-      <Border Margin="{Binding Gap}" Padding="{Binding Pad}" Background="Transparent" ToolTip="{Binding Hint}">
-       <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
-        <Ellipse Width="5" Height="5" Fill="{Binding Dot}" VerticalAlignment="Center" Margin="0,1,7,0"/>
-        <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="#D5E7DB" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-        <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="12.5" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
-        <TextBlock Grid.Column="3" Text="{Binding Cubes}" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
-       </Grid>
-      </Border>
+      <local:PillBorder Margin="0,6,6,0" Style="{StaticResource FloatChip}" BorderBrush="{Binding Edge}" Padding="9,5,11,5" ToolTip="{Binding Hint}">
+       <StackPanel Orientation="Horizontal">
+        <Ellipse Width="6" Height="6" Fill="{Binding Dot}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+        <TextBlock Text="{Binding Name}" Foreground="#D5E7DB" FontSize="11.5" VerticalAlignment="Center" MaxWidth="110" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Text="{Binding Value}" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="11.5" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center" Margin="7,0,0,0"/>
+       </StackPanel>
+      </local:PillBorder>
      </DataTemplate>
      <DataTemplate DataType="{x:Type local:MateBand}">
-      <Border Margin="{Binding Gap}" Padding="{Binding Pad}" CornerRadius="6" BorderThickness="1" BorderBrush="{Binding Edge}" Background="{Binding Fill}" ToolTip="{Binding Label}">
-       <ItemsControl ItemsSource="{Binding Items}" Focusable="False"/>
-      </Border>
+      <ItemsControl ItemsSource="{Binding Items}" Focusable="False" ToolTip="{Binding Label}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl>
      </DataTemplate>
     </StackPanel.Resources>
-    <!-- Your row, inside your force's and your party's frames when the game put you in one with others listed -->
-    <Border x:Name="CompactOwnForce" CornerRadius="6">
-     <StackPanel>
-      <Border x:Name="CompactOwnParty" CornerRadius="6">
-       <StackPanel>
-        <Border x:Name="CompactOwnRow">
-         <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto" SharedSizeGroup="Value"/><ColumnDefinition Width="Auto" SharedSizeGroup="Cubes"/><ColumnDefinition Width="Auto" SharedSizeGroup="Action"/></Grid.ColumnDefinitions>
-          <Ellipse x:Name="CompactDot" Width="6" Height="6" Fill="{StaticResource Faint}" VerticalAlignment="Center" Margin="0,1,6,0"/>
-          <TextBlock x:Name="CompactName" Grid.Column="1" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-          <TextBlock x:Name="CompactValue" Grid.Column="2" Text="—" FontSize="16" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
-          <TextBlock x:Name="CompactCubes" Grid.Column="3" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="7,1,0,0"/>
-          <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="&#xE740;" FontSize="10" Padding="5,2" Margin="3,0,0,0" Click="Expand_Click" ToolTip="Full card"/>
-         </Grid>
-        </Border>
-        <ItemsControl x:Name="CompactOwnPartyMates" Focusable="False"/>
+    <!-- Your pill: the ring towards the next cube, your Odyle and cubes, the next +15, and back to the full card. The
+         force's and party's borders only carry their names (tooltips): no frame is drawn around floating chips. -->
+    <Border x:Name="CompactOwnForce">
+     <Border x:Name="CompactOwnParty">
+      <local:PillBorder x:Name="CompactOwnRow" HorizontalAlignment="Left" Style="{StaticResource FloatChip}" Padding="6,5,8,5">
+       <StackPanel Orientation="Horizontal">
+        <Grid Width="26" Height="26" VerticalAlignment="Center"><local:Ring x:Name="CompactTrack" Thickness="3" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/></Grid>
+        <Ellipse x:Name="CompactDot" Visibility="Collapsed"/>
+        <TextBlock x:Name="CompactName" Visibility="Collapsed"/>
+        <TextBlock x:Name="CompactValue" Text="—" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="18" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center" Margin="10,0,0,0"/>
+        <TextBlock x:Name="CompactCubes" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="8,1,0,0"/>
+        <Border Width="1" Height="16" Background="#1FFFFFFF" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="{Binding Visibility, ElementName=CompactRefill}"/>
+        <TextBlock x:Name="CompactRefill" FontSize="11" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center" Margin="10,0,0,0"/>
+        <Button Content="&#xE740;" FontSize="10" Margin="8,0,0,0" Click="Expand_Click" ToolTip="Full card">
+         <Button.Style><Style TargetType="Button" BasedOn="{StaticResource HeaderButton}"><Setter Property="Width" Value="22"/><Setter Property="Height" Value="22"/><Setter Property="Background" Value="Transparent"/></Style></Button.Style>
+         <Button.Template><ControlTemplate TargetType="Button"><Grid><Ellipse x:Name="Face" Fill="{TemplateBinding Background}"/><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Face" Property="Fill" Value="#1FFFFFFF"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Button.Template>
+        </Button>
        </StackPanel>
-      </Border>
-      <ItemsControl x:Name="CompactOwnForceMates" Focusable="False"/>
-     </StackPanel>
+      </local:PillBorder>
+     </Border>
     </Border>
-    <Border x:Name="CompactDivider" Height="1" Background="{StaticResource Line}" Margin="0,4,0,2"/>
-    <ItemsControl x:Name="CompactMates" Focusable="False"/>
-    <TextBlock x:Name="CompactNote" FontSize="10.5" Foreground="{StaticResource Faint}" TextWrapping="Wrap" Margin="13,2,0,0"/>
+    <!-- Every other player's chip in one wrapping row: your party's, then your force's, then the rest -->
+    <WrapPanel>
+     <ItemsControl x:Name="CompactOwnPartyMates" Focusable="False"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl>
+     <ItemsControl x:Name="CompactOwnForceMates" Focusable="False"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl>
+     <Border x:Name="CompactDivider" Width="0"/>
+     <ItemsControl x:Name="CompactMates" Focusable="False"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl>
+    </WrapPanel>
+    <!-- A note and the next run, each a chip of its own so they stay readable over the game -->
+    <Border HorizontalAlignment="Left" Style="{StaticResource FloatChip}" CornerRadius="10" Padding="10,5" Margin="0,6,0,0" Visibility="{Binding Visibility, ElementName=CompactNote}">
+     <TextBlock x:Name="CompactNote" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" MaxWidth="270"/>
+    </Border>
+    <local:PillBorder x:Name="CompactClock" HorizontalAlignment="Left" Style="{StaticResource FloatChip}" Padding="11,5" Margin="0,6,0,0" Visibility="Collapsed">
+     <TextBlock x:Name="CompactRun" FontSize="11" Typography.NumeralAlignment="Tabular"/>
+    </local:PillBorder>
    </StackPanel>
   </Border>
   <Grid x:Name="Card">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
-   <!-- Header: pin above other windows, open the checklist, settings -->
-   <DockPanel Margin="12,7,6,2">
-    <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="⚙" FontSize="14" Padding="7,1" Click="Settings_Click" VerticalAlignment="Center" ToolTip="Settings · account, rooms and reader setup"/>
-    <Button x:Name="CompactButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73F;" Click="Compact_Click" ToolTip="Compact mode · your Odyle and your party's, nothing else"/>
-    <Button x:Name="TasksButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE73A;" Click="Tasks_Click" ToolTip="Show your daily &amp; weekly tasks beside the card"/>
-    <Button x:Name="PinButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE718;" Click="Pin_Click" ToolTip="Stay on top of other windows"/>
+   <!-- The controls, faint until the pointer is on the card: pin above other windows, the checklist, compact mode,
+        settings and close to the tray. Drag the window here. -->
+   <DockPanel Margin="14,10,10,0" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+    <DockPanel.Style><Style TargetType="DockPanel"><Setter Property="Opacity" Value="0.35"/><Style.Triggers>
+     <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"><Setter Property="Opacity" Value="1"/></DataTrigger>
+     <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="Opacity" Value="1"/></Trigger>
+    </Style.Triggers></Style></DockPanel.Style>
+    <Button x:Name="HideButton" DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE711;" FontSize="10" Click="Hide_Click" ToolTip="Close to the tray · Odyle keeps reading; quit from the tray menu or Settings"/>
+    <Button DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE713;" Click="Settings_Click" ToolTip="Settings · account, rooms and reader setup"/>
+    <Button x:Name="CompactButton" DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE73F;" Click="Compact_Click" ToolTip="Compact mode · your Odyle and your party's, nothing else"/>
+    <Button x:Name="TasksButton" DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE73A;" Click="Tasks_Click" ToolTip="Show your daily &amp; weekly tasks beside the card"/>
+    <Button x:Name="PinButton" DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE718;" Click="Pin_Click" ToolTip="Stay on top of other windows"/>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-     <Viewbox Width="15" Height="15" Margin="0,1,6,0"><Canvas Width="24" Height="24"><Path Data="M12 2 L20 12 L12 22 L4 12 Z" Fill="#2EB5F2CD" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round"/><Path Data="M12 2 V22 M4 12 L12 15.6 L20 12" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
-     <TextBlock Text="odyle" FontSize="15" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" VerticalAlignment="Center"/><TextBlock Text="." FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Mint}" VerticalAlignment="Center"/>
-     <TextBlock x:Name="AccountLabel" Style="{StaticResource Eyebrow}" Text="NOT CONNECTED" Margin="9,3,0,0" VerticalAlignment="Center" MaxWidth="104" TextTrimming="CharacterEllipsis"/>
+     <Viewbox Width="13" Height="13" Margin="0,0,7,0"><Canvas Width="24" Height="24"><Path Data="M12 2 L20 12 L12 22 L4 12 Z" Fill="#2EB5F2CD" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round"/><Path Data="M12 2 V22 M4 12 L12 15.6 L20 12" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
+     <TextBlock x:Name="AccountLabel" Style="{StaticResource Caps}" FontSize="10" Text="NOT CONNECTED" VerticalAlignment="Center" MaxWidth="130" TextTrimming="CharacterEllipsis"/>
     </StackPanel>
    </DockPanel>
 
-   <StackPanel Grid.Row="1" Margin="12,3,12,8">
+   <StackPanel Grid.Row="1" Margin="14,8,14,12">
     <!-- Announcement from the server (Server controls on the dashboard's superuser pages) -->
-    <Border x:Name="AnnouncementBar" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" Padding="9,5,3,5" Margin="0,0,0,6">
+    <Border x:Name="AnnouncementBar" Visibility="Collapsed" CornerRadius="10" BorderThickness="1" Padding="9,5,3,5" Margin="0,0,0,8">
      <DockPanel>
       <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="✕" FontSize="10" Padding="5,0" VerticalAlignment="Top" Click="HideAnnouncement_Click" ToolTip="Hide until the message changes"/>
       <TextBlock x:Name="AnnouncementText" TextWrapping="Wrap" FontSize="11" VerticalAlignment="Center"/>
      </DockPanel>
     </Border>
     <!-- After an update, once: the version and What's new -->
-    <Border x:Name="UpdatedBar" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,3,3,3" Margin="0,0,0,6">
+    <Border x:Name="UpdatedBar" Visibility="Collapsed" CornerRadius="10" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,3,3,3" Margin="0,0,0,8">
      <DockPanel>
       <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="✕" FontSize="10" Padding="5,0" VerticalAlignment="Center" Click="HideUpdated_Click" ToolTip="Hide until the next update"/>
       <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" Foreground="{StaticResource Mint}" Padding="6,1" VerticalAlignment="Center" Click="WhatsNew_Click" ToolTip="What changed in this version"/>
       <TextBlock x:Name="UpdatedText" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
      </DockPanel>
     </Border>
-    <!-- Reading card: the character the game reports -->
-    <Border CornerRadius="10" BorderThickness="1" BorderBrush="#2B3F33" Padding="12,8,12,8">
-     <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1C2B21" Offset="0"/><GradientStop Color="#131C16" Offset="1"/></LinearGradientBrush></Border.Background>
-     <StackPanel>
-      <DockPanel>
-       <Border x:Name="StatePill" DockPanel.Dock="Right" CornerRadius="999" Padding="7,2" Background="{StaticResource PillNeutral}" VerticalAlignment="Center" Margin="8,0,0,0"><StackPanel Orientation="Horizontal"><Ellipse x:Name="StateDot" Width="5" Height="5" Fill="{StaticResource Faint}" Margin="0,0,5,0" VerticalAlignment="Center"/><TextBlock x:Name="StateText" Text="Offline" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/></StackPanel></Border>
-       <TextBlock x:Name="HeroTitle" Text="Not connected" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-      </DockPanel>
-      <DockPanel>
-       <StackPanel DockPanel.Dock="Right" VerticalAlignment="Bottom" Margin="8,0,0,5" MaxWidth="150"><TextBlock x:Name="CubeLabel" FontSize="10.5" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="AgeLabel" FontSize="10" Foreground="{StaticResource Faint}" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"/></StackPanel>
-       <StackPanel Orientation="Horizontal"><TextBlock x:Name="ValueLabel" Text="—" FontSize="26" FontWeight="SemiBold" FontFamily="Segoe UI Variable Display, Segoe UI" Margin="-1,0,0,0"/><TextBlock Text="Odyle" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,6" VerticalAlignment="Bottom"/></StackPanel>
-      </DockPanel>
-      <ProgressBar x:Name="EnergyTrack" Height="4" Margin="0,2,0,0" Maximum="100" Value="0"/>
-      <TextBlock x:Name="SplitLabel" FontSize="10" Foreground="{StaticResource Faint}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
-      <Button x:Name="ShareHintButton" Style="{StaticResource Ghost}" Content="Not shared in any room · Share ↗" Visibility="Collapsed" Click="ShareHint_Click" HorizontalAlignment="Left" Margin="-4,2,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Amber}" ToolTip="Your rooms cannot see this character. Choose the rooms on the dashboard."/>
-      <TextBlock x:Name="OdyleClockLabel" FontSize="10" Foreground="{StaticResource Mint}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
-      <!-- Readings above the cap the account's membership answer settled -->
-      <TextBlock x:Name="CapMismatchLabel" FontSize="10" Foreground="{StaticResource Amber}" Margin="0,2,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
-      <!-- Where the character was last seen, while you share your location with your rooms (on the dashboard) -->
-      <TextBlock x:Name="PlaceLabel" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Visibility="Collapsed"><Run Text="&#xE707; " FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run x:Name="PlaceText"/></TextBlock>
-      <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
-      <!-- The account's characters (W#17): on demand, and by itself while the game switches characters -->
-      <Button x:Name="AltToggle" Style="{StaticResource Ghost}" Click="AltToggle_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="-4,3,0,0" Padding="4,1" FontSize="10" Foreground="{StaticResource Muted}"/>
-      <ItemsControl x:Name="AltList" Visibility="Collapsed" Focusable="False" Margin="0,1,0,0">
-       <ItemsControl.ItemTemplate>
-        <DataTemplate>
-         <DockPanel Margin="0,1,0,1" ToolTip="{Binding Hint}" Background="Transparent">
-          <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10" Foreground="{Binding Mark}" Margin="8,0,0,0"/>
-          <TextBlock Text="{Binding Name}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
-         </DockPanel>
-        </DataTemplate>
-       </ItemsControl.ItemTemplate>
-      </ItemsControl>
-     </StackPanel>
-    </Border>
 
-    <!-- The next planned run: countdown, who goes and Going; a cancelled or moved run of yours says so -->
-    <Border x:Name="RunChipBox" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource Line}" Background="{StaticResource Panel}" Padding="9,4,4,4" Margin="0,7,0,0">
+    <!-- The ring: your Odyle in the middle, filling towards the next cube; beside it the character, the reading's
+         state, the cubes and how far to the next -->
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <!-- The game's two numbers (the natural pool and what items added) and its last change, on pointing at the ring -->
+     <Grid x:Name="RingBox" Width="96" Height="96" Background="Transparent" ToolTipService.IsEnabled="False">
+      <Grid.ToolTip><TextBlock x:Name="SplitLabel"/></Grid.ToolTip>
+      <local:Ring x:Name="EnergyTrack" Thickness="6" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+       <TextBlock x:Name="ValueLabel" Text="—" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="27" FontWeight="Bold" Typography.NumeralAlignment="Tabular" HorizontalAlignment="Center"/>
+       <TextBlock Text="ODYLE" Style="{StaticResource Caps}" FontSize="9" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+      </StackPanel>
+     </Grid>
+     <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+      <DockPanel>
+       <Ellipse x:Name="StateDot" Width="7" Height="7" Fill="{StaticResource Faint}" VerticalAlignment="Center" Margin="0,1,7,0"/>
+       <TextBlock x:Name="HeroTitle" Text="Not connected" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+      </DockPanel>
+      <Border x:Name="StatePill" Margin="14,1,0,0">
+       <StackPanel Orientation="Horizontal"><TextBlock x:Name="StateText" Text="Offline" Visibility="Collapsed"/><TextBlock x:Name="StateCaps" Text="offline" FontSize="11" Foreground="{StaticResource Muted}"/><TextBlock x:Name="AgeLabel" FontSize="10.5" Foreground="{StaticResource Faint}" Margin="6,0,0,0" TextTrimming="CharacterEllipsis"/></StackPanel>
+      </Border>
+      <StackPanel Orientation="Horizontal" Margin="0,9,0,0">
+       <Viewbox Width="16" Height="16" VerticalAlignment="Center"><Canvas Width="24" Height="24"><Path Data="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7Z M3.3 7 L12 12 L20.7 7 M12 22 V12" Stroke="{StaticResource Mint}" StrokeThickness="1.8" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
+       <TextBlock x:Name="CubeLabel" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="22" FontWeight="Bold" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center" Margin="6,0,0,0"/>
+       <TextBlock x:Name="CubeWord" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="5,0,0,4"/>
+      </StackPanel>
+      <TextBlock x:Name="RefillCaption" FontSize="11" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+     </StackPanel>
+    </Grid>
+
+    <!-- Three tiles: the next tick of the natural pool, the next planned run, and the reader (a click starts or stops it) -->
+    <Grid x:Name="RefillBox" Margin="0,12,0,0">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <Border x:Name="NextTile" Style="{StaticResource Tile}">
+      <StackPanel>
+       <TextBlock x:Name="NextLabel" Text="NEXT +15" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+       <TextBlock x:Name="RefillCountdown" Text="—" FontSize="14" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" Foreground="{StaticResource Mint}"/>
+      </StackPanel>
+     </Border>
+     <Border Grid.Column="2" Style="{StaticResource Tile}">
+      <StackPanel>
+       <TextBlock Text="RUN" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+       <TextBlock x:Name="RunCountdown" Text="—" FontSize="14" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" Foreground="{StaticResource Amber}"/>
+      </StackPanel>
+     </Border>
+     <Button x:Name="ReaderChip" Grid.Column="4" Style="{StaticResource TileButton}" Click="Reader_Click">
+      <StackPanel>
+       <TextBlock Text="READER" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+       <StackPanel Orientation="Horizontal"><Ellipse x:Name="ReaderChipDot" Width="6" Height="6" Fill="{StaticResource Faint}" VerticalAlignment="Center" Margin="0,1,6,0"/><TextBlock x:Name="ReaderChipText" Text="Off" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></StackPanel>
+      </StackPanel>
+     </Button>
+    </Grid>
+    <!-- When the natural pool is full, led by its flag: only while it nearly is or is (else in the first tile's tooltip) -->
+    <TextBlock x:Name="OdyleClockLabel" FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="2,8,0,0" Visibility="Collapsed"/>
+    <!-- The next planned run: its dungeon, when, who goes and Going; a cancelled or moved run of yours says so -->
+    <Border x:Name="RunChipBox" Visibility="Collapsed" Style="{StaticResource Tile}" Margin="0,8,0,0" Padding="10,5,5,5">
      <DockPanel>
-      <Button x:Name="RunGoingButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Click="RunGoing_Click" Padding="6,1" FontSize="10.5" VerticalAlignment="Center" Margin="6,0,0,0"/>
+      <Button x:Name="RunGoingButton" DockPanel.Dock="Right" Style="{StaticResource AccentSmall}" Click="RunGoing_Click" VerticalAlignment="Center" Margin="8,0,0,0"/>
       <StackPanel VerticalAlignment="Center">
        <TextBlock x:Name="RunChipLabel" FontSize="11" TextTrimming="CharacterEllipsis"/>
        <TextBlock x:Name="RunChipNotice" FontSize="10" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed"/>
       </StackPanel>
      </DockPanel>
     </Border>
+    <!-- Lines that only show when they have something to say -->
+    <Button x:Name="ShareHintButton" Style="{StaticResource Ghost}" Content="Not shared in any room · Share ↗" Visibility="Collapsed" Click="ShareHint_Click" HorizontalAlignment="Left" Margin="-2,4,0,0" Padding="4,1" FontSize="10.5" Foreground="{StaticResource Amber}" ToolTip="Your rooms cannot see this character. Choose the rooms on the dashboard."/>
+    <!-- Readings above the cap the account's membership answer settled -->
+    <TextBlock x:Name="CapMismatchLabel" FontSize="10.5" Foreground="{StaticResource Amber}" Margin="2,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+    <TextBlock x:Name="ReadingLabel" Text="Open settings to pair with the dashboard." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap" Margin="2,8,0,0"/>
+    <!-- One row: where the character was last seen, while you share your location with your rooms (on the dashboard),
+         and the account's characters (W#17), on demand and by itself while the game switches characters -->
+    <DockPanel>
+     <Button x:Name="AltToggle" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Click="AltToggle_Click" Visibility="Collapsed" VerticalAlignment="Center" Margin="6,6,-4,0" Padding="4,1" FontSize="10.5" Foreground="{StaticResource Muted}"/>
+     <TextBlock x:Name="PlaceLabel" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="2,8,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Visibility="Collapsed"><Run Text="&#xE707; " FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run x:Name="PlaceText"/></TextBlock>
+    </DockPanel>
+    <ItemsControl x:Name="AltList" Visibility="Collapsed" Focusable="False" Margin="2,1,0,0">
+     <ItemsControl.ItemTemplate>
+      <DataTemplate>
+       <DockPanel Margin="0,1,0,1" ToolTip="{Binding Hint}" Background="Transparent">
+        <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10" Foreground="{Binding Mark}" Margin="8,0,0,0"/>
+        <TextBlock Text="{Binding Name}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
+       </DockPanel>
+      </DataTemplate>
+     </ItemsControl.ItemTemplate>
+    </ItemsControl>
 
-    <!-- Packet reader: status line with a compact start/stop toggle -->
+    <!-- Packet reader: the reader tile starts and stops it and tells what it does on pointing at it; this line only shows
+         a problem (Npcap missing or restricted, a capture that failed), with the Npcap link. ReportButton stays for the
+         state the tile follows (its caption and whether it can be pressed). -->
     <!-- Packet counts sit in the status tooltip while the reader runs; without a working Npcap the line links to its download -->
-    <DockPanel Margin="0,7,0,0">
-     <Button x:Name="ReportButton" DockPanel.Dock="Right" Content="Connect" Click="Reader_Click" Margin="8,0,0,0" MinHeight="22" Padding="10,2" FontSize="11" VerticalAlignment="Center" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
+    <DockPanel x:Name="ReaderLine" Margin="2,10,0,0" Visibility="Collapsed">
+     <Button x:Name="ReportButton" DockPanel.Dock="Right" Content="Connect" Click="Reader_Click" Visibility="Collapsed" ToolTip="Reads the game's own packets with Npcap. Nothing is injected."/>
      <StackPanel VerticalAlignment="Center">
       <DockPanel x:Name="ReaderRow" Background="Transparent" ToolTipService.IsEnabled="False">
        <DockPanel.ToolTip><TextBlock x:Name="CaptureStatsLabel"/></DockPanel.ToolTip>
-       <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" AutomationProperties.LiveSetting="Polite" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
+       <Ellipse x:Name="ReaderDot" DockPanel.Dock="Left" Width="6" Height="6" Fill="{StaticResource Faint}" Margin="1,4,7,0" VerticalAlignment="Top"/><TextBlock x:Name="PacketStateLabel" AutomationProperties.LiveSetting="Polite" Text="Stopped · start the reader before logging in." Foreground="{StaticResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
       </DockPanel>
       <Button x:Name="NpcapLink" Style="{StaticResource Ghost}" Content="Install Npcap ↗" Visibility="Collapsed" Click="NpcapLink_Click" HorizontalAlignment="Left" Margin="10,1,0,0" Padding="4,1" FontSize="10.5" Foreground="{StaticResource Mint}" ToolTip="Opens npcap.com · Odyle starts reading by itself once Npcap is installed"/>
      </StackPanel>
     </DockPanel>
 
     <!-- After the first live reading, once per PC: an offer to start with Windows (remembered in preferences.json) -->
-    <Border x:Name="AutostartOffer" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,6,6,6" Margin="0,7,0,0">
+    <Border x:Name="AutostartOffer" Visibility="Collapsed" CornerRadius="10" BorderThickness="1" BorderBrush="{StaticResource LineStrong}" Background="{StaticResource PillLive}" Padding="9,6,6,6" Margin="0,10,0,0">
      <StackPanel>
       <TextBlock Text="Start Odyle with Windows? It waits in the tray, so the reader runs before you log into the game." TextWrapping="Wrap" FontSize="11"/>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,5,0,0">
@@ -158,44 +218,45 @@
      </StackPanel>
     </Border>
 
-    <!-- Party: other members' characters that are online in your rooms, one header per room -->
-    <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,4,0,0">
+    <!-- Party: other members' characters online in your rooms, one header per room, each with a small ring towards its
+         next cube; a click opens its details in place (and closes them on the next) -->
+    <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,12,0,0">
+     <Border Height="1" Background="{StaticResource Divider}" Margin="0,0,0,4"/>
      <!-- Only while the party does not follow the server's live news: it is fetched every 15 seconds -->
      <TextBlock x:Name="PartyModeLabel" HorizontalAlignment="Right" FontSize="9.5" Foreground="{StaticResource Faint}" Margin="0,2,2,-4" Visibility="Collapsed"/>
-     <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+     <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
       <ItemsControl x:Name="PartyList" Focusable="False">
        <ItemsControl.ItemTemplate><DataTemplate>
-        <StackPanel>
-         <DockPanel Margin="2,6,2,0"><TextBlock DockPanel.Dock="Right" Text="{Binding Online}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/><TextBlock Style="{StaticResource Eyebrow}" Text="{Binding Header}" TextTrimming="CharacterEllipsis"/></DockPanel>
-         <TextBlock Text="{Binding Summary}" Foreground="{Binding SummaryBrush}" FontSize="10.5" Margin="2,1,2,0" TextTrimming="CharacterEllipsis"/>
+        <StackPanel Margin="0,6,0,2">
+         <DockPanel Margin="2,0,2,0"><TextBlock DockPanel.Dock="Right" Text="{Binding Online}" FontSize="11" Foreground="{StaticResource Muted}" Margin="8,0,0,0"/><TextBlock Text="{Binding Header}" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel>
+         <TextBlock Text="{Binding Summary}" Visibility="{Binding SummaryVisibility}" Foreground="{Binding SummaryBrush}" FontSize="10.5" Margin="2,1,2,3" TextTrimming="CharacterEllipsis"/>
          <ItemsControl ItemsSource="{Binding Shown}" Focusable="False">
           <ItemsControl.Resources>
            <DataTemplate DataType="{x:Type local:PartyMate}">
-            <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="8,4" Margin="0,3,0,0" ToolTip="{Binding Hint}">
-             <!-- Two lines: the name and its Odyle, then class, level or staleness, where it was last seen, and the cubes -->
-             <Grid>
-              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-              <Ellipse Width="6" Height="6" Fill="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
-              <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
-              <TextBlock Grid.Row="1" Grid.Column="1" FontSize="10" Foreground="{StaticResource Faint}" TextTrimming="CharacterEllipsis"><Run Text="{Binding Detail, Mode=OneWay}"/><Run Text="{Binding PlaceGap, Mode=OneWay}"/><Run Text="{Binding Pin, Mode=OneWay}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run Text="{Binding Place, Mode=OneWay}"/></TextBlock>
-              <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Cubes}" FontSize="10" Foreground="{StaticResource Muted}" HorizontalAlignment="Right" Margin="8,0,0,0"/>
-             </Grid>
-            </Border>
-           </DataTemplate>
-           <!-- The players the game put together (GameBands.Nest), framed as on the dashboard's room page under a label
-                with an icon and how many players: a party in blue, a force in violet around its parties -->
-           <DataTemplate DataType="{x:Type local:MateBand}">
-            <Border Margin="{Binding Gap}" Padding="{Binding Pad}" CornerRadius="10" BorderThickness="1" BorderBrush="{Binding Edge}" Background="{Binding Fill}">
+            <Button Style="{StaticResource HudRow}" Margin="0,1,0,0" Click="Mate_Click" Tag="{Binding Key}" ToolTip="{Binding Hint}" AutomationProperties.Name="{Binding Toggle}">
+             <!-- A small ring towards its next cube, the name and its tag, its cubes and Odyle; opened, where it is and
+                  how far to the next -->
              <StackPanel>
-              <DockPanel Margin="3,5,1,0">
-               <TextBlock DockPanel.Dock="Right" Text="{Binding Count}" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="8,0,0,0"/>
-               <TextBlock Text="{Binding Icon}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Foreground="{Binding Accent}" VerticalAlignment="Center" Margin="0,1,6,0"/>
-               <TextBlock Text="{Binding Label}" FontSize="10.5" FontWeight="SemiBold" Foreground="{Binding Accent}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-              </DockPanel>
-              <ItemsControl ItemsSource="{Binding Items}" Focusable="False"/>
+              <Grid>
+               <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+               <Grid Width="22" Height="22" Margin="0,0,10,0"><local:Ring Thickness="3" Value="{Binding Progress}" Fill="{Binding Bar}" Track="{StaticResource CellTrack}"/></Grid>
+               <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold"/><Run Text="  "/><Run Text="{Binding Tag, Mode=OneWay}" FontSize="11" Foreground="{Binding TagBrush, Mode=OneWay}"/></TextBlock>
+               <TextBlock Grid.Column="2" Text="{Binding Cubes}" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+               <TextBlock Grid.Column="3" Text="{Binding Value}" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="14" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" MinWidth="36" TextAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"/>
+              </Grid>
+              <StackPanel Visibility="{Binding DetailsVisibility}" Margin="32,4,0,2">
+               <TextBlock FontSize="10.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap"><Run Text="{Binding Detail, Mode=OneWay}"/><Run Text="{Binding PlaceGap, Mode=OneWay}"/><Run Text="{Binding Pin, Mode=OneWay}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9"/><Run Text="{Binding Place, Mode=OneWay}"/></TextBlock>
+               <TextBlock Text="{Binding ToNext}" FontSize="10.5" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
+              </StackPanel>
              </StackPanel>
+            </Button>
+           </DataTemplate>
+           <!-- The players the game put together (GameBands.Nest), in a tinted frame: a party in blue, a force in violet
+                around its parties; the frame's tooltip names it -->
+           <DataTemplate DataType="{x:Type local:MateBand}">
+            <Border Margin="0,3,0,1" Padding="0,2" CornerRadius="10" BorderThickness="1" BorderBrush="{Binding Edge}" Background="{Binding Fill}">
+             <Border.ToolTip><TextBlock><Run Text="{Binding Label, Mode=OneWay}"/><Run Text=" · "/><Run Text="{Binding Count, Mode=OneWay}"/></TextBlock></Border.ToolTip>
+             <ItemsControl ItemsSource="{Binding Items}" Focusable="False" Margin="2,0"/>
             </Border>
            </DataTemplate>
           </ItemsControl.Resources>
@@ -208,39 +269,42 @@
     </StackPanel>
    </StackPanel>
 
-   <!-- Footer: only what needs attention (a problem, an unavailable server, a pairing under way), the update and Quit -->
-   <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="12,4,6,4">
+   <!-- Footer, only while something needs attention (a problem, an unavailable server, a pairing under way) or an update waits -->
+   <Border x:Name="Footer" Grid.Row="2" BorderBrush="{StaticResource Divider}" BorderThickness="0,1,0,0" Padding="14,4,8,5">
+    <Border.Style><Style TargetType="Border"><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding Text, ElementName=StatusLabel}" Value=""/><Condition Binding="{Binding Visibility, ElementName=UpdateButton}" Value="Collapsed"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Collapsed"/></MultiDataTrigger></Style.Triggers></Style></Border.Style>
     <DockPanel><Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Quit" Click="Quit_Click" Padding="6,1" VerticalAlignment="Center" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/><Button x:Name="UpdateButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Foreground="{StaticResource Mint}" Content="Restart to update" Visibility="Collapsed" Click="Install_Click" Padding="6,1" VerticalAlignment="Center"/><TextBlock x:Name="StatusLabel" AutomationProperties.LiveSetting="Polite" Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontSize="10.5" VerticalAlignment="Center"/></DockPanel>
    </Border>
   </Grid>
 
-  <!-- Daily & weekly: the account's own checklist from the dashboard, ticked off here -->
+  <!-- Daily & weekly: the account's own checklist from the dashboard, ticked off here, each list with its ring -->
   <!-- Tasks are added and removed on the dashboard; each list clears itself at the game's reset -->
-  <Border x:Name="TasksPanel" Grid.Column="1" Width="240" Visibility="Collapsed" BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0">
+  <Border x:Name="TasksPanel" Grid.Column="1" Width="240" Visibility="Collapsed" BorderBrush="{StaticResource Divider}" BorderThickness="1,0,0,0">
    <DockPanel>
-    <DockPanel DockPanel.Dock="Top" Margin="12,9,6,2">
+    <DockPanel DockPanel.Dock="Top" Margin="14,10,8,2">
      <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Manage ↗" Click="ManageTasks_Click" VerticalAlignment="Center" ToolTip="Add, rename or remove tasks on the dashboard"/>
-     <TextBlock Style="{StaticResource Eyebrow}" Text="DAILY &amp; WEEKLY" VerticalAlignment="Center" Margin="0,3,0,0"/>
+     <TextBlock Text="DAILY &amp; WEEKLY" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
     </DockPanel>
-    <TextBlock x:Name="TasksHint" DockPanel.Dock="Bottom" Style="{StaticResource Hint}" Margin="12,6,12,10"/>
-    <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="12,2,6,0">
+    <TextBlock x:Name="TasksHint" DockPanel.Dock="Bottom" Style="{StaticResource Hint}" Margin="14,6,12,12"/>
+    <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="10,4,8,0">
      <ItemsControl x:Name="TaskGroups" Focusable="False">
       <ItemsControl.ItemTemplate><DataTemplate>
-       <StackPanel Margin="0,2,0,6">
-        <DockPanel Margin="2,6,2,0" Background="Transparent" ToolTip="{Binding ResetAt}">
-         <TextBlock DockPanel.Dock="Right" Text="{Binding Reset}" FontSize="10" Foreground="{StaticResource Faint}" Margin="8,0,0,0"/>
-         <TextBlock Style="{StaticResource Eyebrow}"><Run Text="{Binding Header, Mode=OneWay}"/><Run Text="{Binding Progress, Mode=OneWay}" Foreground="{StaticResource Muted}" FontWeight="Normal"/></TextBlock>
+       <StackPanel Margin="0,4,0,8">
+        <DockPanel Margin="4,2,4,4" Background="Transparent" ToolTip="{Binding ResetAt}">
+         <Grid Width="30" Height="30" Margin="0,0,10,0"><local:Ring Thickness="3" Value="{Binding Percent, Mode=OneWay}" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/></Grid>
+         <StackPanel VerticalAlignment="Center">
+          <TextBlock FontSize="12.5" FontWeight="SemiBold"><Run Text="{Binding Header, Mode=OneWay}"/><Run Text="{Binding Progress, Mode=OneWay}" Foreground="{StaticResource Muted}" FontWeight="Normal"/></TextBlock>
+          <TextBlock Text="{Binding Reset}" FontSize="10.5" Foreground="{StaticResource Muted}"/>
+         </StackPanel>
         </DockPanel>
-        <ProgressBar Height="3" Margin="2,5,2,3" Maximum="100" Value="{Binding Percent, Mode=OneWay}"/>
         <ItemsControl ItemsSource="{Binding Tasks}" Focusable="False">
          <ItemsControl.ItemTemplate><DataTemplate>
-          <CheckBox Style="{StaticResource Tick}" IsChecked="{Binding Done, Mode=OneWay}" Click="Task_Click" Tag="{Binding}" ToolTip="{Binding Hint}">
+          <CheckBox Style="{StaticResource RoundTick}" IsChecked="{Binding Done, Mode=OneWay}" Click="Task_Click" Tag="{Binding}" ToolTip="{Binding Hint}">
            <TextBlock x:Name="Title" Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
           </CheckBox>
           <DataTemplate.Triggers><DataTrigger Binding="{Binding Done}" Value="True"><Setter TargetName="Title" Property="Foreground" Value="{StaticResource Faint}"/><Setter TargetName="Title" Property="TextDecorations" Value="Strikethrough"/></DataTrigger></DataTemplate.Triggers>
          </DataTemplate></ItemsControl.ItemTemplate>
         </ItemsControl>
-        <TextBlock Text="{Binding Empty}" Style="{StaticResource Hint}" Visibility="{Binding EmptyVisibility}" Margin="2,4,0,0"/>
+        <TextBlock Text="{Binding Empty}" Style="{StaticResource Hint}" Visibility="{Binding EmptyVisibility}" Margin="6,4,0,0"/>
        </StackPanel>
       </DataTemplate></ItemsControl.ItemTemplate>
      </ItemsControl>
@@ -248,4 +312,5 @@
    </DockPanel>
   </Border>
  </Grid>
+ </Border>
 </Window>

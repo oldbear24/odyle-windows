@@ -75,8 +75,8 @@ static partial class ReaderChecks
         Check(scopedGroups[1].Tasks.Length == 3 && scopedGroups[1].Tasks[2] is { Task.Title: "Nightmare", Hint: "Altie · Still to do this week" } && !scopedGroups[1].Tasks.Any(t => t.Task.Title == "Main boss"), "the card's character brings its own list, named, and other characters' stay out: " + string.Join(",", scopedGroups[1].Tasks.Select(t => t.Task.Title)));
         Field("characters").SetValue(window, Array.Empty<Character>()); Field("currentCharacterId").SetValue(window, ""); Field("tasks").SetValue(window, accountTasks); Call(window, "RenderHero");
         Check(((TaskGroup[])Control<ItemsControl>(window, "TaskGroups").ItemsSource)[1].Tasks.Length == 2, "without a character only the account's list shows");
-        var shell = (FrameworkElement)window.Content; shell.Width = 520; shell.Measure(new Size(520, double.PositiveInfinity)); shell.Arrange(new Rect(0, 0, 520, shell.DesiredSize.Height)); shell.UpdateLayout();
-        Check(Control<Grid>(window, "Card").ActualWidth == 280 && Control<Border>(window, "TasksPanel").ActualWidth == 240, "the card keeps its width and the checklist takes its own column");
+        var shell = (FrameworkElement)window.Content; shell.Width = MainWindow.CardWidth + 240; shell.Measure(new Size(shell.Width, double.PositiveInfinity)); shell.Arrange(new Rect(0, 0, shell.Width, shell.DesiredSize.Height)); shell.UpdateLayout();
+        Check(Control<Grid>(window, "Card").ActualWidth == MainWindow.CardWidth && Control<Border>(window, "TasksPanel").ActualWidth == 240, "the card keeps its width and the checklist takes its own column");
         shell.Width = double.NaN;
         Call(window, "SetTasksShown", false, true); Call(window, "SetStayOnTop", false, true);
         Check(!window.Topmost && Control<Border>(window, "TasksPanel").Visibility == Visibility.Collapsed && PreferencesStore.Load() is { StayOnTop: false, ShowTasks: false }, "unpinning and hiding the checklist are remembered too");
@@ -96,7 +96,7 @@ static partial class ReaderChecks
         Check(Control<TextBlock>(window, "CompactName").Text == "TestHero" && Control<TextBlock>(window, "CompactValue").Text == "130" && Control<TextBlock>(window, "CompactCubes").Text == "3 cubes", "your row shows your character, its Odyle and cubes");
         Check(Control<ItemsControl>(window, "CompactMates").ItemsSource is object[] and [CompactMate { Name: "Lumina", Value: "180", Cubes: "4 cubes", Hint: "Lumina · live from the game" }] && Control<TextBlock>(window, "CompactNote").Visibility == Visibility.Collapsed, "your party's rows follow, with their Odyle and cubes");
         var compactShell = (FrameworkElement)window.Content; compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
-        Check(Math.Abs(compactShell.ActualWidth - CompactStrip.Width) < 1 && compactShell.ActualHeight < 90, "compact mode is 220 px wide and only as tall as its rows");
+        Check(Math.Abs(compactShell.ActualWidth - CompactStrip.Width) < 1 && compactShell.ActualHeight < 90, "compact mode is as wide as CompactStrip.Width and only as tall as its rows");
         Field("readerPaused").SetValue(window, true); Call(window, "RenderHero");
         Check(Control<TextBlock>(window, "CompactNote").Text == "Paused by the server", "a server pause shows under the rows");
         Field("readerPaused").SetValue(window, false);
@@ -110,14 +110,14 @@ static partial class ReaderChecks
         Call(window, "RenderParty");
         Check(Control<ItemsControl>(window, "CompactOwnPartyMates").ItemsSource is object[] and [CompactMate { Name: "Lumina" } lumina] && lumina.Hint.EndsWith("\nIn your party in game", StringComparison.Ordinal)
             && Control<ItemsControl>(window, "CompactMates").ItemsSource is object[] and [CompactMate { Name: "Zed", Gap.Top: 3 }] && Control<ItemsControl>(window, "CompactOwnForceMates").Items.Count == 0
-            && Control<Border>(window, "CompactOwnParty") is { BorderBrush: not null, Background: not null, BorderThickness.Left: 1, Margin.Left: -8, ToolTip: "In your party in game" } && Control<Border>(window, "CompactOwnForce").BorderBrush is null
+            && ReferenceEquals(lumina.Edge, window.FindResource("PartyChipEdge")) && Control<Border>(window, "CompactOwnParty").ToolTip as string == "In your party in game" && Control<Border>(window, "CompactOwnForce").ToolTip is null
             && Control<Border>(window, "CompactDivider").Visibility == Visibility.Collapsed && ((string)Control<Border>(window, "CompactPanel").ToolTip).EndsWith("\nIn your party in game", StringComparison.Ordinal),
-            "your in-game party is framed around your row and its players, in place of the divider");
+            "your in-game party's chips are edged in its colour and follow your pill, in place of the divider");
         compactShell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity)); compactShell.Arrange(new Rect(compactShell.DesiredSize)); compactShell.UpdateLayout();
         var nameAt = (FrameworkElement f) => f.TranslatePoint(new Point(0, 0), compactShell).X;
         var mateName = Visuals(Control<ItemsControl>(window, "CompactOwnPartyMates")).OfType<TextBlock>().First(t => t.Text == "Lumina");
         var otherName = Visuals(Control<ItemsControl>(window, "CompactMates")).OfType<TextBlock>().First(t => t.Text == "Zed");
-        Check(Math.Abs(nameAt(Control<TextBlock>(window, "CompactName")) - nameAt(otherName)) < 1.5 && Math.Abs(nameAt(mateName) - nameAt(otherName)) < 1.5, "framed rows keep their names in line with the rest");
+        Check(mateName.ActualWidth > 0 && otherName.ActualWidth > 0 && nameAt(mateName) >= nameAt(Control<Border>(window, "CompactOwnParty")), "every chip shows its player's name");
         Field("snapshots").SetValue(window, outside); Call(window, "RenderParty");
         var hotkey = (ComboBox)settings.FindName("CompactHotkeyInput");
         Check((string)hotkey.SelectedValue == "Ctrl+Alt+O" && hotkey.Items.Count == CompactStrip.Hotkeys.Length, "Settings offer the compact mode shortcuts, Ctrl+Alt+O first");
