@@ -125,6 +125,8 @@
 <SolidColorBrush x:Key="TileEdge" Color="#12FFFFFF"/>
 <!-- Compact mode's floating chips: dark enough to read over any game, edged faintly, in blue for a party, violet for a force -->
 <SolidColorBrush x:Key="ChipFill" Color="#F2182220"/>
+<!-- A tile edged in mint: the running version in What's new -->
+<SolidColorBrush x:Key="MintEdge" Color="#4DB5F2CD"/>
 <SolidColorBrush x:Key="ChipEdge" Color="#17FFFFFF"/>
 <SolidColorBrush x:Key="PartyChipEdge" Color="#998FC3EA"/>
 <SolidColorBrush x:Key="ForceChipEdge" Color="#99B9A7EE"/>

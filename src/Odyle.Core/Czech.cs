@@ -23,7 +23,7 @@ public static class Czech
         ["Opacity"] = "Krytí", ["Acrylic opacity"] = "Krytí akrylu",
         ["How much of the card's colour lies over the blur · 100 % looks as without acrylic"] = "Kolik barvy karty leží přes rozmazání · 100 % vypadá jako bez akrylu",
         ["The acrylic background needs Windows 10 version 1803 or later."] = "Akrylové pozadí potřebuje Windows 10 verze 1803 nebo novější.",
-        ["Quit Odyle"] = "Ukončit Odyle", ["Close settings"] = "Zavřít nastavení", ["WHILE YOU PLAY"] = "PŘI HRANÍ",
+        ["Quit Odyle"] = "Ukončit Odyle", ["Close settings"] = "Zavřít nastavení", ["Close What's new"] = "Zavřít Co je nového", ["WHILE YOU PLAY"] = "PŘI HRANÍ",
         ["{0} · click to stop the reader"] = "{0} · kliknutím čtečku zastavíš", ["{0} · click to start the reader"] = "{0} · kliknutím čtečku spustíš",
         // Variant C: the ring's label, the tiles and the reader's word
         ["ODYLE"] = "ODYLE", ["READER"] = "ČTEČKA", ["NEXT +{0}"] = "DALŠÍ +{0}", ["NEXT +15"] = "DALŠÍ +15", ["offline"] = "offline", ["NATURAL POOL"] = "PŘIROZENÁ ZÁSOBA", ["full"] = "plná", ["now"] = "teď",
