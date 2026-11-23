@@ -4,8 +4,8 @@ namespace Odyle.Core;
 // lists and its shortcuts are decided here, where the checks reach them.
 public static class CompactStrip
 {
-    // The window's width in compact mode (the card is 280).
-    public const double Width = 220;
+    // The window's width in compact mode (the card is 320): a name, the cells, the Odyle and the cubes per row.
+    public const double Width = 300;
     // At most this many other characters; the rest are counted in one line.
     public const int MateLimit = 10;
 

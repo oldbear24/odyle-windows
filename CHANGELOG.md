@@ -2,6 +2,19 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.1.0 · 2026-11-23
+
+### New
+- A new look: the card is a frameless glass HUD. A ring shows your Odyle and fills towards the next cube, tiles count down to the next +15 and your next run to the second, and the **Reader** tile starts or stops reading with a click. The controls light up when you point at the card; drag it by its top row.
+- **Settings → Window → See-through blurred background (acrylic)**: Windows blurs what is behind the card, as in Windows Terminal, with an **Opacity** slider. The blur stays while you play.
+- Compact mode is now floating chips over the game: yours with your Odyle, cubes and the next +15, and one with the name and Odyle of everyone online in your rooms. Players in a party or force with you in the game are edged in blue or violet.
+- Click a player in the party list to see their class, where they were last seen and how far they are from their next cube; click again to close it.
+
+### Changed
+- The card is shorter: the game's two numbers are in the ring's tooltip, the Odyle clock in the **Next +15** tile's tooltip (and on the card while your natural pool is nearly full), and the reader's line only shows when it cannot read.
+- **Quit** is now at the bottom of **Settings** and stays in the tray menu; ✕ on the card closes it to the tray.
+- The daily and weekly checklist shows a ring for each list and round ticks.
+
 ## 1.0.0 · 2026-11-22
 
 ### Changed

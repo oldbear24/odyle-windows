@@ -14,6 +14,21 @@ public static class Czech
         ["Stay on top of other windows"] = "Držet nad ostatními okny", ["Stay on top"] = "Vždy navrchu",
         ["Pinned above other windows · click to unpin"] = "Připnuto nad ostatními okny · kliknutím odepneš",
         ["Stay on top of other windows, for example the game in windowed mode"] = "Držet nad ostatními okny, třeba nad hrou v okně",
+        // The frameless card (variant C), compact mode's chips and the acrylic background
+        ["Close to the tray · Odyle keeps reading; quit from the tray menu or Settings"] = "Zavřít do oznamovací oblasti · Odyle dál čte; ukončíš ho v nabídce v oznamovací oblasti nebo v Nastavení",
+        ["RUN"] = "RUN", ["{0}/{1} to the next cube"] = "{0}/{1} do další kostky",
+        ["{0} · show the details"] = "{0} · ukázat podrobnosti", ["{0} · hide the details"] = "{0} · skrýt podrobnosti",
+        ["See-through blurred background (acrylic)"] = "Průhledné rozmazané pozadí (akryl)",
+        ["Windows blurs what is behind the card, as in Windows Terminal; the card stays readable over the game"] = "Windows rozmaže, co je za kartou, jako ve Windows Terminalu; karta zůstane nad hrou čitelná",
+        ["Opacity"] = "Krytí", ["Acrylic opacity"] = "Krytí akrylu",
+        ["How much of the card's colour lies over the blur · 100 % looks as without acrylic"] = "Kolik barvy karty leží přes rozmazání · 100 % vypadá jako bez akrylu",
+        ["The acrylic background needs Windows 10 version 1803 or later."] = "Akrylové pozadí potřebuje Windows 10 verze 1803 nebo novější.",
+        ["Quit Odyle"] = "Ukončit Odyle",
+        ["{0} · click to stop the reader"] = "{0} · kliknutím čtečku zastavíš", ["{0} · click to start the reader"] = "{0} · kliknutím čtečku spustíš",
+        // Variant C: the ring's label, the tiles and the reader's word
+        ["ODYLE"] = "ODYLE", ["READER"] = "ČTEČKA", ["NEXT +{0}"] = "DALŠÍ +{0}", ["NEXT +15"] = "DALŠÍ +15", ["offline"] = "offline", ["NATURAL POOL"] = "PŘIROZENÁ ZÁSOBA", ["full"] = "plná", ["now"] = "teď",
+        ["cubes"] = "kostek", ["On"] = "Zapnuto", ["Waiting"] = "Čeká", ["Problem"] = "Problém",
+        ["party"] = "parta", ["force"] = "force",
         ["Hide the daily & weekly tasks"] = "Skrýt denní a týdenní úkoly", ["Show your daily & weekly tasks beside the card"] = "Ukázat denní a týdenní úkoly vedle karty",
         ["Hide until the message changes"] = "Skrýt, dokud se zpráva nezmění",
         ["Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard."] = "Přirozená zásoba měla {0:N0}, víc než {1:N0}: začalo členství? Odpověz na dashboardu.",
@@ -278,6 +293,7 @@ public static class Czech
     public static readonly IReadOnlyDictionary<string, string[]> Plurals = new Dictionary<string, string[]>
     {
         ["{0} cube|{0} cubes"] = ["{0} kostka", "{0} kostky", "{0} kostek"],
+        ["cube|cubes"] = ["kostka", "kostky", "kostek"],
         ["{0} player|{0} players"] = ["{0} hráč", "{0} hráči", "{0} hráčů"],
         ["{1} starts in {0} minute|{1} starts in {0} minutes"] = ["{1} začíná za {0} minutu", "{1} začíná za {0} minuty", "{1} začíná za {0} minut"],
         ["Daily reset in {1} · {0} task open|Daily reset in {1} · {0} tasks open"] = ["Denní reset za {1} · otevřený {0} úkol", "Denní reset za {1} · otevřené {0} úkoly", "Denní reset za {1} · otevřených {0} úkolů"],

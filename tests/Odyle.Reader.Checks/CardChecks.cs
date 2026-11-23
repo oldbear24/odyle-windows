@@ -68,9 +68,9 @@ static partial class ReaderChecks
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 0, false, false, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
-        Check(Control<TextBlock>(window, "CubeLabel").Text.StartsWith("9 cubes", StringComparison.Ordinal), "cube count derives from the reading");
+        Check(Control<TextBlock>(window, "CubeLabel").Text == "9" && Control<TextBlock>(window, "CubeWord").Text == "cubes" && Control<TextBlock>(window, "RefillCaption").Text == "30/40 to the next cube", "cube count derives from the reading");
         Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
-        Check(Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "an unattributed reading is never shown under a character's name");
+        Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "Detecting character…", "an unattributed reading is never shown under a character's name");
         Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
         // A snapshot the game leaves unnamed for 30 seconds came without a world load: it goes to the
         // named character only if that character's Odyle was already read this run.
@@ -88,7 +88,7 @@ static partial class ReaderChecks
         window.Attribution.Resync();
         Call(window, "OnCandidate", inert, new PacketCandidate(200, OdyleDecoder.Version, CandidateSource.Update) { Base = 0, Bonus = 200 });
         window.Attribution.PendingSince = DateTimeOffset.UtcNow.AddSeconds(-31); window.Attribution.AttributePending(DateTimeOffset.UtcNow);
-        Check(Owner() == "" && !window.Attribution.NamedHasReading && Control<TextBlock>(window, "HeroTitle").Text == "Detecting character…", "after a resync the next reading waits for the game's name instead of going to the character named before");
+        Check(Owner() == "" && !window.Attribution.NamedHasReading && Shown(Control<TextBlock>(window, "HeroTitle")) == "Detecting character…", "after a resync the next reading waits for the game's name instead of going to the character named before");
         Call(window, "OnCandidate", inert, new PacketCandidate(205, OdyleDecoder.Version, CandidateSource.Update) { Base = 5, Bonus = 200 });
         window.Attribution.AttributePending(DateTimeOffset.UtcNow); ((DispatcherTimer)Field("publishDelay").GetValue(window)!).Stop();
         Check(Owner() == "", "and so do the updates after it");
@@ -125,7 +125,7 @@ static partial class ReaderChecks
         Call(window, "OnSnapshotWithoutOdyle", inert);
         Check(window.Attribution.Latest is null, "an unnamed reading is dropped by a snapshot without Odyle");
         await (Task)Call(window, "SaveDetectedCharacterAsync", inert, new GameIdentity(50, "Newcomer", 2304, "Lumiel", "GLOBAL_EU"))!;
-        Check(Control<TextBlock>(window, "HeroTitle").Text == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2", "a named character without Odyle says so, once");
+        Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "Newcomer · Lumiel" && Control<TextBlock>(window, "ReadingLabel").Text == "No Odyle on Newcomer yet · it may unlock at level 22." && Control<TextBlock>(window, "PacketStateLabel").Text == "Listening to AION2", "a named character without Odyle says so, once");
         // Its first Odyle replaces the note. A server that refuses this build's adapter makes the card ask for an
         // update instead of repeating the server's message, and the update check runs at once.
         Call(window, "OnCandidate", inert, new PacketCandidate(15, OdyleDecoder.Version, CandidateSource.Update) { Base = 15, Bonus = 0 });
@@ -156,21 +156,21 @@ static partial class ReaderChecks
         Check(server.LastReport.Contains("\"kind\":\"regen\",\"delta\":15") && Control<TextBlock>(window, "SplitLabel").Text.StartsWith("natural 15 · items 0 · +15 at ", StringComparison.Ordinal), "a rise of the natural pool alone is a regeneration tick");
         // The Odyle clock under the split: the next tick and when each cap the character may have is reached; the operators can hide it.
         var odyleClock = Control<TextBlock>(window, "OdyleClockLabel");
-        Check(odyleClock.Visibility == Visibility.Visible && System.Text.RegularExpressions.Regex.IsMatch(odyleClock.Text, @"^\+15 in .+ · full ≈ .+ at 560 / .+ at 840$"), "the card shows the Odyle clock: " + odyleClock.Text);
+        Check(odyleClock.Visibility == Visibility.Collapsed && System.Text.RegularExpressions.Regex.IsMatch(odyleClock.Text, @"^full ≈ .+ at 560 / .+ at 840$") && Control<Border>(window, "NextTile").ToolTip is string clockTip && System.Text.RegularExpressions.Regex.IsMatch(clockTip, @"^\+15 in .+ · full ≈ .+ at 560 / .+ at 840$") && Control<TextBlock>(window, "NextLabel").Text == "NEXT +15" && System.Text.RegularExpressions.Regex.IsMatch(Control<TextBlock>(window, "RefillCountdown").Text, @"^\d+:\d\d(:\d\d)?$"), "the card shows the Odyle clock: " + Control<TextBlock>(window, "RefillCountdown").Text + " / " + odyleClock.Text);
         Field("clockRules").SetValue(window, ClockRules.Default with { Paused = true }); Call(window, "RenderOdyleClock");
         Check(odyleClock.Visibility == Visibility.Collapsed, "the operators can hide the Odyle clock");
         Field("clockRules").SetValue(window, null);
         // Near its cap the clock turns orange (11 ticks to 560: 30 to 33 hours), and red with the value once the pool is full.
         var shownReading = window.Attribution.Latest;
         window.Attribution.Latest = new PacketCandidate(400, OdyleDecoder.Version, CandidateSource.Update) { Base = 400, Bonus = 0 }; Call(window, "RenderOdyleClock");
-        Check(odyleClock.Text.StartsWith("Nearly full · +15 in ", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
+        Check(odyleClock.Visibility == Visibility.Visible && odyleClock.Text.StartsWith("Nearly full · full ≈ ", StringComparison.Ordinal) && ReferenceEquals(Control<TextBlock>(window, "RefillCountdown").Foreground, window.FindResource("Orange")) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
         // The taskbar button fills with the natural pool towards its cap, in the card's colours.
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
         window.Attribution.Latest = new PacketCandidate(560, OdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }; Call(window, "RenderOdyleClock");
         Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
         window.Attribution.Latest = shownReading; Call(window, "RenderOdyleClock");
-        Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
+        Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Muted")) && ReferenceEquals(Control<TextBlock>(window, "RefillCountdown").Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Normal }, "far from its cap the taskbar button is green again");
         // The Discord status (off by default): while the reader has the game, the card's character with its Odyle.
         Check(Settings(window).FindName("DiscordToggle") is CheckBox { IsChecked: false } && Call(window, "PresenceNow") is null, "the Discord status is off unless chosen");
@@ -214,7 +214,7 @@ static partial class ReaderChecks
         Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
         await (Task)Call(window, "TakeOverAsync")!;
         Check(!File.Exists(HandoverStore.FilePath) && window.Attribution.OwnerKey == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && window.Attribution.Latest is PacketCandidate { Total: 390 }, "the next start takes the character over, once");
-        Check(Control<TextBlock>(window, "HeroTitle").Text == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
+        Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
         HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
         Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");
         HandoverStore.Save(handover! with { AccountId = "someone-else" }); await (Task)Call(window, "StopCaptureAsync", false)!;

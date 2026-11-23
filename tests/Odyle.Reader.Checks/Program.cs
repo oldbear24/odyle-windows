@@ -24,6 +24,7 @@ using Odyle.Reader;
 //   --screenshots <dir>    previews of the window (writes PNGs; see Screenshots)
 //   --server-screenshots <dir>  previews of the old-server notice and of a pairing from before device keys (ServerScreenshots)
 //   --update-probe, --compact-probe: opt-in probes on a desktop
+//   --acrylic-probe <dir>  the card with its acrylic background over a colourful window, as the screen shows it (AcrylicProbe)
 static partial class ReaderChecks
 {
     [STAThread] static void Main(string[] args)
@@ -49,6 +50,7 @@ static partial class ReaderChecks
                 if (args is ["--server-screenshots", var previews]) { await ServerScreenshots(previews); return; }
                 if (args is ["--update-probe"]) { await UpdateProbe(); return; }
                 if (args is ["--compact-probe"]) { probe = NewWindow(); CompactProbe(probe); return; }
+                if (args is ["--acrylic-probe", var shots]) { probe = NewWindow(); await AcrylicProbe(probe, shots); return; }
                 await RunAsync(only, scratch);
             }
             catch (Exception error) { Console.Error.WriteLine(error); Environment.ExitCode = 1; }
@@ -651,7 +653,7 @@ static partial class ReaderChecks
         Field("tasks").SetValue(window, new[] { new UserTask("t1", "u", "Daily dungeon run", "daily", Stamp(Later(dayStart, now.AddHours(-2)))), new UserTask("t2", "u", "Odyle bounty", "daily", Stamp(Later(dayStart, now.AddMinutes(-40)))), new UserTask("t3", "u", "Transformation contract", "daily"),
             new UserTask("t4", "u", "Weekly raid", "weekly", Stamp(Later(weekStart, now.AddDays(-1)))), new UserTask("t5", "u", "Guild boss", "weekly"), new UserTask("t6", "u", "Legion quests", "weekly") });
         Field("tasksLoaded").SetValue(window, true); Call(window, "RenderTasks");
-        Snapshot(window, Path.Combine(directory, "tasks-preview.png"), 520);
+        Snapshot(window, Path.Combine(directory, "tasks-preview.png"), (int)MainWindow.CardWidth + 240);
         Call(window, "SetTasksShown", false, false); Call(window, "SetStayOnTop", false, false);
         window.Attribution.Latest = null; Call(window, "RenderHero");
         Call(window, "SetReaderState", Enum.Parse(state, "Midstream"), "Started after login · the value appears at the next Odyle change; the game names your character within a few minutes, or at once after a relog or channel change.");
@@ -670,7 +672,7 @@ static partial class ReaderChecks
         Control<Border>(window, "AutostartOffer").Visibility = Visibility.Collapsed; Call(window, "RenderReaderButton");
         Console.WriteLine("Rendered previews to " + directory);
     }
-    static void Snapshot(Window window, string path, int width = 280)
+    static void Snapshot(Window window, string path, int width = (int)MainWindow.CardWidth)
     {
         var root = (FrameworkElement)window.Content;
         // The window sizes its height to the content; measure it the same way.
@@ -805,6 +807,8 @@ static partial class ReaderChecks
     static ConnectionState Conn(MainWindow window) => (ConnectionState)Field("connection").GetValue(window)!;
     static object? Call(MainWindow window, string name, params object[] args) => typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
     static T Control<T>(MainWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
+    // What a text block shows when the window styles parts of it in runs (the card's name and server).
+    static string Shown(TextBlock block) => block.Inlines.Count > 0 ? string.Concat(block.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)) : block.Text;
     static IEnumerable<DependencyObject> Tree(DependencyObject at) { yield return at; foreach (var child in LogicalTreeHelper.GetChildren(at)) if (child is DependencyObject next) foreach (var below in Tree(next)) yield return below; }
     static IEnumerable<DependencyObject> Visuals(DependencyObject at) { yield return at; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(at); i++) foreach (var below in Visuals(VisualTreeHelper.GetChild(at, i))) yield return below; }
     // A failed check is reported and the scenario goes on; an exception ends the scenario (RunAsync).
