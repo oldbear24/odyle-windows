@@ -265,15 +265,19 @@ public partial class MainWindow : Window
         // Settings, in the card's style, wear the same background (it has no compact mode).
         settings.Background = on ? new SolidColorBrush(Color.FromArgb((byte)Math.Round(preferences.AcrylicOpacity * 2.55), solid.R, solid.G, solid.B)) : Brush("Bg");
         settingsBackdrop.Use(new WindowInteropHelper(settings).Handle, on);
+        if (whatsNew is { } news) { news.Background = settings.Background; newsBackdrop.Use(new WindowInteropHelper(news).Handle, on); }
     }
     // The settings window is frameless like the card: its rounded corners and dark border, the plain blur while it is
     // dragged, and the background again each time it shows (Windows may drop a backdrop set before a window is shown).
-    private readonly NativeWindows.Backdrop settingsBackdrop = new();
-    private void SettingsFrame()
+    private readonly NativeWindows.Backdrop settingsBackdrop = new(), newsBackdrop = new();
+    private void SettingsFrame() => Frame(settings, settingsBackdrop);
+    // A frameless window beside the card (Settings, What's new): rounded corners, the dark border, the plain blur while
+    // it is dragged, and its background again each time it shows.
+    private void Frame(Window window, NativeWindows.Backdrop backdrop)
     {
-        NativeWindows.DarkFrame(settings); NativeWindows.RoundCorners(settings);
-        HwndSource.FromHwnd(new WindowInteropHelper(settings).Handle)?.AddHook(settingsBackdrop.Hook);
-        settings.IsVisibleChanged += (_, _) => { if (settings.IsVisible) RenderBackdrop(); };
+        NativeWindows.DarkFrame(window); NativeWindows.RoundCorners(window);
+        HwndSource.FromHwnd(new WindowInteropHelper(window).Handle)?.AddHook(backdrop.Hook);
+        window.IsVisibleChanged += (_, _) => { if (window.IsVisible) RenderBackdrop(); };
         RenderBackdrop();
     }
     private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); _ = RefreshPartyAsync(); _ = RefreshTasksAsync(); }
@@ -1439,7 +1443,7 @@ public partial class MainWindow : Window
         if (whatsNew is null)
         {
             whatsNew = new WhatsNewWindow(Changelog.Parse(WhatsNewWindow.Embedded()), VersionText);
-            whatsNew.SourceInitialized += (_, _) => NativeWindows.DarkFrame(whatsNew); whatsNew.Closed += (_, _) => whatsNew = null;
+            var news = whatsNew; news.SourceInitialized += (_, _) => Frame(news, newsBackdrop); news.Closed += (_, _) => whatsNew = null;
             if (IsVisible) whatsNew.Owner = this;
         }
         if (!App.Headless) { whatsNew.Show(); whatsNew.WindowState = WindowState.Normal; whatsNew.Activate(); }

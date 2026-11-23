@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.1.2 · 2026-11-23
+
+### Changed
+- **What's new** looks like the card now: a frameless window you drag by its header and close with ✕, each version a glass tile under its number and date, the version you run edged in mint, and the acrylic background when it is on.
+
 ## 1.1.1 · 2026-11-23
 
 ### Changed

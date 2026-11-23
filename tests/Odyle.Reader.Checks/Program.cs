@@ -647,7 +647,7 @@ static partial class ReaderChecks
         Call(window, "SetCompact", false, false);
         // What's new, from the changelog built into the app.
         var news = new WhatsNewWindow(Changelog.Parse(WhatsNewWindow.Embedded()), $"{Updater.Current.Major}.{Updater.Current.Minor}.{Updater.Current.Build}");
-        Snapshot(news, Path.Combine(directory, "whats-new-preview.png"), 380); news.Close();
+        news.MaxHeight = news.Height; Snapshot(news, Path.Combine(directory, "whats-new-preview.png"), (int)news.Width); news.Close();
         // Pinned, with the checklist beside the card; ticks are dated within the current periods.
         Call(window, "SetStayOnTop", true, false); Call(window, "SetTasksShown", true, false);
         var now = DateTimeOffset.UtcNow; var dayStart = Checklist.PeriodStart("daily", now); var weekStart = Checklist.PeriodStart("weekly", now);
