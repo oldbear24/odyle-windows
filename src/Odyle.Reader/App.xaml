@@ -92,7 +92,7 @@
 <Style TargetType="CheckBox">
  <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="FontSize" Value="12"/><Setter Property="Cursor" Value="Hand"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
-  <DockPanel Background="Transparent"><Grid DockPanel.Dock="Left" Width="28" Height="16" VerticalAlignment="Center" Margin="0,0,8,0"><Border x:Name="Track" CornerRadius="8" Background="#2A3A30" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"/><Ellipse x:Name="Knob" Width="10" Height="10" Fill="{StaticResource Muted}" HorizontalAlignment="Left" Margin="3,0,0,0"/></Grid><ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"/></DockPanel>
+  <DockPanel Background="Transparent"><Grid DockPanel.Dock="Left" Width="28" Height="16" VerticalAlignment="Center" Margin="0,0,8,0"><Border x:Name="Track" CornerRadius="8" Background="#2A3A30" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"/><Ellipse x:Name="Knob" Width="10" Height="10" Fill="{StaticResource Muted}" HorizontalAlignment="Left" Margin="3,0,0,0"/></Grid><ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True"><ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></ContentPresenter.Resources></ContentPresenter></DockPanel>
   <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Track" Property="Background" Value="{StaticResource Mint}"/><Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource Mint}"/><Setter TargetName="Knob" Property="Fill" Value="{StaticResource MintInk}"/><Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/><Setter TargetName="Knob" Property="Margin" Value="0,0,3,0"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
  </ControlTemplate></Setter.Value></Setter>
 </Style>
@@ -134,6 +134,8 @@
  <Setter Property="Effect"><Setter.Value><DropShadowEffect BlurRadius="10" ShadowDepth="2" Direction="270" Opacity="0.45" Color="Black"/></Setter.Value></Setter>
 </Style>
 <Style x:Key="Tile" TargetType="Border"><Setter Property="Background" Value="{StaticResource TileFill}"/><Setter Property="BorderBrush" Value="{StaticResource TileEdge}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/><Setter Property="Padding" Value="9,6,9,7"/></Style>
+<Style x:Key="SettingsTile" TargetType="Border" BasedOn="{StaticResource Tile}"><Setter Property="Padding" Value="14,12,14,14"/><Setter Property="CornerRadius" Value="12"/></Style>
+<Style x:Key="Group" TargetType="TextBlock"><Setter Property="FontSize" Value="10"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="Margin" Value="4,16,0,7"/></Style>
 <Style x:Key="TileButton" TargetType="Button">
  <Setter Property="Foreground" Value="{StaticResource Text}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="9,6,9,7"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">

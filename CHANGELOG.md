@@ -2,6 +2,15 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.1.1 · 2026-11-23
+
+### Changed
+- **Settings** look like the card now: a frameless window you drag by its header and close with ✕, each section a glass tile, and the acrylic background when it is on.
+- Fading and following the game, the acrylic background and the Discord status moved to their own **While you play** section in **Settings**.
+
+### Fixed
+- Long switch captions in **Settings** wrap instead of being cut off at the window's edge.
+
 ## 1.1.0 · 2026-11-23
 
 ### New

@@ -1,104 +1,162 @@
 <Window x:Class="Odyle.Reader.SettingsWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Odyle settings" Width="320" SizeToContent="Height" MaxHeight="680" ResizeMode="CanMinimize" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+ Title="Odyle settings" Width="340" SizeToContent="Height" MaxHeight="680" ResizeMode="CanMinimize" WindowStyle="None" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
  Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
  Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" Closing="Window_Closing"
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
- <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-  <StackPanel x:Name="Body" Margin="14,6,14,14">
-
-   <!-- Account -->
-   <TextBlock Style="{StaticResource Section}" Text="ACCOUNT"/>
-   <StackPanel x:Name="JoinPanel">
-    <Button x:Name="PasteButton" Content="Paste link &amp; connect"/>
-    <TextBlock Style="{StaticResource Hint}" Text="On the dashboard choose Pair Windows app and copy the connection link, or paste it below. You pair once: the app stays connected until you disconnect it." Margin="2,6,0,8"/>
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="CodeInput" ToolTip="Connection link or 16-character pairing code"/><Button x:Name="JoinButton" Grid.Column="2" Style="{StaticResource Secondary}" Content="Connect"/></Grid>
-    <Expander x:Name="ServerOptions" Header="Server address" Margin="0,4,0,0">
-     <StackPanel Margin="0,6,0,0"><TextBox x:Name="EndpointInput" Text="http://127.0.0.1:8090" ToolTip="PocketBase server address"/><Button x:Name="RetryButton" Style="{StaticResource Secondary}" Content="Reconnect saved account" Visibility="Collapsed" Margin="0,6,0,0"/></StackPanel>
-    </Expander>
+ <!-- In the card's style (variant C): frameless, dragged by its header, each section a glass tile under its name. The glass
+      frame reaches over the whole window, so the acrylic background shows here too when it is on. -->
+ <WindowChrome.WindowChrome><WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="-1" CornerRadius="0" UseAeroCaptionButtons="False"/></WindowChrome.WindowChrome>
+ <Border x:Name="RootBorder" BorderBrush="#26352C" BorderThickness="0">
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <!-- Header: drag the window here; ✕ closes it (it only hides until Odyle quits) -->
+  <DockPanel Margin="16,12,10,6" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+   <Button DockPanel.Dock="Right" Style="{StaticResource HeaderButton}" Content="&#xE711;" FontSize="10" Click="Close_Click" ToolTip="Close settings"/>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <Viewbox Width="14" Height="14" Margin="0,0,8,0"><Canvas Width="24" Height="24"><Path Data="M12 2 L20 12 L12 22 L4 12 Z" Fill="#2EB5F2CD" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round"/><Path Data="M12 2 V22 M4 12 L12 15.6 L20 12" Stroke="{StaticResource Mint}" StrokeThickness="2" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/></Canvas></Viewbox>
+    <TextBlock Text="Settings" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
    </StackPanel>
-   <StackPanel x:Name="AccountPanel" Visibility="Collapsed">
-    <TextBlock x:Name="AccountDetail" Style="{StaticResource Hint}" Text="Connected through your Discord account." Margin="2,0,0,4"/>
-    <!-- A server on a dashboard older than this app needs (MainWindow.RenderServerNotice) -->
-    <TextBlock x:Name="ServerNoticeLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,0,0,4"/>
-    <DockPanel><Button x:Name="DashboardButton" Style="{StaticResource Ghost}" Content="Dashboard ↗" Margin="-6,0,0,0" ToolTip="Open the party dashboard in your browser"/><Button x:Name="LogoutButton" HorizontalAlignment="Right" Style="{StaticResource GhostDanger}" Content="Disconnect" ToolTip="Disconnect this app from your account"/></DockPanel>
-   </StackPanel>
+  </DockPanel>
 
-   <!-- Rooms: configured on the dashboard, summarized here -->
-   <StackPanel x:Name="RoomsPanel" Visibility="Collapsed">
-    <TextBlock Style="{StaticResource Section}" Text="ROOMS &amp; SHARING"/>
-    <TextBlock Style="{StaticResource Hint}" Text="Rooms, invitations and which characters each room sees are set on the dashboard. Changes show up here on their own." Margin="2,0,0,4"/>
-    <ItemsControl x:Name="SharingList" Focusable="False">
-     <ItemsControl.ItemTemplate><DataTemplate>
-      <StackPanel Margin="2,6,0,0">
-       <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-       <TextBlock Text="{Binding Rooms}" Style="{StaticResource Hint}" Margin="0,1,0,0"/>
+  <ScrollViewer x:Name="Scroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+   <StackPanel x:Name="Body" Margin="14,0,14,16">
+
+    <!-- Account -->
+    <TextBlock Style="{StaticResource Group}" Text="ACCOUNT"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <StackPanel x:Name="JoinPanel">
+       <Button x:Name="PasteButton" Content="Paste link &amp; connect"/>
+       <TextBlock Style="{StaticResource Hint}" Text="On the dashboard choose Pair Windows app and copy the connection link, or paste it below. You pair once: the app stays connected until you disconnect it." Margin="2,8,0,8"/>
+       <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><PasswordBox x:Name="CodeInput" ToolTip="Connection link or 16-character pairing code"/><Button x:Name="JoinButton" Grid.Column="2" Style="{StaticResource Secondary}" Content="Connect"/></Grid>
+       <Expander x:Name="ServerOptions" Header="Server address" Margin="0,6,0,0">
+        <StackPanel Margin="0,6,0,0"><TextBox x:Name="EndpointInput" Text="http://127.0.0.1:8090" ToolTip="PocketBase server address"/><Button x:Name="RetryButton" Style="{StaticResource Secondary}" Content="Reconnect saved account" Visibility="Collapsed" Margin="0,6,0,0"/></StackPanel>
+       </Expander>
       </StackPanel>
-     </DataTemplate></ItemsControl.ItemTemplate>
-    </ItemsControl>
-    <TextBlock x:Name="NoRoomsLabel" Style="{StaticResource Hint}" Margin="2,4,0,0"/>
-    <Button x:Name="ManageButton" Style="{StaticResource Secondary}" Content="Manage rooms &amp; sharing ↗" Margin="0,10,0,0" ToolTip="Open My rooms &amp; characters on the dashboard"/>
-   </StackPanel>
+      <StackPanel x:Name="AccountPanel" Visibility="Collapsed">
+       <TextBlock x:Name="AccountDetail" Style="{StaticResource Hint}" Text="Connected through your Discord account." Margin="2,0,0,6"/>
+       <!-- A server on a dashboard older than this app needs (MainWindow.RenderServerNotice) -->
+       <TextBlock x:Name="ServerNoticeLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,0,0,6"/>
+       <DockPanel><Button x:Name="DashboardButton" Style="{StaticResource Ghost}" Content="Dashboard ↗" Margin="-6,0,0,0" ToolTip="Open the party dashboard in your browser"/><Button x:Name="LogoutButton" HorizontalAlignment="Right" Style="{StaticResource GhostDanger}" Content="Disconnect" ToolTip="Disconnect this app from your account"/></DockPanel>
+      </StackPanel>
+     </StackPanel>
+    </Border>
 
-   <!-- Reader -->
-   <TextBlock Style="{StaticResource Section}" Text="PACKET READER"/>
-   <!-- Npcap is checked each time settings open -->
-   <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><Ellipse x:Name="NpcapDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,1,7,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="11.5" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
-   <!-- Scope notice, the same text as on the installer's welcome page and the dashboard -->
-   <TextBlock Style="{StaticResource Hint}" Text="Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic or automates play, and it reads no damage numbers, HP or skills. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard, and it reads your character's PvP kills, assists and deaths, with the names of the players in them, only after you turn on PvP stats there. It also sends the names of the other players in your party and force to Odyle's armory, which looks up their public PLAYNC profiles, until you turn that off on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk." Margin="2,6,0,0"/>
-
-   <!-- Window: how the card is shown on this PC; the header buttons toggle the same -->
-   <TextBlock Style="{StaticResource Section}" Text="WINDOW"/>
-   <CheckBox x:Name="StayOnTopToggle" Content="Stay on top of other windows" ToolTip="Keeps the card above the game in windowed or borderless mode"/>
-   <CheckBox x:Name="TasksToggle" Content="Show daily &amp; weekly tasks beside the card" Margin="0,8,0,0" ToolTip="Your checklist from the dashboard; tick tasks off here"/>
-   <CheckBox x:Name="AutostartToggle" Content="Start with Windows" Margin="0,8,0,0" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
-   <CheckBox x:Name="ConfirmQuitToggle" Content="Ask before quitting while a character is read" Margin="0,8,0,0" ToolTip="Quitting stops the reader, and your party sees the character offline"/>
-   <!-- While you play (W#18) -->
-   <CheckBox x:Name="FadeInGameToggle" Content="Fade the card while the game is in front" Margin="0,8,0,0" ToolTip="The card turns see-through while you play; point at it to see it fully"/>
-   <CheckBox x:Name="FollowGameToggle" Content="Show the card with the game, hide it after" Margin="0,8,0,0" ToolTip="The card comes up when the game starts, without taking the focus, and goes to the tray when the game closes"/>
-   <!-- The see-through background, as Windows Terminal's acrylic: Windows blurs what is behind the card (it stays while
-        the game has the focus), and the card's own background lies over it at the chosen opacity -->
-   <CheckBox x:Name="AcrylicToggle" Content="See-through blurred background (acrylic)" Margin="0,8,0,0" ToolTip="Windows blurs what is behind the card, as in Windows Terminal; the card stays readable over the game"/>
-   <DockPanel x:Name="AcrylicOpacityPanel" Margin="22,6,0,0">
-    <TextBlock x:Name="AcrylicOpacityLabel" DockPanel.Dock="Right" Text="70 %" FontSize="11" Foreground="{StaticResource Muted}" Width="36" TextAlignment="Right" VerticalAlignment="Center"/>
-    <TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Opacity" VerticalAlignment="Center" Margin="0,0,10,0"/>
-    <Slider x:Name="AcrylicOpacityInput" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10" Value="70" VerticalAlignment="Center" ToolTip="How much of the card's colour lies over the blur · 100 % looks as without acrylic" AutomationProperties.Name="Acrylic opacity"/>
-   </DockPanel>
-   <TextBlock x:Name="AcrylicNoteLabel" Style="{StaticResource Hint}" Text="The acrylic background needs Windows 10 version 1803 or later." Visibility="Collapsed" Margin="22,2,0,0"/>
-   <!-- The Discord status: through the Discord app on this PC, off unless chosen -->
-   <CheckBox x:Name="DiscordToggle" Content="Show my Odyle in my Discord status" Margin="0,8,0,0" ToolTip="While you play, Discord shows your character, its Odyle and your cubes or next run; your Discord friends and servers see it"/>
-   <TextBlock x:Name="DiscordNoteLabel" Style="{StaticResource Hint}" TextWrapping="Wrap" Visibility="Collapsed" Margin="22,2,0,0"/>
-   <!-- Compact mode: the shortcut that switches it -->
-   <DockPanel Margin="0,8,0,0"><TextBlock DockPanel.Dock="Left" Style="{StaticResource FieldLabel}" Text="Compact mode shortcut" VerticalAlignment="Center" Margin="2,0,8,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the full card and compact mode from anywhere"/></DockPanel>
-   <TextBlock x:Name="HotkeyProblemLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,4,0,0"/>
-   <TextBlock Style="{StaticResource Hint}" Text="Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard." Margin="2,6,0,0"/>
-
-   <!-- Notifications: set for the account on the dashboard; planned runs show here, also while Odyle waits in the tray -->
-   <TextBlock Style="{StaticResource Section}" Text="NOTIFICATIONS"/>
-   <TextBlock Style="{StaticResource Hint}" Text="Run reminders, their times and quiet hours are set for your account on the dashboard. Odyle shows them here, also while it waits in the tray. A downloaded update is announced once." Margin="2,0,0,6"/>
-   <Button x:Name="NotificationsButton" Content="Notification settings" HorizontalAlignment="Left" ToolTip="Open Account &amp; data on the dashboard"/>
-
-   <!-- Language: automatic follows the Windows display language; a change applies after a restart -->
-   <TextBlock Style="{StaticResource Section}" Text="LANGUAGE"/>
-   <ComboBox x:Name="LanguageInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Language of Odyle on this PC"/>
-   <DockPanel x:Name="LanguageRestartPanel" Visibility="Collapsed" Margin="0,6,0,0"><Button x:Name="LanguageRestartButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Restart now" VerticalAlignment="Center" ToolTip="Restarts Odyle in the chosen language · the reader stops for a moment"/><TextBlock Style="{StaticResource Hint}" Text="The new language applies when Odyle restarts." VerticalAlignment="Center" Margin="2,0,0,0"/></DockPanel>
-
-   <!-- Updates: released builds download new GitHub releases and install them on restart -->
-   <TextBlock Style="{StaticResource Section}" Text="UPDATES"/>
-   <TextBlock x:Name="UpdateLabel" Style="{StaticResource Hint}" Margin="2,0,0,4"/>
-   <DockPanel>
-    <Button x:Name="ReleaseNotesButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Releases ↗" VerticalAlignment="Center" ToolTip="Odyle releases on GitHub"/>
-    <Button x:Name="WhatsNewButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" VerticalAlignment="Center" ToolTip="What changed in each version"/>
-    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-     <Button x:Name="CheckUpdateButton" Style="{StaticResource Ghost}" Content="Check now" Margin="-6,0,0,0" ToolTip="Look for a newer release on GitHub"/>
-     <Button x:Name="InstallUpdateButton" Style="{StaticResource Secondary}" Content="Restart &amp; update" Visibility="Collapsed" MinHeight="24" Padding="10,2" FontSize="11" ToolTip="Stops the reader, installs the downloaded version and starts it"/>
+    <!-- Rooms: configured on the dashboard, summarized here -->
+    <StackPanel x:Name="RoomsPanel" Visibility="Collapsed">
+     <TextBlock Style="{StaticResource Group}" Text="ROOMS &amp; SHARING"/>
+     <Border Style="{StaticResource SettingsTile}">
+      <StackPanel>
+       <TextBlock Style="{StaticResource Hint}" Text="Rooms, invitations and which characters each room sees are set on the dashboard. Changes show up here on their own." Margin="2,0,0,4"/>
+       <ItemsControl x:Name="SharingList" Focusable="False">
+        <ItemsControl.ItemTemplate><DataTemplate>
+         <StackPanel Margin="2,8,0,0">
+          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+          <TextBlock Text="{Binding Rooms}" Style="{StaticResource Hint}" Margin="0,1,0,0"/>
+         </StackPanel>
+        </DataTemplate></ItemsControl.ItemTemplate>
+       </ItemsControl>
+       <TextBlock x:Name="NoRoomsLabel" Style="{StaticResource Hint}" Margin="2,4,0,0"/>
+       <Button x:Name="ManageButton" Style="{StaticResource Secondary}" Content="Manage rooms &amp; sharing ↗" Margin="0,12,0,0" ToolTip="Open My rooms &amp; characters on the dashboard"/>
+      </StackPanel>
+     </Border>
     </StackPanel>
-   </DockPanel>
-   <!-- Troubleshooting: a small log on this PC, never with tokens, device keys or pairing codes; diagnostics go to the clipboard only -->
-   <TextBlock Style="{StaticResource Section}" Text="TROUBLESHOOTING"/>
-   <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard. Tokens, device keys, pairing codes, your account id, this PC's name and your Windows user name are left out; character names and the server address stay in." Margin="2,0,0,4"/>
-   <DockPanel><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><Button x:Name="DiagnosticsButton" HorizontalAlignment="Left" Style="{StaticResource Ghost}" Content="Copy diagnostics" Margin="-6,0,0,0" VerticalAlignment="Center" ToolTip="A short report for a bug report · nothing is sent until you paste it somewhere"/></DockPanel>
-   <!-- The card's ✕ closes to the tray; quitting is here and in the tray menu -->
-   <Button x:Name="QuitButton" Style="{StaticResource GhostDanger}" Content="Quit Odyle" HorizontalAlignment="Left" Margin="-6,12,0,0" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/>
-  </StackPanel>
- </ScrollViewer>
+
+    <!-- Reader -->
+    <TextBlock Style="{StaticResource Group}" Text="PACKET READER"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <!-- Npcap is checked each time settings open -->
+      <DockPanel><Button x:Name="NpcapButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Npcap setup ↗" VerticalAlignment="Center" ToolTip="Npcap must be installed for packet reading"/><Ellipse x:Name="NpcapDot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{StaticResource Faint}" Margin="2,1,8,0" VerticalAlignment="Center"/><TextBlock x:Name="NpcapLabel" Text="Checking Npcap…" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"/></DockPanel>
+      <Border Height="1" Background="{StaticResource Divider}" Margin="0,10,0,10"/>
+      <!-- Scope notice, the same text as on the installer's welcome page and the dashboard -->
+      <TextBlock Style="{StaticResource Hint}" Text="Odyle is an unofficial fan project, not affiliated with or endorsed by NCSOFT. The Windows reader only listens to your own game connection: it never reads game memory, changes or sends game traffic or automates play, and it reads no damage numbers, HP or skills. It sends your own character's map and position to your rooms only after you turn on location sharing on the dashboard, and it reads your character's PvP kills, assists and deaths, with the names of the players in them, only after you turn on PvP stats there. It also sends the names of the other players in your party and force to Odyle's armory, which looks up their public PLAYNC profiles, until you turn that off on the dashboard. NCSOFT's rules ban unauthorized programs, so use Odyle at your own risk." Margin="2,0,0,0"/>
+     </StackPanel>
+    </Border>
+
+    <!-- Window: how the card is shown on this PC; the card's buttons toggle the same -->
+    <TextBlock Style="{StaticResource Group}" Text="WINDOW"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <CheckBox x:Name="StayOnTopToggle" Content="Stay on top of other windows" ToolTip="Keeps the card above the game in windowed or borderless mode"/>
+      <CheckBox x:Name="TasksToggle" Content="Show daily &amp; weekly tasks beside the card" Margin="0,10,0,0" ToolTip="Your checklist from the dashboard; tick tasks off here"/>
+      <CheckBox x:Name="AutostartToggle" Content="Start with Windows" Margin="0,10,0,0" ToolTip="Starts Odyle in the tray when you sign in to Windows"/>
+      <CheckBox x:Name="ConfirmQuitToggle" Content="Ask before quitting while a character is read" Margin="0,10,0,0" ToolTip="Quitting stops the reader, and your party sees the character offline"/>
+      <Border Height="1" Background="{StaticResource Divider}" Margin="0,12,0,12"/>
+      <!-- Compact mode: the shortcut that switches it -->
+      <DockPanel><TextBlock DockPanel.Dock="Left" Text="Compact mode shortcut" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/><ComboBox x:Name="CompactHotkeyInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Switches between the full card and compact mode from anywhere"/></DockPanel>
+      <TextBlock x:Name="HotkeyProblemLabel" Style="{StaticResource Hint}" Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed" Margin="2,6,0,0"/>
+      <TextBlock Style="{StaticResource Hint}" Text="Remembered on this PC, like where the window was. Started with Windows, Odyle waits in the tray. Tasks themselves are added and removed on the dashboard." Margin="2,10,0,0"/>
+     </StackPanel>
+    </Border>
+
+    <!-- While you play (W#18): fading and following the game, the see-through background and the Discord status -->
+    <TextBlock Style="{StaticResource Group}" Text="WHILE YOU PLAY"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <CheckBox x:Name="FadeInGameToggle" Content="Fade the card while the game is in front" ToolTip="The card turns see-through while you play; point at it to see it fully"/>
+      <CheckBox x:Name="FollowGameToggle" Content="Show the card with the game, hide it after" Margin="0,10,0,0" ToolTip="The card comes up when the game starts, without taking the focus, and goes to the tray when the game closes"/>
+      <!-- The see-through background, as Windows Terminal's acrylic: Windows blurs what is behind the card (it stays while
+           the game has the focus), and the card's own background lies over it at the chosen opacity -->
+      <CheckBox x:Name="AcrylicToggle" Content="See-through blurred background (acrylic)" Margin="0,10,0,0" ToolTip="Windows blurs what is behind the card, as in Windows Terminal; the card stays readable over the game"/>
+      <DockPanel x:Name="AcrylicOpacityPanel" Margin="36,8,0,0">
+       <TextBlock x:Name="AcrylicOpacityLabel" DockPanel.Dock="Right" Text="70 %" FontSize="11" Foreground="{StaticResource Muted}" Width="36" TextAlignment="Right" VerticalAlignment="Center"/>
+       <TextBlock DockPanel.Dock="Left" Text="Opacity" FontSize="11" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+       <Slider x:Name="AcrylicOpacityInput" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10" Value="70" VerticalAlignment="Center" ToolTip="How much of the card's colour lies over the blur · 100 % looks as without acrylic" AutomationProperties.Name="Acrylic opacity"/>
+      </DockPanel>
+      <TextBlock x:Name="AcrylicNoteLabel" Style="{StaticResource Hint}" Text="The acrylic background needs Windows 10 version 1803 or later." Visibility="Collapsed" Margin="36,4,0,0"/>
+      <!-- The Discord status: through the Discord app on this PC, off unless chosen -->
+      <CheckBox x:Name="DiscordToggle" Content="Show my Odyle in my Discord status" Margin="0,10,0,0" ToolTip="While you play, Discord shows your character, its Odyle and your cubes or next run; your Discord friends and servers see it"/>
+      <TextBlock x:Name="DiscordNoteLabel" Style="{StaticResource Hint}" TextWrapping="Wrap" Visibility="Collapsed" Margin="36,4,0,0"/>
+     </StackPanel>
+    </Border>
+
+    <!-- Notifications: set for the account on the dashboard; planned runs show here, also while Odyle waits in the tray -->
+    <TextBlock Style="{StaticResource Group}" Text="NOTIFICATIONS"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <TextBlock Style="{StaticResource Hint}" Text="Run reminders, their times and quiet hours are set for your account on the dashboard. Odyle shows them here, also while it waits in the tray. A downloaded update is announced once." Margin="2,0,0,10"/>
+      <Button x:Name="NotificationsButton" Content="Notification settings" HorizontalAlignment="Left" ToolTip="Open Account &amp; data on the dashboard"/>
+     </StackPanel>
+    </Border>
+
+    <!-- Language: automatic follows the Windows display language; a change applies after a restart -->
+    <TextBlock Style="{StaticResource Group}" Text="LANGUAGE"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <ComboBox x:Name="LanguageInput" DisplayMemberPath="Name" SelectedValuePath="Code" ToolTip="Language of Odyle on this PC"/>
+      <DockPanel x:Name="LanguageRestartPanel" Visibility="Collapsed" Margin="0,8,0,0"><Button x:Name="LanguageRestartButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Restart now" VerticalAlignment="Center" ToolTip="Restarts Odyle in the chosen language · the reader stops for a moment"/><TextBlock Style="{StaticResource Hint}" Text="The new language applies when Odyle restarts." VerticalAlignment="Center" Margin="2,0,0,0"/></DockPanel>
+     </StackPanel>
+    </Border>
+
+    <!-- Updates: released builds download new GitHub releases and install them on restart -->
+    <TextBlock Style="{StaticResource Group}" Text="UPDATES"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <TextBlock x:Name="UpdateLabel" Style="{StaticResource Hint}" Margin="2,0,0,6"/>
+      <DockPanel>
+       <Button x:Name="ReleaseNotesButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Releases ↗" VerticalAlignment="Center" ToolTip="Odyle releases on GitHub"/>
+       <Button x:Name="WhatsNewButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" VerticalAlignment="Center" ToolTip="What changed in each version"/>
+       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Button x:Name="CheckUpdateButton" Style="{StaticResource Ghost}" Content="Check now" Margin="-6,0,0,0" ToolTip="Look for a newer release on GitHub"/>
+        <Button x:Name="InstallUpdateButton" Style="{StaticResource Secondary}" Content="Restart &amp; update" Visibility="Collapsed" MinHeight="24" Padding="10,2" FontSize="11" ToolTip="Stops the reader, installs the downloaded version and starts it"/>
+       </StackPanel>
+      </DockPanel>
+     </StackPanel>
+    </Border>
+
+    <!-- Troubleshooting: a small log on this PC, never with tokens, device keys or pairing codes; diagnostics go to the clipboard only -->
+    <TextBlock Style="{StaticResource Group}" Text="TROUBLESHOOTING"/>
+    <Border Style="{StaticResource SettingsTile}">
+     <StackPanel>
+      <TextBlock x:Name="DiagnosticsLabel" Style="{StaticResource Hint}" Text="Odyle keeps a small log on this PC. Copy diagnostics puts the version, the Npcap check, the reader's last states and the end of the log on the clipboard. Tokens, device keys, pairing codes, your account id, this PC's name and your Windows user name are left out; character names and the server address stay in." Margin="2,0,0,6"/>
+      <DockPanel><Button x:Name="LogButton" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Open log folder ↗" VerticalAlignment="Center" ToolTip="The log helps when something does not work · it holds no tokens, device keys or pairing codes"/><Button x:Name="DiagnosticsButton" HorizontalAlignment="Left" Style="{StaticResource Ghost}" Content="Copy diagnostics" Margin="-6,0,0,0" VerticalAlignment="Center" ToolTip="A short report for a bug report · nothing is sent until you paste it somewhere"/></DockPanel>
+     </StackPanel>
+    </Border>
+    <!-- The card's ✕ closes to the tray; quitting is here and in the tray menu -->
+    <Button x:Name="QuitButton" Style="{StaticResource GhostDanger}" Content="Quit Odyle" HorizontalAlignment="Left" Margin="2,14,0,0" ToolTip="Quit Odyle completely · closing the window keeps it in the tray"/>
+   </StackPanel>
+  </ScrollViewer>
+ </Grid>
+ </Border>
 </Window>
