@@ -170,7 +170,7 @@ internal sealed class ReaderAttribution
         if (NameDue || IdentityDue || GameKey.Length > 0) return false;
         GameKey = DetectedKey = handed.CharacterKey; GameName = handed.CharacterName;
         Attribute(handed.CharacterKey);
-        if (Latest is null) { Latest = new PacketCandidate(handed.Total, handed.ParserVersion, handed.Source); LatestAt = now; }
+        if (Latest is null) { Latest = new PacketCandidate(handed.Total, handed.ParserVersion, handed.Source) { Base = handed.Base, Bonus = handed.Bonus }; LatestAt = now; }
         return true;
     }
 }

@@ -2268,7 +2268,7 @@ public partial class MainWindow : Window
     {
         if (api is null || capture is null || attribution.Latest is not { } reading || activeCharacterId.Length == 0 || !attribution.OwnerSettled
             || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
-        return new Handover(api.Endpoint, accountId, character.Id, attribution.OwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow);
+        return new Handover(api.Endpoint, accountId, character.Id, attribution.OwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow, reading.Base, reading.Bonus);
     }
     // The first start after an update or language restart takes over the character the previous
     // build was reading, for the same server and account. Sending its reading again ties it to this
@@ -2283,6 +2283,10 @@ public partial class MainWindow : Window
         // The reader starts before the server is asked (#86): a snapshot it read meanwhile came with a world load and
         // waits for the game to name its character like any other, so the character is not taken over.
         if (!attribution.TakeOver(handed, DateTimeOffset.UtcNow)) { Log.Info($"Did not take over {handed.CharacterName}: the game loaded a character since the restart."); return; }
+        // A hand-over from a build before 1.2.1 carries the total only: the saved reading's two numbers stand in when
+        // they add up to it, so the Odyle clock, the rings and the taskbar show at once, not after the next change.
+        if (attribution.Latest is { Base: null } taken && character.Parts is { } parts && parts.Base + parts.Bonus == taken.Total)
+            attribution.Latest = taken with { Base = parts.Base, Bonus = parts.Bonus };
         currentCharacterId = character.Id;
         Log.Info($"Took over {handed.CharacterName} ({attribution.Latest!.Total} Odyle) from before the restart.");
         await PublishCoreAsync();

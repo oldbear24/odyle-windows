@@ -8,10 +8,11 @@ namespace Odyle.Reader;
 // game names a character at login, at a channel change and every few minutes, so without
 // it the new start would wait for that. Total is the last reading, already saved on the
 // account; the next start sends it again under its own session, with the adapter name that
-// read it. Nothing secret is kept. A hand-over written by an older build carries stat owner
-// fields too, which are ignored.
+// read it. Base and Bonus are the game's two numbers of that reading, for the Odyle clock and the
+// card's rings; builds before 1.2.1 hand over the total only. Nothing secret is kept. A hand-over
+// written by an older build carries stat owner fields too, which are ignored.
 public sealed record Handover(string Endpoint, string AccountId, string CharacterId, string CharacterKey, string CharacterName,
-    int Total, string ParserVersion, CandidateSource Source, DateTimeOffset SavedAt);
+    int Total, string ParserVersion, CandidateSource Source, DateTimeOffset SavedAt, int? Base = null, int? Bonus = null);
 public static class HandoverStore
 {
     // A restart takes seconds; an older hand-over may no longer describe what the game plays.

@@ -209,17 +209,29 @@ static partial class ReaderChecks
         Field("accountId").SetValue(window, "u"); Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") }); Field("currentCharacterId").SetValue(window, "c1");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
         window.Attribution.GameKey = window.Attribution.DetectedKey = window.Attribution.OwnerKey = "TestHero|2304";
-        window.Attribution.GameName = "TestHero"; window.Attribution.Latest = new PacketCandidate(390, OdyleDecoder.Version);
+        window.Attribution.GameName = "TestHero"; window.Attribution.Latest = new PacketCandidate(390, OdyleDecoder.Version) { Base = 300, Bonus = 90 };
         Check(Call(window, "LiveHandover") is null, "a reading not sent yet is not handed over");
         Field("activeCharacterId").SetValue(window, "c1");
         var handover = (Handover?)Call(window, "LiveHandover");
-        Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: OdyleDecoder.Version }, "a live reading is handed to the restart");
+        Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: OdyleDecoder.Version, Base: 300, Bonus: 90 }, "a live reading is handed to the restart, with the game's two numbers");
         HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
         // The restarted build: connected again, the reader running, nothing named by the game yet.
         Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
         await (Task)Call(window, "TakeOverAsync")!;
         Check(!File.Exists(HandoverStore.FilePath) && window.Attribution.OwnerKey == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && window.Attribution.Latest is PacketCandidate { Total: 390 }, "the next start takes the character over, once");
         Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
+        // The rings and the Odyle clock show at once: the hand-over carries the game's two numbers.
+        Check(window.Attribution.Latest is { Base: 300, Bonus: 90 } && Math.Abs(Control<Ring>(window, "EnergyTrack").Value - 300 * 100.0 / 560) < 0.001 && Math.Abs(Control<Ring>(window, "BonusTrack").Value - 90 * 100.0 / 2000) < 0.001 && Control<TextBlock>(window, "RefillCountdown").Text != "—",
+            "after a restart the rings and the clock show the taken-over reading: " + Control<Ring>(window, "EnergyTrack").Value + " / " + Control<Ring>(window, "BonusTrack").Value + " / " + Control<TextBlock>(window, "RefillCountdown").Text);
+        // A hand-over from a build before 1.2.1 carries the total only: the saved reading's two numbers stand in when they add up to it.
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "", Parts: new OdyleParts(300, 90)) });
+        await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover! with { Base = null, Bonus = null, SavedAt = DateTimeOffset.UtcNow });
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(window.Attribution.Latest is { Total: 390, Base: 300, Bonus: 90 } && Math.Abs(Control<Ring>(window, "BonusTrack").Value - 90 * 100.0 / 2000) < 0.001, "an older build's hand-over takes the saved reading's two numbers");
+        await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover! with { Total = 395, Base = null, Bonus = null, SavedAt = DateTimeOffset.UtcNow });
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(window.Attribution.Latest is { Total: 395, Base: null, Bonus: null }, "but not when they add up to another total");
+        Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
         HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
         Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");
         HandoverStore.Save(handover! with { AccountId = "someone-else" }); await (Task)Call(window, "StopCaptureAsync", false)!;

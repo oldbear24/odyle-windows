@@ -2,6 +2,11 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.2.1 · 2026-11-27
+
+### Fixed
+- After an update the card's rings, the **Next +15** tile and the taskbar button show your Odyle right away again, instead of staying empty until your Odyle next changed in the game.
+
 ## 1.2.0 · 2026-11-27
 
 ### New
