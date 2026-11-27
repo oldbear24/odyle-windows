@@ -546,8 +546,8 @@ public partial class MainWindow : Window
         CubeLabel.ToolTip = RefillCaption.ToolTip = cubesLine.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", cubesLine, costRoom.Name) : cubesLine;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
-        // The blue ring: what items added, of the most they can hold, for the value the card shows.
-        BonusTrack.Value = value is null ? 0 : OdyleClock.BonusPart(items) * 100;
+        // The blue ring: what items added, of the most they can hold (the server's rules), for the value the card shows.
+        BonusTrack.Value = value is null ? 0 : OdyleClock.BonusPart(items, clockRules) * 100;
         var split = (connected || offline) && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; ToolTipService.SetIsEnabled(RingBox, split.Length > 0);

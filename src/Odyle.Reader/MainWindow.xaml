@@ -111,7 +111,7 @@
     </Border>
 
     <!-- The rings: your Odyle in the middle; the inner ring fills with the natural pool towards its cap (orange and red
-         as it nears it), the thin blue one around it with what items added towards 2000. Beside them the character, the
+         as it nears it), the thin blue one around it with what items added towards their limit (ClockRules.BonusCap). Beside them the character, the
          reading's state, the cubes and how far to the next -->
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

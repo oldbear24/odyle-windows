@@ -29,7 +29,8 @@ static class ClockChecks
             Check(OdyleClock.Of(500, 300, read, now, rules with { Paused = true }) is null, OdyleClock.Line(null, now, false) == "", "the operators can hide the clock");
             // The rings: the natural pool towards its cap (whatever is left to the next cube), and what items added towards 2000.
             Check(Math.Abs(OdyleClock.NaturalPart(projected) - 530 / 840.0) < 1e-9, OdyleClock.NaturalPart(reached) == 1, OdyleClock.NaturalPart(full) == 1, OdyleClock.NaturalPart(null) == 0, "the ring fills with the natural pool towards its cap, full once it is");
-            Check(OdyleClock.BonusCap == 2000, OdyleClock.BonusPart(500) == 0.25, OdyleClock.BonusPart(2000) == 1, "the blue ring fills with what items added towards 2000");
+            Check(OdyleClock.DefaultBonusCap == 2000, OdyleClock.BonusPart(500) == 0.25, OdyleClock.BonusPart(2000) == 1, "the blue ring fills with what items added towards 2000");
+            Check(OdyleClock.BonusPart(500, rules with { BonusCap = 2500 }) == 0.2, OdyleClock.BonusPart(500, rules with { BonusCap = null }) == 0.25, "or towards the limit the server's operators set");
             Check(OdyleClock.BonusPart(2400) == 1, OdyleClock.BonusPart(0) == 0, OdyleClock.BonusPart(null) == 0, "and stays within its ring");
             // A membership answer settles the cap whatever the readings showed; readings above it are pointed out.
             Check(OdyleClock.Caps(null, rules, 560).SequenceEqual([560]), OdyleClock.Caps(300, rules, 840).SequenceEqual([840]), OdyleClock.Caps(300, rules, 0).SequenceEqual([560, 840]), "the answered cap wins over the readings");

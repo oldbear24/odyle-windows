@@ -17,8 +17,8 @@ public sealed class PillBorder : System.Windows.Controls.Border
 
 // The HUD's rings (variant C): how full something is, as an arc from the top clockwise over a faint track, with round
 // ends. The card's big one holds the Odyle and fills with the natural pool towards its cap, inside a thin blue one that
-// fills with what items added towards OdyleClock.BonusCap; the party's and compact mode's fill the same way, and the
-// checklist's with the tasks done.
+// fills with what items added towards their limit (ClockRules.BonusCap); the party's and compact mode's fill the same
+// way, and the checklist's with the tasks done.
 public sealed class Ring : FrameworkElement
 {
     public static readonly DependencyProperty ValueProperty = DependencyProperty.Register(nameof(Value), typeof(double), typeof(Ring), new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
