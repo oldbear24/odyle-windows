@@ -15,7 +15,7 @@ static class AnswerChecks
         var empty = JsonSerializer.Deserialize<RoomsResponse>("""{"rooms":[],"clock":{}}""", Web)!.Normalized();
         Check(empty.Clock is { } rules && rules.TickHours.SequenceEqual(ClockRules.Default.TickHours) && rules.Caps.SequenceEqual(ClockRules.Default.Caps) && rules.Tick == 0, "missing clock lists take the defaults");
         Check(OdyleClock.Of(100, 0, DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow, empty.Clock) is null, "a clock without a tick shows no estimate instead of failing");
-        // Items' limit (dashboard 1.7.0): 2000 from a backend that leaves it out or sends none that fits.
+        // Items' limit (dashboard 1.8.0): 2000 from a backend that leaves it out or sends none that fits.
         int? Bonus(string clock) => JsonSerializer.Deserialize<RoomsResponse>("{\"rooms\":[],\"clock\":" + clock + "}", Web)!.Normalized().Clock!.BonusCap;
         Check(Bonus("""{"bonusCap":2500}""") == 2500, Bonus("{}") == 2000, Bonus("""{"bonusCap":0}""") == 2000, Bonus("""{"bonusCap":null}""") == 2000, "the items' limit is read, else 2000");
         var odd = new ClockRules([25, 4, -1, 1, 4], 15, [840, 0, 560, -3]).Normalized();

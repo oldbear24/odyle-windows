@@ -3,7 +3,7 @@ namespace Odyle.Core;
 // The Odyle clock's game rules, kept by the server's operators (GET /api/odyle/rooms `clock`):
 // the natural pool gains Tick Odyle at each of the UTC TickHours up to a cap; Paused hides
 // every estimate. BonusCap is the most items' Odyle holds (it never regenerates): the card's blue
-// ring fills towards it (dashboard 1.7.0; older backends leave it out). Older backends send none,
+// ring fills towards it (dashboard 1.8.0; older backends leave it out). Older backends send none,
 // and the app uses the defaults.
 public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paused = false, int? BonusCap = null)
 {
