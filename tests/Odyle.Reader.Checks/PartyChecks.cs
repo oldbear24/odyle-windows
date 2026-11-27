@@ -50,6 +50,7 @@ static partial class ReaderChecks
         var together = ((PartyRoom[])Control<ItemsControl>(window, "PartyList").ItemsSource)[0];
         Check(together.Mates.Select(m => m.Name).SequenceEqual(["Lumina", "Rin", "Tor", "Vex", "KaelenAlt"]) && together.Mates[0].Hint.EndsWith("live from the game\nIn your party in game\nIn your force in game", StringComparison.Ordinal) && together.Mates[2].Hint.EndsWith("game\nIn one party in game", StringComparison.Ordinal),
             "the party list puts the players of one party or force together, yours first, and the tooltips say so: " + string.Join(", ", together.Mates.Select(m => m.Name)));
+        Check(together.Mates[0].Tag == "party" && together.Mates[1].Tag == "" && together.Mates[2].Tag == "", "your party's players are tagged; your force's others are not, its frame says it: " + string.Join(", ", together.Mates.Select(m => m.Name + "=" + m.Tag)));
         Check(together.Shown is [MateBand { Label: "In your force in game", Count: "3 players", Items: [MateBand { Label: "In your party in game", Count: "2 players", Items: [PartyMate { Name: "Lumina" }] }, PartyMate { Name: "Rin" }] },
             MateBand { Label: "In one party in game", Count: "2 players", Items: [PartyMate { Name: "Tor" }, PartyMate { Name: "Vex" }] }, PartyMate { Name: "KaelenAlt" }],
             "a party's frame sits in its force's, each labelled with how many players it holds, you included");

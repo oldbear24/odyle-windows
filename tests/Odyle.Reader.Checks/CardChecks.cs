@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -214,11 +215,21 @@ static partial class ReaderChecks
         Field("activeCharacterId").SetValue(window, "c1");
         var handover = (Handover?)Call(window, "LiveHandover");
         Check(handover is { Endpoint: "http://127.0.0.1:8090", AccountId: "u", CharacterId: "c1", CharacterKey: "TestHero|2304", Total: 390, ParserVersion: OdyleDecoder.Version, Base: 300, Bonus: 90 }, "a live reading is handed to the restart, with the game's two numbers");
+        // Its party and force go along when the rosters that said them listed the entity the game names: the game sends
+        // the next roster only when the group changes.
+        var groups = (GroupTracker)Field("groups").GetValue(window)!; window.Attribution.GameId = 5069;
+        groups.Observe(new(GroupChange.Party, "ba0b0600b2dff723", 7, 606)); groups.Observe(new(GroupChange.Force, "591a0000b2dff723", 7, 606));
+        Check(((Handover?)Call(window, "LiveHandover")) is { Party: "", Force: "", GroupOwner: 0 }, "rosters of another entity than the one the game names stay behind");
+        window.Attribution.GameId = 606; handover = (Handover?)Call(window, "LiveHandover");
+        Check(handover is { Party: "ba0b0600b2dff723", Force: "591a0000b2dff723", GroupOwner: 606, GroupMember: 7 }, "the party and force go along with the character");
         HandoverStore.Save(handover!); await (Task)Call(window, "StopCaptureAsync", false)!;
+        Check(groups is { Party: "", Force: "", Owner: 0 }, "stopping the reader forgets them here");
         // The restarted build: connected again, the reader running, nothing named by the game yet.
         Field("capture").SetValue(window, new PacketCapture()); Field("currentCharacterId").SetValue(window, "");
         await (Task)Call(window, "TakeOverAsync")!;
         Check(!File.Exists(HandoverStore.FilePath) && window.Attribution.OwnerKey == "TestHero|2304" && (string)Field("currentCharacterId").GetValue(window)! == "c1" && window.Attribution.Latest is PacketCandidate { Total: 390 }, "the next start takes the character over, once");
+        Check(groups is { Party: "ba0b0600b2dff723", Force: "591a0000b2dff723", Owner: 606, Member: 7 }, "and its party and force with it, until a roster says otherwise");
+        Check(window.Attribution.GameId == 0 && ((Handover?)Call(window, "LiveHandover")) is { Party: "ba0b0600b2dff723", Force: "591a0000b2dff723", GroupOwner: 606 }, "a restart before the game names the character hands them on again");
         Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "TestHero · Lumiel" && Control<TextBlock>(window, "ValueLabel").Text == "390", "the taken-over character is shown with its value without a relog");
         // The rings and the Odyle clock show at once: the hand-over carries the game's two numbers.
         Check(window.Attribution.Latest is { Base: 300, Bonus: 90 } && Math.Abs(Control<Ring>(window, "EnergyTrack").Value - 300 * 100.0 / 560) < 0.001 && Math.Abs(Control<Ring>(window, "BonusTrack").Value - 90 * 100.0 / 2000) < 0.001 && Control<TextBlock>(window, "RefillCountdown").Text != "—",
@@ -230,7 +241,25 @@ static partial class ReaderChecks
         Check(window.Attribution.Latest is { Total: 390, Base: 300, Bonus: 90 } && Math.Abs(Control<Ring>(window, "BonusTrack").Value - 90 * 100.0 / 2000) < 0.001, "an older build's hand-over takes the saved reading's two numbers");
         await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover! with { Total = 395, Base = null, Bonus = null, SavedAt = DateTimeOffset.UtcNow });
         Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
-        Check(window.Attribution.Latest is { Total: 395, Base: null, Bonus: null }, "but not when they add up to another total");
+        Check(window.Attribution.Latest is { Total: 395, Base: null, Bonus: null }, "but not when they add up to another total (nor does a server that cannot be reached say them)");
+        // Else the latest change in the character's history says them: a reading sent again without them cleared the saved ones.
+        var latest = """{"changes":[{"value":395,"at":"2026-11-27 16:00:00.000Z","adapter":"global-reference-v2","kind":"regen","delta":15,"parts":{"base":305,"bonus":90},"change":15}],"page":1,"perPage":1,"total":9}""";
+        var asked = new List<string>();
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090", "token", null, new Answering(request =>
+        {
+            asked.Add(request.RequestUri!.PathAndQuery);
+            var body = request.RequestUri.AbsolutePath == "/api/odyle/history/c1/changes" ? latest : "{}";
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+        }));
+        await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover! with { Total = 395, Base = null, Bonus = null, SavedAt = DateTimeOffset.UtcNow });
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(window.Attribution.Latest is { Total: 395, Base: 305, Bonus: 90 } && asked.Contains("/api/odyle/history/c1/changes?perPage=1") && Control<TextBlock>(window, "RefillCountdown").Text != "—",
+            "else the latest change in the history gives them, and the clock shows: " + string.Join(", ", asked));
+        latest = latest.Replace("\"value\":395", "\"value\":380");
+        await (Task)Call(window, "StopCaptureAsync", false)!; HandoverStore.Save(handover! with { Total = 395, Base = null, Bonus = null, SavedAt = DateTimeOffset.UtcNow });
+        Field("capture").SetValue(window, new PacketCapture()); await (Task)Call(window, "TakeOverAsync")!;
+        Check(window.Attribution.Latest is { Total: 395, Base: null, Bonus: null }, "but not a change that left another value");
+        window.Link.Api = new PartyApi("http://127.0.0.1:8090");
         Field("characters").SetValue(window, new[] { new Character("c1", "u", "TestHero", "Lumiel", "GLOBAL_EU", 390, true, true, "") });
         HandoverStore.Save(handover! with { SavedAt = DateTimeOffset.UtcNow - HandoverStore.Lifetime - TimeSpan.FromSeconds(1) });
         Check(HandoverStore.Take(DateTimeOffset.UtcNow) is null && !File.Exists(HandoverStore.FilePath), "an old hand-over is dropped");

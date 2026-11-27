@@ -89,16 +89,18 @@ public static class GameGroups
 }
 // What the rosters said about the named character: its party and force ids, "" outside one. They
 // belong to the entity id the roster listed: once the game names another one, they are forgotten.
-// Leaving the party (1F 92) leaves the force too.
+// Leaving the party (1F 92) leaves the force too. The game sends a roster only when the group forms
+// or changes, so a restart of the app hands them to the next start (Restore).
 public sealed class GroupTracker
 {
     // The backend's group adapter registry lists this name (backend/odyle/protocols.go).
     public const string Adapter = "global-group-v1";
-    private ulong member;
     public string Party { get; private set; } = "";
     public string Force { get; private set; } = "";
     // The entity id the rosters listed, 0 before one.
     public ulong Owner { get; private set; }
+    // The own roster entry's character id, 0 before one: a player leaving the force (22 96) is matched by it.
+    public ulong Member { get; private set; }
     // A change the decoder read; true when the party or the force is another now.
     public bool Observe(GameGroupEvent e)
     {
@@ -108,15 +110,26 @@ public sealed class GroupTracker
             case GroupChange.Party or GroupChange.Force:
                 if (e.Owner != Owner) { Party = Force = ""; Owner = e.Owner; }
                 if (e.Change == GroupChange.Party) Party = e.Key; else Force = e.Key;
-                member = e.Member;
+                Member = e.Member;
                 break;
             case GroupChange.PartyEnded: Party = Force = ""; break;
-            case GroupChange.ForceLeft when member != 0 && e.Member == member: Force = ""; break;
+            case GroupChange.ForceLeft when Member != 0 && e.Member == Member: Force = ""; break;
             case GroupChange.ForceEnded when e.Key == Force: Force = ""; break;
         }
         return before != (Party, Force);
     }
     // The game named the character with this entity id: what another one's rosters said is not its.
     public void Named(ulong entity) { if (Owner != 0 && Owner != entity) Reset(); }
-    public void Reset() { Party = Force = ""; Owner = member = 0; }
+    public void Reset() { Party = Force = ""; Owner = Member = 0; }
+    // What the previous start's rosters said, handed over a restart of the app (update, language): the
+    // game's connection and its entity ids carry on, so they hold until a roster, an end or another
+    // character says otherwise. Nothing changes once this start read a roster itself, or for no group
+    // or ids not in the roster's form (16 lowercase hex digits, "" outside one).
+    public bool Restore(string party, string force, ulong owner, ulong member)
+    {
+        static bool Id(string id) => id.Length == 0 || id.Length == 16 && id.All(char.IsAsciiHexDigitLower);
+        if (Owner != 0 || owner == 0 || party.Length == 0 && force.Length == 0 || !Id(party) || !Id(force)) return false;
+        Party = party; Force = force; Owner = owner; Member = member;
+        return true;
+    }
 }

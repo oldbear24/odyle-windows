@@ -689,9 +689,10 @@ public partial class MainWindow : Window
         {
             // The ring: the natural pool towards its cap, from the last saved reading (an estimate, as the card's for a saved character).
             Key = key, Open = open, Progress = OdyleClock.NaturalPart(SavedClock(c)) * 100, Bar = Brush(live ? "Mint" : "StaleFill"),
-            // Who the game put with you, or how long ago a stale one was seen, after the name.
-            Tag = !live ? (Readiness.Parse(c.LastSeenAt) is { } lastSeen ? Age(lastSeen) : T("stale")) : band.YourParty ? T("party") : band.YourForce ? T("force") : "",
-            TagBrush = Brush(!live ? "Amber" : band.YourParty ? "PartyBand" : "ForceBand"),
+            // Your party's players, or how long ago a stale one was seen, after the name. Your force's other players go
+            // untagged: its violet frame says it once, where a tag on every row of a big force only repeated it.
+            Tag = !live ? (Readiness.Parse(c.LastSeenAt) is { } lastSeen ? Age(lastSeen) : T("stale")) : band.YourParty ? T("party") : "",
+            TagBrush = Brush(!live ? "Amber" : "PartyBand"),
             ToNext = T("{0}/{1} to the next cube", c.Value % cost, cost), Toggle = open ? T("{0} · hide the details", c.CharacterName) : T("{0} · show the details", c.CharacterName),
         };
     }
@@ -2268,7 +2269,11 @@ public partial class MainWindow : Window
     {
         if (api is null || capture is null || attribution.Latest is not { } reading || activeCharacterId.Length == 0 || !attribution.OwnerSettled
             || CurrentCharacter is not { } character || character.Id != activeCharacterId) return null;
-        return new Handover(api.Endpoint, accountId, character.Id, attribution.OwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow, reading.Base, reading.Bonus);
+        // Its party and force go along when the rosters that said them listed the character the game names now, or the game
+        // has named none yet (a start that took them over from a restart before it).
+        var group = groups.Owner != 0 && (attribution.GameId == 0 || groups.Owner == attribution.GameId);
+        return new Handover(api.Endpoint, accountId, character.Id, attribution.OwnerKey, character.CharacterName, reading.Total, reading.ParserVersion, reading.Source, DateTimeOffset.UtcNow, reading.Base, reading.Bonus,
+            group ? groups.Party : "", group ? groups.Force : "", group ? groups.Owner : 0, group ? groups.Member : 0);
     }
     // The first start after an update or language restart takes over the character the previous
     // build was reading, for the same server and account. Sending its reading again ties it to this
@@ -2280,17 +2285,39 @@ public partial class MainWindow : Window
     {
         if (api is null || capture is null || HandoverStore.Take(DateTimeOffset.UtcNow) is not { } handed) return;
         if (handed.Endpoint != api.Endpoint || handed.AccountId != accountId || Array.Find(characters, c => c.Id == handed.CharacterId) is not { } character) return;
+        // A hand-over from a build before 1.2.1 carries the total only, and so does one from a build that took such a
+        // hand-over over and read no change since. The saved reading's two numbers stand in when they add up to it, else
+        // those of the latest change in the character's history (a reading sent again without them, as such a hand-over's
+        // is, cleared the saved ones), so the Odyle clock, the rings and the taskbar show at once, not after the next change.
+        if (handed.Base is null || handed.Bonus is null)
+        {
+            var parts = character.Parts is { } saved && saved.Base + saved.Bonus == handed.Total ? saved : await LatestPartsAsync(api, character.Id, handed.Total);
+            if (parts is not null) handed = handed with { Base = parts.Base, Bonus = parts.Bonus };
+            // The server was asked meanwhile: the account or the reader may have gone.
+            if (api is null || capture is null) return;
+        }
         // The reader starts before the server is asked (#86): a snapshot it read meanwhile came with a world load and
         // waits for the game to name its character like any other, so the character is not taken over.
         if (!attribution.TakeOver(handed, DateTimeOffset.UtcNow)) { Log.Info($"Did not take over {handed.CharacterName}: the game loaded a character since the restart."); return; }
-        // A hand-over from a build before 1.2.1 carries the total only: the saved reading's two numbers stand in when
-        // they add up to it, so the Odyle clock, the rings and the taskbar show at once, not after the next change.
-        if (attribution.Latest is { Base: null } taken && character.Parts is { } parts && parts.Base + parts.Bonus == taken.Total)
-            attribution.Latest = taken with { Base = parts.Base, Bonus = parts.Bonus };
+        // The party and force the rosters said before the restart: the game sends no roster until the group changes.
+        if (groups.Restore(handed.Party, handed.Force, handed.GroupOwner, handed.GroupMember))
+            Log.Info($"Took over the group from before the restart: {(groups.Party.Length > 0 ? "in a party" : "in no party")}, {(groups.Force.Length > 0 ? "in a force" : "in no force")}.");
         currentCharacterId = character.Id;
         Log.Info($"Took over {handed.CharacterName} ({attribution.Latest!.Total} Odyle) from before the restart.");
         await PublishCoreAsync();
         RenderHero();
+    }
+    // The game's two numbers of the character's latest change in its history (PartyApi.GetLatestPartsAsync), or null when
+    // the server cannot say: the taken-over total then shows without the clock until the next change, as before.
+    private static async Task<OdyleParts?> LatestPartsAsync(PartyApi current, string characterId, int total)
+    {
+        try { return await current.GetLatestPartsAsync(characterId, total); }
+        // ObjectDisposedException: the account was disconnected meanwhile.
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException or ObjectDisposedException)
+        {
+            Log.Warn("The latest change's natural pool and items could not be read: " + error.Message);
+            return null;
+        }
     }
 
     // ----- Updates -----

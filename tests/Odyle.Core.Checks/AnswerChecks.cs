@@ -39,6 +39,17 @@ static class AnswerChecks
         var parsed = RealtimeNews.Parse(news.RootElement);
         Check(parsed.Characters is [{ Id: "c", Value: 5 }], "realtime characters without an id are dropped");
         Check(PartyNews.WithCharacters([], parsed.Characters, out var complete).Length == 0, !complete, "the rest still apply");
+        // The game's two numbers of a character's latest change in its history (for a restart's hand-over that carries the
+        // total only): only when the change left the total asked about and they add up to it.
+        var route = ""; var change = """{"changes":[{"value":395,"at":"2026-11-27 16:00:00.000Z","adapter":"global-reference-v2","kind":"regen","delta":15,"parts":{"base":305,"bonus":90},"change":15}],"page":1,"perPage":1,"total":3}""";
+        using var history = new PartyApi("https://party.example", "token", null, new Stub(request => { route = request.RequestUri!.PathAndQuery; return change; }));
+        Check(await history.GetLatestPartsAsync("c1", 395) == new OdyleParts(305, 90), route == "/api/odyle/history/c1/changes?perPage=1", "the latest change's two numbers are read");
+        Check(await history.GetLatestPartsAsync("c1", 400) is null, "not when that change left another value");
+        foreach (var other in new[] { """{"changes":[]}""", "{}", """{"changes":[{"value":395,"parts":null}]}""", """{"changes":[{"value":395}]}""", """{"changes":[{"value":395,"parts":{"base":300,"bonus":90}}]}""", """{"changes":[{"value":395,"parts":{"base":-5,"bonus":400}}]}""" })
+        {
+            change = other;
+            Check(await history.GetLatestPartsAsync("c1", 395) is null, "none from " + other);
+        }
         Console.WriteLine("Server answer normalisation passed.");
     }
     sealed class Stub(Func<HttpRequestMessage, string> answer) : HttpMessageHandler

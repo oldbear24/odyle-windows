@@ -2,6 +2,15 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.2.2 · 2026-11-27
+
+### Changed
+- The party list no longer writes **force** after every player of your force: the violet frame around them already says it. Players of your own party keep their **party** tag.
+
+### Fixed
+- Restarting for an update no longer forgets which party and force the game put you in. The game says it again only when the party changes, so until then your rooms showed the players of your party as only in your force. This works from the update after this one on; until then your party shows again once it changes in the game.
+- The card's rings, the **Next +15** tile and the taskbar button no longer stay empty after an update when your Odyle had not changed in the game since the update before it: Odyle takes your natural pool and items from your Odyle history instead.
+
 ## 1.2.1 · 2026-11-27
 
 ### Fixed
