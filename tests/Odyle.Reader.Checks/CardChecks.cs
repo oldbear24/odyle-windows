@@ -69,6 +69,8 @@ static partial class ReaderChecks
         Call(window, "OnCandidate", inert, new PacketCandidate(390, OdyleDecoder.Version) { Base = 0, Bonus = 390 });
         Check(Control<TextBlock>(window, "ValueLabel").Text == "390", "decoded reading is shown in the value card");
         Check(Control<TextBlock>(window, "CubeLabel").Text == "9" && Control<TextBlock>(window, "CubeWord").Text == "cubes" && Control<TextBlock>(window, "RefillCaption").Text == "30/40 to the next cube", "cube count derives from the reading");
+        // The blue ring fills with what items added towards 2000; the inner one waits for the character (its cap) to be known.
+        Check(Math.Abs(Control<Ring>(window, "BonusTrack").Value - 390 * 100.0 / 2000) < 0.001 && Control<Ring>(window, "EnergyTrack").Value == 0, "the blue ring shows what items added, the natural pool's waits for the character: " + Control<Ring>(window, "BonusTrack").Value + " / " + Control<Ring>(window, "EnergyTrack").Value);
         Check(Control<TextBlock>(window, "StateText").Text == "Sending", "unsent reading is marked as sending");
         Check(Shown(Control<TextBlock>(window, "HeroTitle")) == "Detecting character…", "an unattributed reading is never shown under a character's name");
         Check(Control<TextBlock>(window, "ReadingLabel").Text == "Waiting for the game to name the character.", "a snapshot waits for the name the game sends after the loading screen");
@@ -166,9 +168,12 @@ static partial class ReaderChecks
         Check(odyleClock.Visibility == Visibility.Visible && odyleClock.Text.StartsWith("Nearly full · full ≈ ", StringComparison.Ordinal) && ReferenceEquals(Control<TextBlock>(window, "RefillCountdown").Foreground, window.FindResource("Orange")) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Orange")), "two days before the cap the clock is orange: " + odyleClock.Text);
         // The taskbar button fills with the natural pool towards its cap, in the card's colours.
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Paused } bar && Math.Abs(bar.ProgressValue - 400 / 560.0) < 0.001 && bar.Description.Contains(" · Nearly full · "), "two days before the cap the taskbar button is yellow: " + window.TaskbarItemInfo?.ProgressState + " " + window.TaskbarItemInfo?.ProgressValue + " " + window.TaskbarItemInfo?.Description);
+        // So does the card's ring (400 is ten whole cubes: the ring is not empty for it), in orange.
+        Check(Control<Ring>(window, "EnergyTrack") is { } nearRing && Math.Abs(nearRing.Value - 400 * 100.0 / 560) < 0.001 && ReferenceEquals(nearRing.Fill, window.FindResource("Orange")), "the ring fills with the natural pool towards its cap, in orange near it: " + Control<Ring>(window, "EnergyTrack").Value);
         window.Attribution.Latest = new PacketCandidate(560, OdyleDecoder.Version, CandidateSource.Update) { Base = 560, Bonus = 0 }; Call(window, "RenderOdyleClock");
         Check(odyleClock.Text.StartsWith("natural pool at 560: full if its cap is 560", StringComparison.Ordinal) && ReferenceEquals(odyleClock.Foreground, window.FindResource("Red")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Red")), "a full pool is red: " + odyleClock.Text);
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Error, ProgressValue: 1 }, "a full pool fills the taskbar button in red");
+        Check(Control<Ring>(window, "EnergyTrack") is { Value: 100 } fullRing && ReferenceEquals(fullRing.Fill, window.FindResource("Red")), "a full pool fills the ring in red: " + Control<Ring>(window, "EnergyTrack").Value);
         window.Attribution.Latest = shownReading; Call(window, "RenderOdyleClock");
         Check(ReferenceEquals(odyleClock.Foreground, window.FindResource("Muted")) && ReferenceEquals(Control<TextBlock>(window, "RefillCountdown").Foreground, window.FindResource("Mint")) && ReferenceEquals(Control<TextBlock>(window, "ValueLabel").Foreground, window.FindResource("Text")), "far from its cap the clock is mint again");
         Check(window.TaskbarItemInfo is { ProgressState: TaskbarItemProgressState.Normal }, "far from its cap the taskbar button is green again");

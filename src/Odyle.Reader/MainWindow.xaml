@@ -2,7 +2,8 @@
  Title="Odyle" SizeToContent="WidthAndHeight" ResizeMode="CanMinimize" WindowStyle="None" Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12"
  Icon="pack://application:,,,/Odyle;component/Assets/odyle.ico" WindowStartupLocation="CenterScreen" Closing="Window_Closing" SizeChanged="Window_SizeChanged" LocationChanged="Window_LocationChanged" IsVisibleChanged="Window_IsVisibleChanged" StateChanged="Window_StateChanged"
  UseLayoutRounding="True" TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
- <!-- Variant C, the HUD: a frameless glass card over the game. The ring holds your Odyle and fills towards the next cube;
+ <!-- Variant C, the HUD: a frameless glass card over the game. The ring holds your Odyle and fills with the natural pool
+      towards its cap, inside a blue one that fills with what items added;
       three tiles count down to the next +15 and the next run and show the reader; your rooms' players follow with small
       rings. The controls light up while the pointer is on the card. The glass frame reaches over the whole window, so the
       acrylic background (Settings → Window) shows wherever the window's background lets it through. -->
@@ -31,13 +32,16 @@
       <ItemsControl ItemsSource="{Binding Items}" Focusable="False" ToolTip="{Binding Label}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl>
      </DataTemplate>
     </StackPanel.Resources>
-    <!-- Your pill: the ring towards the next cube, your Odyle and cubes, the next +15, and back to the full card. The
+    <!-- Your pill: the card's two rings in small, your Odyle and cubes, the next +15, and back to the full card. The
          force's and party's borders only carry their names (tooltips): no frame is drawn around floating chips. -->
     <Border x:Name="CompactOwnForce">
      <Border x:Name="CompactOwnParty">
       <local:PillBorder x:Name="CompactOwnRow" HorizontalAlignment="Left" Style="{StaticResource FloatChip}" Padding="6,5,8,5">
        <StackPanel Orientation="Horizontal">
-        <Grid Width="26" Height="26" VerticalAlignment="Center"><local:Ring x:Name="CompactTrack" Thickness="3" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/></Grid>
+        <Grid Width="26" Height="26" VerticalAlignment="Center">
+         <local:Ring x:Name="CompactBonusTrack" Thickness="2" Fill="{StaticResource Bonus}" Track="{StaticResource CellTrack}"/>
+         <local:Ring x:Name="CompactTrack" Margin="4" Thickness="3" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/>
+        </Grid>
         <Ellipse x:Name="CompactDot" Visibility="Collapsed"/>
         <TextBlock x:Name="CompactName" Visibility="Collapsed"/>
         <TextBlock x:Name="CompactValue" Text="—" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="18" Typography.NumeralAlignment="Tabular" VerticalAlignment="Center" Margin="10,0,0,0"/>
@@ -106,14 +110,16 @@
      </DockPanel>
     </Border>
 
-    <!-- The ring: your Odyle in the middle, filling towards the next cube; beside it the character, the reading's
-         state, the cubes and how far to the next -->
+    <!-- The rings: your Odyle in the middle; the inner ring fills with the natural pool towards its cap (orange and red
+         as it nears it), the thin blue one around it with what items added towards their limit (ClockRules.BonusCap). Beside them the character, the
+         reading's state, the cubes and how far to the next -->
     <Grid>
      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
      <!-- The game's two numbers (the natural pool and what items added) and its last change, on pointing at the ring -->
-     <Grid x:Name="RingBox" Width="96" Height="96" Background="Transparent" ToolTipService.IsEnabled="False">
+     <Grid x:Name="RingBox" Width="110" Height="110" Background="Transparent" ToolTipService.IsEnabled="False">
       <Grid.ToolTip><TextBlock x:Name="SplitLabel"/></Grid.ToolTip>
-      <local:Ring x:Name="EnergyTrack" Thickness="6" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/>
+      <local:Ring x:Name="BonusTrack" Thickness="4" Fill="{StaticResource Bonus}" Track="{StaticResource CellTrack}"/>
+      <local:Ring x:Name="EnergyTrack" Margin="7" Thickness="6" Fill="{StaticResource Mint}" Track="{StaticResource CellTrack}"/>
       <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
        <TextBlock x:Name="ValueLabel" Text="—" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="27" FontWeight="Bold" Typography.NumeralAlignment="Tabular" HorizontalAlignment="Center"/>
        <TextBlock Text="ODYLE" Style="{StaticResource Caps}" FontSize="9" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,1,0,0"/>
@@ -218,8 +224,8 @@
      </StackPanel>
     </Border>
 
-    <!-- Party: other members' characters online in your rooms, one header per room, each with a small ring towards its
-         next cube; a click opens its details in place (and closes them on the next) -->
+    <!-- Party: other members' characters online in your rooms, one header per room, each with a small ring filled with
+         its natural pool towards its cap; a click opens its details in place (and closes them on the next) -->
     <StackPanel x:Name="PartyPanel" Visibility="Collapsed" Margin="0,12,0,0">
      <Border Height="1" Background="{StaticResource Divider}" Margin="0,0,0,4"/>
      <!-- Only while the party does not follow the server's live news: it is fetched every 15 seconds -->
@@ -234,8 +240,8 @@
           <ItemsControl.Resources>
            <DataTemplate DataType="{x:Type local:PartyMate}">
             <Button Style="{StaticResource HudRow}" Margin="0,1,0,0" Click="Mate_Click" Tag="{Binding Key}" ToolTip="{Binding Hint}" AutomationProperties.Name="{Binding Toggle}">
-             <!-- A small ring towards its next cube, the name and its tag, its cubes and Odyle; opened, where it is and
-                  how far to the next -->
+             <!-- A small ring with its natural pool, the name and its tag, its cubes and Odyle; opened, where it is and
+                  how far to the next cube -->
              <StackPanel>
               <Grid>
                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

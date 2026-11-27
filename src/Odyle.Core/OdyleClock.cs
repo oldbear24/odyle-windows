@@ -2,10 +2,12 @@ namespace Odyle.Core;
 
 // The Odyle clock's game rules, kept by the server's operators (GET /api/odyle/rooms `clock`):
 // the natural pool gains Tick Odyle at each of the UTC TickHours up to a cap; Paused hides
-// every estimate. Older backends send none, and the app uses the defaults.
-public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paused = false)
+// every estimate. BonusCap is the most items' Odyle holds (it never regenerates): the card's blue
+// ring fills towards it (dashboard 1.8.0; older backends leave it out). Older backends send none,
+// and the app uses the defaults.
+public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paused = false, int? BonusCap = null)
 {
-    public static readonly ClockRules Default = new([1, 4, 7, 10, 13, 16, 19, 22], 15, [560, 840]);
+    public static readonly ClockRules Default = new([1, 4, 7, 10, 13, 16, 19, 22], 15, [560, 840], BonusCap: OdyleClock.DefaultBonusCap);
     // A server's rules as the clock can use them (#83): a missing list takes the default one, hours
     // outside 0–23 and caps below 1 are dropped, and the caps go smallest first. A tick below 1 stays:
     // the clock then shows no estimate (OdyleClock.Of).
@@ -13,6 +15,7 @@ public sealed record ClockRules(int[] TickHours, int Tick, int[] Caps, bool Paus
     {
         TickHours = TickHours is null ? Default.TickHours : TickHours.Where(h => h is >= 0 and < 24).Distinct().Order().ToArray(),
         Caps = Caps is null ? Default.Caps : Caps.Where(c => c > 0).Distinct().Order().ToArray(),
+        BonusCap = BonusCap is > 0 ? BonusCap : Default.BonusCap,
     };
 }
 
@@ -32,6 +35,19 @@ public sealed record ClockState(int Base, int Total, int Cap, int Tick, DateTime
 // a spend on a PC without the reader stays unseen until its next reading.
 public static class OdyleClock
 {
+    // What items add to the Odyle (the game's second number, the bonus) holds at most this much,
+    // unless the server's rules say otherwise (ClockRules.BonusCap).
+    public const int DefaultBonusCap = 2000;
+
+    // How full the natural pool is towards its cap, 0 to 1: the card's ring, the party's and the
+    // taskbar button fill with it. 0 without a clock.
+    public static double NaturalPart(ClockState? clock) => clock is { Cap: > 0 } c ? Math.Clamp(c.Base / (double)c.Cap, 0, 1) : 0;
+
+    // How full what items added is towards the server's BonusCap (DefaultBonusCap without one), 0 to 1:
+    // the blue ring around the card's. 0 when unknown.
+    public static double BonusPart(int? bonus, ClockRules? rules = null) =>
+        bonus is { } b ? Math.Clamp(b / (double)(rules?.BonusCap is > 0 and var cap ? cap : DefaultBonusCap), 0, 1) : 0;
+
     // The tick times after from up to and including until, at most limit of them.
     public static List<DateTimeOffset> Ticks(DateTimeOffset from, DateTimeOffset until, int[] hours, int limit = int.MaxValue)
     {

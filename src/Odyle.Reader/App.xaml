@@ -18,6 +18,8 @@
 <!-- A natural pool near its cap (OdyleClock.Level): full within two days, and full or within the hour -->
 <SolidColorBrush x:Key="Orange" Color="#FFB65C"/>
 <SolidColorBrush x:Key="Red" Color="#FF7F87"/>
+<!-- What items added to the Odyle: the blue ring around the card's, towards ClockRules.BonusCap -->
+<SolidColorBrush x:Key="Bonus" Color="#63B3FF"/>
 <SolidColorBrush x:Key="PillNeutral" Color="#1F2B24"/>
 <SolidColorBrush x:Key="PillLive" Color="#1F3A2A"/>
 <SolidColorBrush x:Key="PillAmber" Color="#3A3220"/>
