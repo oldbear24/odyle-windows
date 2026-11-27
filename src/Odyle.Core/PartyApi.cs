@@ -55,6 +55,10 @@ public sealed record Character(string Id, string User, string CharacterName, str
 // are what the character's readings showed for the Odyle clock: its last regeneration tick and
 // its fullest natural pool of the last 30 days.
 public sealed record OdyleParts(int Base, int Bonus);
+// A page of a character's history, newest change first (GET /api/odyle/history/{id}/changes): each
+// change's value and, from apps that sent them, the game's two numbers (null otherwise).
+public sealed record HistoryChange(int Value, OdyleParts? Parts = null);
+public sealed record HistoryChanges(HistoryChange[]? Changes = null);
 public sealed record RecordList<T>(T[] Items);
 // A room as its members see it: others' characters only when linked to this room.
 // Sharing (whether the member shares any character here) and each character's Shared say what the room sees.
@@ -227,6 +231,15 @@ public sealed class PartyApi : IDisposable
         return Named(session, session.ServerVersion);
     }
     public Task<RoomSnapshot> GetSnapshotAsync(string roomId) => GetAsync<RoomSnapshot>("api/odyle/snapshot/" + Uri.EscapeDataString(roomId));
+    // The game's two numbers of the character's latest change in its history, when they add up to
+    // total, the value that change left; null otherwise, when the change came without them or the
+    // period holds none. The character's own record keeps only its last reading's two numbers, which a
+    // reading sent again without them (a restart's hand-over that had none) cleared; the history keeps them.
+    public async Task<OdyleParts?> GetLatestPartsAsync(string characterId, int total)
+    {
+        var answer = await GetAsync<HistoryChanges>("api/odyle/history/" + Uri.EscapeDataString(characterId) + "/changes?perPage=1");
+        return answer.Changes is [{ Value: var value, Parts: { Base: >= 0, Bonus: >= 0 } parts }, ..] && value == total && parts.Base + parts.Bonus == total ? parts : null;
+    }
     // Subscribes a realtime connection (RealtimeClient) to its topics; the server answers 204.
     public async Task SubscribeAsync(string clientId, IReadOnlyCollection<string> topics)
     {

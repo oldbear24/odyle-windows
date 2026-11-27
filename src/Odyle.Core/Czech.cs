@@ -28,7 +28,7 @@ public static class Czech
         // Variant C: the ring's label, the tiles and the reader's word
         ["ODYLE"] = "ODYLE", ["READER"] = "ČTEČKA", ["NEXT +{0}"] = "DALŠÍ +{0}", ["NEXT +15"] = "DALŠÍ +15", ["offline"] = "offline", ["NATURAL POOL"] = "PŘIROZENÁ ZÁSOBA", ["full"] = "plná", ["now"] = "teď",
         ["cubes"] = "kostek", ["On"] = "Zapnuto", ["Waiting"] = "Čeká", ["Problem"] = "Problém",
-        ["party"] = "parta", ["force"] = "force",
+        ["party"] = "parta",
         ["Hide the daily & weekly tasks"] = "Skrýt denní a týdenní úkoly", ["Show your daily & weekly tasks beside the card"] = "Ukázat denní a týdenní úkoly vedle karty",
         ["Hide until the message changes"] = "Skrýt, dokud se zpráva nezmění",
         ["Natural pool held {0:N0}, more than {1:N0}: has the membership started? Answer on the dashboard."] = "Přirozená zásoba měla {0:N0}, víc než {1:N0}: začalo členství? Odpověz na dashboardu.",

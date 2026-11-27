@@ -180,7 +180,20 @@ static class GroupChecks
         tracker.Named(Mate); Check(tracker is { Party: "", Force: "", Owner: 0 }, "naming another entity forgets the party");
         tracker.Observe(new(GroupChange.Party, Party, OwnCharacter, Own)); tracker.Observe(new(GroupChange.Force, Force, OwnCharacter, Own));
         Check(tracker.Observe(new(GroupChange.Party, "1122334455667788", MateCharacter, Mate)), tracker is { Party: "1122334455667788", Force: "", Owner: Mate }, "another entity's roster starts over");
-        tracker.Reset(); Check(tracker is { Party: "", Force: "", Owner: 0 }, "a reset forgets everything");
+        tracker.Reset(); Check(tracker is { Party: "", Force: "", Owner: 0, Member: 0 }, "a reset forgets everything");
+        // A restart of the app hands them to the next start (Restore): they hold until a roster, an end or another
+        // entity says otherwise, and never replace what this start read itself.
+        var restored = new GroupTracker();
+        Check(restored.Restore(Party, Force, Own, OwnCharacter), restored is { Party: Party, Force: Force, Owner: Own, Member: OwnCharacter }, "a restart's party and force are restored");
+        restored.Named(Own); Check(restored is { Party: Party, Force: Force }, "naming the same entity keeps them");
+        Check(restored.Observe(new(GroupChange.ForceLeft, Party, OwnCharacter)), restored is { Party: Party, Force: "" }, "the own character leaving the force is still known by its id");
+        Check(restored.Observe(new(GroupChange.Force, Force, OwnCharacter, Own)), restored is { Party: Party, Force: Force }, "a roster of the same entity adds to them");
+        restored.Named(Mate); Check(restored is { Party: "", Force: "", Owner: 0 }, "another entity forgets them");
+        Check(!restored.Restore("", "", Own, OwnCharacter), !restored.Restore("BA0B0600B2DFF723", "", Own, OwnCharacter), !restored.Restore(Party, "short", Own, OwnCharacter), !restored.Restore(Party, Force, 0, OwnCharacter),
+            "no group, ids not in the roster's form or no entity restore nothing");
+        Check(restored is { Party: "", Force: "", Owner: 0 }, "and leave the tracker as it was");
+        restored.Observe(new(GroupChange.Party, "1122334455667788", OwnCharacter, Own));
+        Check(!restored.Restore(Party, Force, Own, OwnCharacter), restored is { Party: "1122334455667788", Force: "" }, "a roster this start read wins over the hand-over");
     }
     static async Task Wire()
     {

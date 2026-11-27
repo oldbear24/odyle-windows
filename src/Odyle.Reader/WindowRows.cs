@@ -21,7 +21,7 @@ public sealed record CompactMate(string Name, string Value, string Cubes, Brush 
 // Place: where the character was last seen while its player shares their location, "" otherwise; it
 // follows the detail with a map pin, in place of the server. Key names the row, which a click opens to show
 // its details under it (Open) and closes again; Progress and Bar draw its ring, filled with its natural pool towards
-// its cap; ToNext says how far to the next cube; Tag follows the name ("party", "force", or how long ago a stale one was seen) in TagBrush.
+// its cap; ToNext says how far to the next cube; Tag follows the name ("party" in yours, or how long ago a stale one was seen) in TagBrush.
 public sealed record PartyMate(string Name, string Detail, string Value, string Cubes, Brush Dot, string Hint, string Place = "")
 {
     public string Key { get; init; } = "";
