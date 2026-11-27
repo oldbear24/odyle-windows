@@ -2,6 +2,14 @@
 
 What changed in each release of Odyle for Windows, newest first, written for players. Every pull request that changes the version adds its section here (AGENTS.md, Versioning). The release notes, the app's **What's new** and the dashboard's What's new show it.
 
+## 1.2.0 · 2026-11-27
+
+### New
+- A thin blue ring around the card's ring shows the Odyle your items added, filling towards the 2,000 they can hold. Compact mode's chip has it too.
+
+### Fixed
+- The card's ring now shows how full your natural pool is towards its cap, like the taskbar button: it fills as Odyle regenerates and is full and red once the pool is, instead of jumping back after every cube and sitting empty while the pool was full. The party's rings and compact mode's show the same; how far it is to the next cube is still written beside the ring.
+
 ## 1.1.2 · 2026-11-23
 
 ### Changed

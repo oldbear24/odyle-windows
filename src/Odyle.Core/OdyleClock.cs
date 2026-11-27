@@ -32,6 +32,16 @@ public sealed record ClockState(int Base, int Total, int Cap, int Tick, DateTime
 // a spend on a PC without the reader stays unseen until its next reading.
 public static class OdyleClock
 {
+    // What items add to the Odyle (the game's second number, the bonus) holds at most this much.
+    public const int BonusCap = 2000;
+
+    // How full the natural pool is towards its cap, 0 to 1: the card's ring, the party's and the
+    // taskbar button fill with it. 0 without a clock.
+    public static double NaturalPart(ClockState? clock) => clock is { Cap: > 0 } c ? Math.Clamp(c.Base / (double)c.Cap, 0, 1) : 0;
+
+    // How full what items added is towards BonusCap, 0 to 1: the blue ring around the card's. 0 when unknown.
+    public static double BonusPart(int? bonus) => bonus is { } b ? Math.Clamp(b / (double)BonusCap, 0, 1) : 0;
+
     // The tick times after from up to and including until, at most limit of them.
     public static List<DateTimeOffset> Ticks(DateTimeOffset from, DateTimeOffset until, int[] hours, int limit = int.MaxValue)
     {

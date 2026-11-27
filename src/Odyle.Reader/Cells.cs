@@ -15,15 +15,17 @@ public sealed class PillBorder : System.Windows.Controls.Border
     }
 }
 
-// The HUD's rings (variant C): how far towards the next cube, as an arc from the top clockwise over a faint track,
-// with round ends. The card's big one holds the Odyle; the party's, compact mode's and the checklist's are small.
+// The HUD's rings (variant C): how full something is, as an arc from the top clockwise over a faint track, with round
+// ends. The card's big one holds the Odyle and fills with the natural pool towards its cap, inside a thin blue one that
+// fills with what items added towards OdyleClock.BonusCap; the party's and compact mode's fill the same way, and the
+// checklist's with the tasks done.
 public sealed class Ring : FrameworkElement
 {
     public static readonly DependencyProperty ValueProperty = DependencyProperty.Register(nameof(Value), typeof(double), typeof(Ring), new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
     public static readonly DependencyProperty ThicknessProperty = DependencyProperty.Register(nameof(Thickness), typeof(double), typeof(Ring), new FrameworkPropertyMetadata(6.0, FrameworkPropertyMetadataOptions.AffectsRender));
     public static readonly DependencyProperty FillProperty = DependencyProperty.Register(nameof(Fill), typeof(Brush), typeof(Ring), new FrameworkPropertyMetadata(Brushes.White, FrameworkPropertyMetadataOptions.AffectsRender));
     public static readonly DependencyProperty TrackProperty = DependencyProperty.Register(nameof(Track), typeof(Brush), typeof(Ring), new FrameworkPropertyMetadata(new SolidColorBrush(Color.FromArgb(0x17, 0xFF, 0xFF, 0xFF)), FrameworkPropertyMetadataOptions.AffectsRender));
-    // How far towards the next cube, 0 to 100.
+    // How full, 0 to 100.
     public double Value { get => (double)GetValue(ValueProperty); set => SetValue(ValueProperty, value); }
     public double Thickness { get => (double)GetValue(ThicknessProperty); set => SetValue(ThicknessProperty, value); }
     public Brush Fill { get => (Brush)GetValue(FillProperty); set => SetValue(FillProperty, value); }

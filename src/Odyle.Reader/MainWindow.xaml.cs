@@ -534,8 +534,9 @@ public partial class MainWindow : Window
             : reading is not null && !owned ? (attribution.GameName.Length > 0 && attribution.GameKey != attribution.DetectedKey && attribution.OwnerKey == attribution.GameKey ? T("{0} · not saved", attribution.GameName) : T("Detecting character…"))
             : character is not null ? $"{character.CharacterName} · {character.Server}" : T("No character yet"));
         ValueLabel.Text = value is { } v ? v.ToString("N0", Culture) : "—";
-        EnergyTrack.Value = value is { } energy ? energy % cost * 100.0 / cost : 0;
-        EnergyTrack.Visibility = connected || offline ? Visibility.Visible : Visibility.Hidden;
+        // The inner ring fills with the natural pool towards its cap, with the clock (RenderOdyleClock); the blue one
+        // around it with what items added, below.
+        EnergyTrack.Visibility = BonusTrack.Visibility = connected || offline ? Visibility.Visible : Visibility.Hidden;
         // Variant C: the cubes large with their word beside the ring, and how far to the next one under them.
         var cubesLine = value is { } total ? Tn(total / cost, "{0} cube", "{0} cubes") + $" · {total % cost}/{cost}" : connected ? T("{0} per cube", cost) : "";
         CubeLabel.Text = value is { } whole ? (whole / cost).ToString("N0", Culture) : connected || offline ? "—" : "";
@@ -545,6 +546,8 @@ public partial class MainWindow : Window
         CubeLabel.ToolTip = RefillCaption.ToolTip = cubesLine.Length == 0 ? null : rooms.Length > 1 && HeroRoom(character) is { } costRoom ? T("{0} · at the cost of {1}", cubesLine, costRoom.Name) : cubesLine;
         // The game's two numbers: the natural pool and what items added, and the last change it made.
         var (natural, items) = reading is not null ? (reading.Base, reading.Bonus) : (character?.Parts?.Base, character?.Parts?.Bonus);
+        // The blue ring: what items added, of the most they can hold, for the value the card shows.
+        BonusTrack.Value = value is null ? 0 : OdyleClock.BonusPart(items) * 100;
         var split = (connected || offline) && natural is { } n && items is { } i ? T("natural {0:N0} · items {1:N0}", n, i) : "";
         if (split.Length > 0 && lastChange is { } last && last.CharacterId == character?.Id && (reading is null || owned)) split += " · " + T("{0} at {1:HH:mm}", last.Delta.ToString("+#,0;−#,0", Culture), last.At);
         SplitLabel.Text = split; ToolTipService.SetIsEnabled(RingBox, split.Length > 0);
@@ -684,7 +687,8 @@ public partial class MainWindow : Window
             c.Value.ToString("N0", Culture), Tn(cubes, "{0} cube", "{0} cubes"), Brush(live ? "Mint" : "Amber"),
             (c.ClassLine.Length > 0 ? c.ClassLine + " · " : "") + (live ? T("{0} · live from the game", member.DisplayName) : T("{0} · last value; their reader stopped reporting", member.DisplayName)) + BandHint(band), place)
         {
-            Key = key, Open = open, Progress = c.Value % cost * 100.0 / cost, Bar = Brush(live ? "Mint" : "StaleFill"),
+            // The ring: the natural pool towards its cap, from the last saved reading (an estimate, as the card's for a saved character).
+            Key = key, Open = open, Progress = OdyleClock.NaturalPart(SavedClock(c)) * 100, Bar = Brush(live ? "Mint" : "StaleFill"),
             // Who the game put with you, or how long ago a stale one was seen, after the name.
             Tag = !live ? (Readiness.Parse(c.LastSeenAt) is { } lastSeen ? Age(lastSeen) : T("stale")) : band.YourParty ? T("party") : band.YourForce ? T("force") : "",
             TagBrush = Brush(!live ? "Amber" : band.YourParty ? "PartyBand" : "ForceBand"),
@@ -775,7 +779,9 @@ public partial class MainWindow : Window
         NextTile.ToolTip = full.Length > 0 ? full : null;
         OdyleClockLabel.Foreground = CapBrush(level, "Muted"); RefillCountdown.Foreground = CapBrush(level, "Mint");
         ValueLabel.Foreground = CompactValue.Foreground = CapBrush(level, "Text");
-        // The rings turn orange and red with the clock.
+        // The ring fills with the natural pool towards its cap, as the taskbar button does, and turns orange and red with
+        // the clock; without one (paused by the operators, a reading not yet named) it stays empty.
+        EnergyTrack.Value = OdyleClock.NaturalPart(state) * 100;
         EnergyTrack.Fill = CompactTrack.Fill = CapBrush(level, "Mint");
         OdyleClockLabel.FontWeight = level == CapLevel.None ? FontWeights.Normal : FontWeights.SemiBold;
         var mismatch = api is not null && character is not null ? OdyleClock.Mismatch(character.NaturalMax, character.AnsweredCap) : "";
@@ -805,7 +811,7 @@ public partial class MainWindow : Window
             _ => System.Windows.Shell.TaskbarItemProgressState.Normal,
         };
         if (bar.ProgressState != progress) bar.ProgressState = progress;
-        var filled = state is { Cap: > 0 } s ? Math.Clamp(s.Base / (double)s.Cap, 0, 1) : 0;
+        var filled = OdyleClock.NaturalPart(state);
         if (bar.ProgressValue != filled) bar.ProgressValue = filled;
         var tip = state is null ? "Odyle" : $"Odyle · {ValueLabel.Text} · {line}";
         if (bar.Description != tip) bar.Description = tip;
@@ -1464,6 +1470,7 @@ public partial class MainWindow : Window
         CompactValue.Text = ValueLabel.Text; CompactDot.Fill = StateDot.Fill;
         CompactCubes.Text = connected && heroValue is { } value ? Tn(value / heroCost, "{0} cube", "{0} cubes") : "";
         CompactTrack.Value = EnergyTrack.Value; CompactTrack.Visibility = EnergyTrack.Visibility;
+        CompactBonusTrack.Value = BonusTrack.Value; CompactBonusTrack.Visibility = BonusTrack.Visibility;
         var (mates, more, own) = connected ? CompactStrip.Mates(snapshots, accountId, now, odylePerCube) : ([], 0, Band.None);
         CompactPanel.ToolTip = T("{0} · {1} · double-click for the full card", heroTitle, StateText.Text) + BandHint(own);
         CompactMate Row(CompactStrip.Mate m) => new(m.Name, m.Value.ToString("N0", Culture), Tn(m.Cubes, "{0} cube", "{0} cubes"), Brush(m.Live ? "Mint" : "StaleFill"),
